@@ -1,0 +1,301 @@
+mod alert;
+mod api;
+mod commands;
+mod crypto;
+mod db;
+
+use api::client::ZhipuClient;
+use db::Database;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::Duration;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder},
+    webview::WebviewWindowBuilder,
+    Manager,
+};
+
+const POPOVER_LABEL: &str = "popover";
+const SETTINGS_LABEL: &str = "settings";
+const REFRESH_INTERVAL_SECS: u64 = 300; // 5 分钟
+
+/// 全局最高额度百分比，用于图标显示
+static MAX_PERCENTAGE: AtomicI32 = AtomicI32::new(-1);
+
+fn get_db_path(app: &tauri::App) -> PathBuf {
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .expect("Failed to resolve app data dir");
+    std::fs::create_dir_all(&app_dir).ok();
+    app_dir.join("glm_quota_monitor.db")
+}
+
+// ========== 窗口管理 ==========
+
+fn toggle_popover(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(POPOVER_LABEL) {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+}
+
+fn create_popover_window(app: &tauri::AppHandle) {
+    if app.get_webview_window(POPOVER_LABEL).is_some() {
+        toggle_popover(app);
+        return;
+    }
+
+    let _window =
+        WebviewWindowBuilder::new(app, POPOVER_LABEL, tauri::WebviewUrl::App("index.html".into()))
+            .title("GLM Quota Monitor")
+            .inner_size(360.0, 500.0)
+            .decorations(false)
+            .resizable(false)
+            .skip_taskbar(true)
+            .always_on_top(true)
+            .build()
+            .expect("Failed to create popover window");
+}
+
+fn open_settings(app: &tauri::AppHandle) {
+    if let Some(popover) = app.get_webview_window(POPOVER_LABEL) {
+        let _ = popover.hide();
+    }
+
+    if let Some(window) = app.get_webview_window(SETTINGS_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return;
+    }
+
+    let _window =
+        WebviewWindowBuilder::new(app, SETTINGS_LABEL, tauri::WebviewUrl::App("index.html".into()))
+            .title("设置")
+            .inner_size(600.0, 450.0)
+            .decorations(true)
+            .resizable(false)
+            .skip_taskbar(true)
+            .build()
+            .expect("Failed to create settings window");
+}
+
+// ========== 后台刷新 ==========
+
+/// 刷新所有账号额度，返回最高百分比
+fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
+    let db = match app.try_state::<Database>() {
+        Some(db) => db,
+        None => return 0,
+    };
+
+    // 查询所有活跃账号的 id, alias 和加密 api_key
+    let accounts: Vec<(String, String, String)> = {
+        let Ok(guard) = db.conn.lock() else { return 0 };
+        let result = guard.prepare("SELECT id, alias, api_key FROM accounts WHERE is_active = 1");
+        let Ok(mut stmt) = result else { return 0 };
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)));
+        match rows {
+            Ok(r) => r.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+
+    let mut max_pct = 0i32;
+
+    for (account_id, account_alias, encrypted_key) in &accounts {
+        let api_key = match crypto::decrypt(encrypted_key) {
+            Ok(k) => k,
+            Err(_) => continue,
+        };
+
+        let client = ZhipuClient::new(&api_key);
+        let Ok(rt) = tokio::runtime::Runtime::new() else { continue };
+        let result = rt.block_on(async { client.get_quota_limit().await });
+
+        match result {
+            Ok(quota) => {
+                let pct = quota.limits.iter().map(|l| l.percentage).max().unwrap_or(0);
+                if pct > max_pct {
+                    max_pct = pct;
+                }
+
+                // 记录快照
+                if let Ok(conn2) = db.conn.lock() {
+                    let now = chrono::Utc::now().to_rfc3339();
+                    let time_limit = quota.limits.iter().find(|l| l.limit_type == "TIME_LIMIT");
+                    let token_limit = quota.limits.iter().find(|l| l.limit_type == "TOKENS_LIMIT");
+
+                    let _ = conn2.execute(
+                        "INSERT INTO usage_snapshots (account_id, timestamp, time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        rusqlite::params![
+                            account_id,
+                            now,
+                            time_limit.map(|l| l.percentage as f64),
+                            time_limit.map(|l| l.next_reset_time),
+                            token_limit.map(|l| l.percentage as f64),
+                            token_limit.map(|l| l.next_reset_time),
+                        ],
+                    );
+
+                    let _ = conn2.execute(
+                        "UPDATE accounts SET level = ?1 WHERE id = ?2",
+                        rusqlite::params![quota.level, account_id],
+                    );
+                }
+
+                // 预警检查
+                let app_clone = app.clone();
+                let aid = account_id.clone();
+                let alias = account_alias.clone();
+                let quota_clone = quota.clone();
+                alert::check_and_notify(
+                    &db,
+                    &aid,
+                    &alias,
+                    &quota_clone,
+                    &|msg: &str| {
+                        use tauri_plugin_notification::NotificationExt;
+                        let _ = app_clone.notification()
+                            .builder()
+                            .title("GLM Quota Monitor")
+                            .body(msg.to_string())
+                            .show();
+                    },
+                );
+            }
+            Err(e) => {
+                eprintln!("Failed to refresh account {}: {}", account_id, e);
+            }
+        }
+    }
+
+    max_pct
+}
+
+/// 更新托盘图标 tooltip
+fn update_tray_tooltip(app: &tauri::AppHandle, percentage: i32) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let tooltip = if percentage >= 0 {
+            format!("GLM Quota Monitor — {}%", percentage)
+        } else {
+            "GLM Quota Monitor".to_string()
+        };
+        let _ = tray.set_tooltip(Some(&tooltip));
+    }
+}
+
+// ========== IPC 命令 ==========
+
+#[tauri::command]
+fn open_settings_command(app: tauri::AppHandle) {
+    open_settings(&app);
+}
+
+#[tauri::command]
+fn close_popover(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(POPOVER_LABEL) {
+        let _ = window.hide();
+    }
+}
+
+#[tauri::command]
+fn refresh_all(app: tauri::AppHandle) -> Result<i32, String> {
+    let max_pct = refresh_all_accounts(&app);
+    MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
+    update_tray_tooltip(&app, max_pct);
+    Ok(max_pct)
+}
+
+// ========== 入口 ==========
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .setup(|app| {
+            // 初始化数据库
+            let db = Database::new(&get_db_path(app))
+                .expect("Failed to initialize database");
+            db.init_tables().expect("Failed to create tables");
+
+            // 初始化默认预警规则
+            {
+                let conn = db.conn.lock().unwrap();
+                alert::rules::init_default_rules(&conn);
+            }
+
+            app.manage(db);
+
+            // 系统托盘菜单
+            let settings_item = MenuItem::with_id(app, "settings", "设置...", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&settings_item, &quit])?;
+
+            let _tray = TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().cloned().unwrap())
+                .tooltip("GLM Quota Monitor")
+                .menu(&menu)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "quit" => app.exit(0),
+                    "settings" => open_settings(app),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        create_popover_window(app);
+                    }
+                })
+                .build(app)?;
+
+            // 启动后台定时刷新
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                // 首次启动延迟 5 秒后刷新一次
+                std::thread::sleep(Duration::from_secs(5));
+                let max_pct = refresh_all_accounts(&app_handle);
+                MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
+                update_tray_tooltip(&app_handle, max_pct);
+
+                // 定时循环
+                loop {
+                    std::thread::sleep(Duration::from_secs(REFRESH_INTERVAL_SECS));
+                    let max_pct = refresh_all_accounts(&app_handle);
+                    MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
+                    update_tray_tooltip(&app_handle, max_pct);
+                }
+            });
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::account::add_account,
+            commands::account::list_accounts,
+            commands::account::delete_account,
+            commands::account::update_account_alias,
+            commands::quota::get_quota,
+            commands::history::get_snapshots,
+            open_settings_command,
+            close_popover,
+            refresh_all,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

@@ -31,13 +31,14 @@ GLM Quota Monitor（暂定）
 - 展示最近 24h 的模型用量统计（总 token、调用次数）
 
 #### 技术方案
-- **登录方式**：嵌入 WebView，用户在应用内登录智谱官网一次，提取 Cookie
-- **数据获取**：用 Cookie 调用智谱监控 API
-  - `GET /api/monitor/usage/quota/limit` → 额度百分比
-  - `GET /api/monitor/usage/model-usage?startTime=&endTime=` → 模型用量
+- **认证方式**：用户直接输入智谱 API Key（格式 `{id}.{secret}`），无需浏览器登录
+- **数据获取**：用 API Key 作为 Bearer Token 调用智谱监控 API（已验证可行）
+  - `GET /api/monitor/usage/quota/limit` → 额度百分比、套餐等级、重置时间
+  - `GET /api/monitor/usage/model-usage?startTime=&endTime=` → 模型用量（时间格式 `yyyy-MM-dd HH:mm:ss`）
   - `GET /api/monitor/usage/tool-usage?startTime=&endTime=` → MCP 工具用量
 - **API 基础地址**：`https://open.bigmodel.cn`
-- **Cookie 刷新**：检测到 Cookie 过期（401/空响应）时，提示用户重新登录
+- **认证头**：`Authorization: Bearer {api_key}`
+- **错误处理**：检测到 401 时提示用户 API Key 无效或已过期
 
 #### 返回数据格式（参考）
 ```json
@@ -89,8 +90,8 @@ GLM Quota Monitor（暂定）
 
 #### 功能描述
 - **账号列表**：
-  - 添加账号（输入账号别名 + 通过 WebView 登录获取 Cookie）
-  - 编辑别名、删除账号
+  - 添加账号（输入账号别名 + 粘贴 API Key）
+  - 编辑别名、删除账号、更换 API Key
   - 每个账号独立显示额度状态
 - **总览面板**：
   - 所有账号一览卡片，显示核心指标（套餐等级、5h 用量%、周用量%）
@@ -107,8 +108,8 @@ CREATE TABLE accounts (
   id          TEXT PRIMARY KEY,   -- UUID
   alias       TEXT NOT NULL,      -- 用户自定义别名，如 "主账号"、"测试号"
   platform    TEXT NOT NULL,      -- "zhipu"（国内）, "zai"（国际，预留）
-  level       TEXT,               -- 套餐等级：lite/pro/max，登录后自动填入
-  cookie      TEXT,               -- 加密存储的 Cookie
+  level       TEXT,               -- 套餐等级：lite/pro/max，查询后自动填入
+  api_key     TEXT NOT NULL,      -- 加密存储的 API Key（格式 {id}.{secret}）
   is_active   INTEGER DEFAULT 1,  -- 是否启用
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
@@ -197,7 +198,7 @@ CREATE TABLE alert_history (
 ## 非功能需求
 
 ### 安全
-- Cookie 加密存储（AES-256-GCM），密钥由系统 Keychain（macOS）/ Credential Manager（Windows）管理
+- API Key 加密存储（AES-256-GCM），密钥由系统 Keychain（macOS）/ Credential Manager（Windows）管理
 - 不向任何第三方服务器传输数据
 - 本地数据库文件权限 600
 
@@ -212,50 +213,100 @@ CREATE TABLE alert_history (
 
 ---
 
+## macOS 特有设计：纯菜单栏应用
+
+### 设计原则
+macOS 版本**没有传统主窗口**，完全以菜单栏为核心交互入口，类似 iStat Menus / Dropbox 的体验。
+
+### 应用形态
+- **无 Dock 图标**：`LSUIElement = true`，应用不出现在 Dock 栏
+- **无主窗口**：不存在传统的主界面窗口
+- **菜单栏图标**：状态栏常驻图标，实时显示核心指标
+
+### 交互方式
+
+#### 1. 状态栏图标（实时信息）
+- 图标显示当前额度百分比（如 `6%`）
+- 图标颜色随额度变化：绿（<60%）→ 黄（60-85%）→ 红（>85%）
+- 点击图标 → 弹出 Popover 面板
+
+#### 2. Popover 面板（点击图标弹出）
+- 尺寸约 360×500，从状态栏图标下方弹出
+- 默认显示总览：
+  - 当前账号额度卡片（5h 窗口 / 周额度 / MCP 月度）
+  - 快速切换账号（多账号时）
+  - 最近 24h 用量迷你图
+- 底部操作栏：刷新 | 设置
+
+#### 3. 设置窗口（标准 macOS 菜单栏位置）
+- 通过 `App 名称 > 设置`（⌘,）打开，或从 Popover 底部入口进入
+- 使用标准 macOS 设置窗口样式
+- 包含标签页：
+  - **账号**：添加/编辑/删除 API Key
+  - **预警**：阈值配置、通知开关
+  - **通用**：刷新间隔、开机自启、数据导出
+  - **关于**：版本信息
+
+#### 4. 系统通知
+- 配额告警通过 macOS Notification Center 推送
+- 点击通知可展开 Popover 查看详情
+
+---
+
 ## 技术架构概要
 
+### macOS 架构（纯菜单栏）
+
 ```
-┌─────────────────────────────────────────────────┐
-│                   前端 (Web)                     │
-│  React + Tailwind + Recharts                    │
-│  ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐       │
-│  │总览面板│ │历史图表│ │账号管理│ │预警设置│       │
-│  └───┬───┘ └───┬───┘ └───┬───┘ └───┬───┘       │
-│      └─────────┴─────────┴─────────┘            │
-│                     │ Tauri IPC                  │
-├─────────────────────┼───────────────────────────┤
-│                   后端 (Rust)                     │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐         │
-│  │ API 模块 │ │ 数据模块 │ │ 预警模块 │         │
-│  │ (HTTP)   │ │ (SQLite) │ │ (规则引擎)│         │
-│  └────┬─────┘ └──────────┘ └──────────┘         │
-│       │                                          │
-│  ┌────┴─────┐  ┌──────────┐                     │
-│  │ WebView  │  │ 系统托盘  │                     │
-│  │ (登录)   │  │ + 通知    │                     │
-│  └──────────┘  └──────────┘                     │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  macOS 菜单栏                                             │
+│  ┌─────────┐                                              │
+│  │ 📊 6%   │  ← 状态栏图标（实时额度 + 颜色）              │
+│  └────┬────┘                                              │
+│       │ 点击                                              │
+│       ▼                                                   │
+│  ┌──────────────────────────┐                            │
+│  │     Popover (360×500)     │                            │
+│  │  ┌────────────────────┐  │                            │
+│  │  │  5h 窗口: ████░ 45%  │  │                            │
+│  │  │  周额度:   ██░░░ 30%  │  │                            │
+│  │  │  MCP 月度: █░░░░ 12%  │  │                            │
+│  │  ├────────────────────┤  │                            │
+│  │  │  📈 24h 迷你图      │  │                            │
+│  │  ├────────────────────┤  │                            │
+│  │  │  🔄 刷新    ⚙️ 设置  │  │                            │
+│  │  └────────────────────┘  │                            │
+│  └──────────────────────────┘                            │
+│                                                           │
+│  App 名称 > 设置 (⌘,)                                    │
+│  ┌──────────────────────────┐                            │
+│  │  账号 │ 预警 │ 通用 │ 关于 │  ← 标准 macOS 设置窗口     │
+│  └──────────────────────────┘                            │
+└──────────────────────────────────────────────────────────┘
 ```
+
+### 模块职责
 
 ### 模块职责
 
 | 模块 | 职责 | 语言 |
 |---|---|---|
-| **前端** | UI 渲染、图表、用户交互 | TypeScript + React |
-| **API 模块** | HTTP 请求智谱监控接口、Cookie 管理 | Rust |
+| **Popover UI** | 状态栏弹出面板，显示额度概览和迷你图 | TypeScript + React |
+| **设置窗口** | 标准 macOS 设置界面（账号/预警/通用/关于） | TypeScript + React |
+| **API 模块** | HTTP 请求智谱监控接口、API Key 管理 | Rust |
 | **数据模块** | SQLite CRUD、数据聚合查询 | Rust (rusqlite) |
 | **预警模块** | 规则匹配、通知发送、去重 | Rust |
-| **WebView** | 嵌入登录页面、Cookie 提取 | Tauri 内置 |
-| **系统托盘** | 常驻图标、菜单、系统通知 | Tauri 内置 |
+| **API Key 管理** | API Key 加密存储、验证、刷新 | Rust |
+| **状态栏** | 菜单栏图标、Popover 弹出、系统通知 | Tauri 内置 |
 
 ### 通信流程
 ```
-用户添加账号 → WebView 打开智谱登录页 → 用户登录成功
-→ 提取 Cookie → 加密存储到 DB + Keychain
-→ 立即查询一次额度 → 显示在面板
+用户添加账号 → 输入别名 + 粘贴 API Key → 验证有效性（调用一次 quota 接口）
+→ 加密存储 API Key 到 DB + Keychain
+→ 查询额度 → 显示在面板
 
 定时刷新（后台）:
-→ API 模块用 Cookie 请求监控接口
+→ API 模块用 API Key 请求监控接口
 → 解析响应 → 写入 usage_snapshots
 → 通过 IPC 推送更新到前端
 → 预警模块检查规则 → 触发通知（如需）
@@ -287,22 +338,24 @@ glm-quota-monitor/
 │   │   │   ├── account.rs
 │   │   │   ├── quota.rs
 │   │   │   └── history.rs
-│   │   ├── crypto.rs    # Cookie 加密
-│   │   └── tray.rs      # 系统托盘
+│   │   ├── crypto.rs    # API Key 加密
+│   │   └── tray.rs      # 状态栏 + Popover 管理
 │   ├── Cargo.toml
 │   └── tauri.conf.json
+│   └── Info.plist       # LSUIElement=true（无 Dock 图标）
 ├── src/                 # React 前端
 │   ├── App.tsx
-│   ├── pages/
-│   │   ├── Dashboard.tsx    # 总览面板
-│   │   ├── History.tsx      # 历史统计
-│   │   ├── Accounts.tsx     # 账号管理
-│   │   └── Alerts.tsx       # 预警设置
-│   ├── components/
-│   │   ├── QuotaCard.tsx
-│   │   ├── ProgressBar.tsx
-│   │   ├── UsageChart.tsx
-│   │   └── AccountList.tsx
+│   ├── popover/         # Popover 面板（状态栏弹出）
+│   │   ├── Popover.tsx      # Popover 主面板
+│   │   ├── QuotaCard.tsx    # 额度卡片
+│   │   ├── MiniChart.tsx    # 24h 迷你图
+│   │   └── AccountSwitch.tsx # 账号切换
+│   ├── settings/        # 设置窗口（标准 macOS 设置）
+│   │   ├── Settings.tsx     # 设置主窗口
+│   │   ├── AccountsPane.tsx # 账号管理标签
+│   │   ├── AlertsPane.tsx   # 预警设置标签
+│   │   ├── GeneralPane.tsx  # 通用设置标签
+│   │   └── AboutPane.tsx    # 关于标签
 │   ├── hooks/
 │   │   ├── useAccounts.ts
 │   │   ├── useQuota.ts
@@ -320,9 +373,12 @@ glm-quota-monitor/
 ## 开发路线图
 
 ### Phase 1：MVP（v0.1）
-- [ ] F1：智谱国内平台额度查询（WebView 登录 + Cookie + 监控 API）
-- [ ] F3：多 Key 账号管理（增删改查 + 总览面板）
-- [ ] 系统托盘常驻
+- [ ] macOS：纯菜单栏应用（LSUIElement=true，无 Dock 图标）
+- [ ] F1：智谱国内平台额度查询（API Key 直接认证 + 监控 API）
+- [ ] F3：多 Key 账号管理（添加 API Key + 增删改查）
+- [ ] 状态栏图标（实时额度百分比 + 颜色指示）
+- [ ] Popover 面板（点击图标弹出额度概览）
+- [ ] 设置窗口（标准 macOS 菜单栏 ⌘, 位置）
 
 ### Phase 2：统计与预警（v0.2）
 - [ ] F2：历史用量统计（本地存储 + 折线图 + CSV 导出）

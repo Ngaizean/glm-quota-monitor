@@ -31,24 +31,23 @@ fix/*         ← 修复分支（如 fix/windows-tray-crash）
 ## 平台分工
 
 ### 共享代码（Rust 后端 + 公共逻辑）
-- API 客户端（智谱监控接口）
+- API 客户端（智谱监控接口，API Key Bearer Token 认证）
 - 数据库模块（SQLite schema、CRUD）
 - 预警引擎（规则匹配、去重）
-- 加密模块（Cookie 存储）
+- 加密模块（API Key AES-256-GCM 加密，密钥存系统 Keychain/Credential Manager）
 - IPC 命令定义
 
 ### Ngaizean 负责（macOS）
-- Tauri macOS 特定配置
-- macOS 系统托盘 + 通知（Notification Center）
-- macOS Keychain 集成
-- WebView 登录流程（macOS 适配）
+- Tauri macOS 特定配置（LSUIElement=true 纯菜单栏应用）
+- macOS 状态栏图标 + Popover 无边框窗口
+- macOS 系统通知（Notification Center）
+- macOS Keychain 集成（keychain-rs）
 - macOS 构建打包（DMG + 代码签名）
 
 ### Alidadei 负责（Windows）
 - Tauri Windows 特定配置
 - Windows 系统托盘 + 通知（Action Center）
-- Windows Credential Manager 集成
-- WebView 登录流程（Windows 适配）
+- Windows Credential Manager 集成（keychain-rs 自动适配）
 - Windows 构建打包（MSI / NSIS）
 
 ### 共同负责
@@ -136,9 +135,9 @@ glm-quota-monitor/
 | Rust 后端 API 客户端 | 共同 | P0 |
 | 数据库模块 | 共同 | P0 |
 | 前端 UI 框架搭建 | 共同 | P0 |
-| WebView 登录流程（macOS） | Ngaizean | P0 |
-| WebView 登录流程（Windows） | Alidadei | P0 |
-| 系统托盘（macOS） | Ngaizean | P0 |
+| API Key 账号管理（macOS 纯菜单栏） | Ngaizean | P0 |
+| API Key 账号管理（Windows 托盘） | Alidadei | P0 |
+| 状态栏 + Popover（macOS） | Ngaizean | P0 |
 | 系统托盘（Windows） | Alidadei | P0 |
 
 ### Phase 2：统计与预警（v0.2）
