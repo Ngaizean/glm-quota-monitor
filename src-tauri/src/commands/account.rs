@@ -18,17 +18,23 @@ pub fn add_account(
     let quota = tauri::async_runtime::block_on(client.get_quota_limit())
         .map_err(|e| format!("API Key 验证失败: {}", e))?;
 
-    let encrypted_key = crypto::encrypt(&api_key).map_err(|e| e.to_string())?;
     let now = Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
+
+    // API Key 存到系统 Keychain，数据库只存 id 和元数据
+    crypto::store_api_key(&id, &api_key).map_err(|e| e.to_string())?;
 
     let conn = db.conn.lock().unwrap();
     conn.execute(
         "INSERT INTO accounts (id, alias, platform, level, api_key, is_active, created_at, updated_at)
-         VALUES (?1, ?2, 'zhipu', ?3, ?4, 1, ?5, ?6)",
-        rusqlite::params![id, alias, quota.level, encrypted_key, now, now],
+         VALUES (?1, ?2, 'zhipu', ?3, 'stored-in-keychain', 1, ?4, ?5)",
+        rusqlite::params![id, alias, quota.level, now, now],
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        // 数据库写入失败时清理 Keychain
+        let _ = crypto::delete_api_key(&id);
+        e.to_string()
+    })?;
 
     Ok(Account {
         id,
@@ -69,6 +75,9 @@ pub fn list_accounts(db: State<'_, Database>) -> Result<Vec<Account>, String> {
 
 #[tauri::command]
 pub fn delete_account(db: State<'_, Database>, id: String) -> Result<(), String> {
+    // 先从 Keychain 删除
+    let _ = crypto::delete_api_key(&id);
+
     let conn = db.conn.lock().unwrap();
     conn.execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![id])
         .map_err(|e| e.to_string())?;

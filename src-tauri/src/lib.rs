@@ -94,12 +94,12 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
         None => return 0,
     };
 
-    // 查询所有活跃账号的 id, alias 和加密 api_key
-    let accounts: Vec<(String, String, String)> = {
+    // 查询所有活跃账号的 id 和 alias
+    let accounts: Vec<(String, String)> = {
         let Ok(guard) = db.conn.lock() else { return 0 };
-        let result = guard.prepare("SELECT id, alias, api_key FROM accounts WHERE is_active = 1");
+        let result = guard.prepare("SELECT id, alias FROM accounts WHERE is_active = 1");
         let Ok(mut stmt) = result else { return 0 };
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)));
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)));
         match rows {
             Ok(r) => r.filter_map(|r| r.ok()).collect(),
             Err(_) => Vec::new(),
@@ -108,8 +108,8 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
 
     let mut max_pct = 0i32;
 
-    for (account_id, account_alias, encrypted_key) in &accounts {
-        let api_key = match crypto::decrypt(encrypted_key) {
+    for (account_id, account_alias) in &accounts {
+        let api_key = match crypto::get_api_key(account_id) {
             Ok(k) => k,
             Err(_) => continue,
         };

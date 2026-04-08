@@ -7,7 +7,7 @@ use tauri::State;
 
 #[tauri::command]
 pub fn get_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaData, String> {
-    let api_key = get_decrypted_api_key(&db, &account_id)?;
+    let api_key = crypto::get_api_key(&account_id).map_err(|e| e.to_string())?;
     let client = ZhipuClient::new(&api_key);
     let quota = tauri::async_runtime::block_on(client.get_quota_limit())
         .map_err(|e| e.to_string())?;
@@ -40,17 +40,4 @@ pub fn get_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaDat
     .map_err(|e| e.to_string())?;
 
     Ok(quota)
-}
-
-fn get_decrypted_api_key(db: &Database, account_id: &str) -> Result<String, String> {
-    let conn = db.conn.lock().unwrap();
-    let encrypted: String = conn
-        .query_row(
-            "SELECT api_key FROM accounts WHERE id = ?1",
-            rusqlite::params![account_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    crypto::decrypt(&encrypted).map_err(|e| e.to_string())
 }
