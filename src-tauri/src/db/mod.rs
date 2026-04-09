@@ -21,6 +21,10 @@ impl Database {
     pub fn init_tables(&self) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(migrations::MIGRATION_SQL)?;
+        // 迁移：为已有数据库添加 purpose 列
+        if conn.prepare("SELECT purpose FROM accounts LIMIT 0").is_err() {
+            conn.execute_batch("ALTER TABLE accounts ADD COLUMN purpose TEXT NOT NULL DEFAULT ''")?;
+        }
         Ok(())
     }
 }

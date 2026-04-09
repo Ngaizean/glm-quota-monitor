@@ -1,13 +1,22 @@
 use crate::api::client::ZhipuClient;
 use crate::api::types::QuotaData;
-use crate::crypto;
 use crate::db::Database;
 use chrono::Utc;
 use tauri::State;
 
 #[tauri::command]
 pub fn get_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaData, String> {
-    let api_key = crypto::get_api_key(&account_id).map_err(|e| e.to_string())?;
+    // 直接从数据库读取 API Key
+    let conn = db.conn.lock().unwrap();
+    let api_key: String = conn
+        .query_row(
+            "SELECT api_key FROM accounts WHERE id = ?1",
+            rusqlite::params![account_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("账号不存在: {}", e))?;
+    drop(conn);
+
     let client = ZhipuClient::new(&api_key);
     let quota = tauri::async_runtime::block_on(client.get_quota_limit())
         .map_err(|e| e.to_string())?;
@@ -32,7 +41,6 @@ pub fn get_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaDat
     )
     .map_err(|e| e.to_string())?;
 
-    // 更新账号等级
     conn.execute(
         "UPDATE accounts SET level = ?1 WHERE id = ?2",
         rusqlite::params![quota.level, account_id],

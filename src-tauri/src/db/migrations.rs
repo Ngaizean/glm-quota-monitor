@@ -2,6 +2,7 @@ pub const MIGRATION_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS accounts (
     id          TEXT PRIMARY KEY,
     alias       TEXT NOT NULL,
+    purpose     TEXT NOT NULL DEFAULT '',
     platform    TEXT NOT NULL DEFAULT 'zhipu',
     level       TEXT,
     api_key     TEXT NOT NULL,
@@ -43,5 +44,10 @@ CREATE TABLE IF NOT EXISTS alert_history (
     value       REAL,
     triggered_at TEXT NOT NULL,
     dismissed   INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 "#;

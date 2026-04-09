@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct Account {
     pub id: String,
     pub alias: String,
+    pub purpose: String,
     pub platform: String,
     pub level: Option<String>,
     pub is_active: bool,

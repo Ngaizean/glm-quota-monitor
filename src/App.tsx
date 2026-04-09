@@ -1,23 +1,15 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Popover from "./popover/Popover";
 import Settings from "./settings/Settings";
 
 function App() {
-  const [windowLabel, setWindowLabel] = useState<string>("");
+  const [page, setPage] = useState<"quota" | "settings">("quota");
 
-  useEffect(() => {
-    setWindowLabel(getCurrentWindow().label);
-  }, []);
-
-  if (!windowLabel) return null;
-
-  if (windowLabel === "settings") {
-    return <Settings />;
+  if (page === "settings") {
+    return <Settings onBack={() => setPage("quota")} />;
   }
 
-  // 默认 popover
-  return <Popover />;
+  return <Popover onOpenSettings={() => setPage("settings")} />;
 }
 
 export default App;

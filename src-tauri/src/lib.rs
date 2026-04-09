@@ -1,7 +1,6 @@
 mod alert;
 mod api;
 mod commands;
-mod crypto;
 mod db;
 
 use api::client::ZhipuClient;
@@ -10,14 +9,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 use tauri::{
-    menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder},
     webview::WebviewWindowBuilder,
     Manager,
 };
 
 const POPOVER_LABEL: &str = "popover";
-const SETTINGS_LABEL: &str = "settings";
 const REFRESH_INTERVAL_SECS: u64 = 300; // 5 分钟
 
 /// 全局最高额度百分比，用于图标显示
@@ -51,38 +48,31 @@ fn create_popover_window(app: &tauri::AppHandle) {
         return;
     }
 
-    let _window =
+    let window =
         WebviewWindowBuilder::new(app, POPOVER_LABEL, tauri::WebviewUrl::App("index.html".into()))
             .title("GLM Quota Monitor")
-            .inner_size(360.0, 500.0)
+            .inner_size(340.0, 300.0)
             .decorations(false)
             .resizable(false)
             .skip_taskbar(true)
             .always_on_top(true)
             .build()
             .expect("Failed to create popover window");
-}
 
-fn open_settings(app: &tauri::AppHandle) {
-    if let Some(popover) = app.get_webview_window(POPOVER_LABEL) {
-        let _ = popover.hide();
+    // 定位到托盘图标正下方
+    if let Some(tray) = app.tray_by_id("main") {
+        if let Ok(Some(rect)) = tray.rect() {
+            if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
+                (rect.position, rect.size)
+            {
+                let x = pos.x + size.width as i32 - 340;
+                let y = pos.y + size.height as i32 + 4;
+                let _ = window.set_position(tauri::Position::Physical(
+                    tauri::PhysicalPosition::new(x, y),
+                ));
+            }
+        }
     }
-
-    if let Some(window) = app.get_webview_window(SETTINGS_LABEL) {
-        let _ = window.show();
-        let _ = window.set_focus();
-        return;
-    }
-
-    let _window =
-        WebviewWindowBuilder::new(app, SETTINGS_LABEL, tauri::WebviewUrl::App("index.html".into()))
-            .title("设置")
-            .inner_size(600.0, 450.0)
-            .decorations(true)
-            .resizable(false)
-            .skip_taskbar(true)
-            .build()
-            .expect("Failed to create settings window");
 }
 
 // ========== 后台刷新 ==========
@@ -94,12 +84,11 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
         None => return 0,
     };
 
-    // 查询所有活跃账号的 id 和 alias
-    let accounts: Vec<(String, String)> = {
+    let accounts: Vec<(String, String, String)> = {
         let Ok(guard) = db.conn.lock() else { return 0 };
-        let result = guard.prepare("SELECT id, alias FROM accounts WHERE is_active = 1");
+        let result = guard.prepare("SELECT id, alias, api_key FROM accounts WHERE is_active = 1");
         let Ok(mut stmt) = result else { return 0 };
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)));
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)));
         match rows {
             Ok(r) => r.filter_map(|r| r.ok()).collect(),
             Err(_) => Vec::new(),
@@ -108,11 +97,10 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
 
     let mut max_pct = 0i32;
 
-    for (account_id, account_alias) in &accounts {
-        let api_key = match crypto::get_api_key(account_id) {
-            Ok(k) => k,
-            Err(_) => continue,
-        };
+    for (account_id, account_alias, api_key) in &accounts {
+        if api_key.is_empty() {
+            continue;
+        }
 
         let client = ZhipuClient::new(&api_key);
         let Ok(rt) = tokio::runtime::Runtime::new() else { continue };
@@ -125,7 +113,6 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
                     max_pct = pct;
                 }
 
-                // 记录快照
                 if let Ok(conn2) = db.conn.lock() {
                     let now = chrono::Utc::now().to_rfc3339();
                     let time_limit = quota.limits.iter().find(|l| l.limit_type == "TIME_LIMIT");
@@ -162,7 +149,8 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
                     &quota_clone,
                     &|msg: &str| {
                         use tauri_plugin_notification::NotificationExt;
-                        let _ = app_clone.notification()
+                        let _ = app_clone
+                            .notification()
                             .builder()
                             .title("GLM Quota Monitor")
                             .body(msg.to_string())
@@ -179,24 +167,22 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
     max_pct
 }
 
-/// 更新托盘图标 tooltip
-fn update_tray_tooltip(app: &tauri::AppHandle, percentage: i32) {
+/// 更新托盘：tooltip + 标题显示百分比
+fn update_tray_display(app: &tauri::AppHandle, percentage: i32) {
     if let Some(tray) = app.tray_by_id("main") {
-        let tooltip = if percentage >= 0 {
-            format!("GLM Quota Monitor — {}%", percentage)
+        if percentage >= 0 {
+            let title = format!("{}%", percentage);
+            let tooltip = format!("GLM Quota Monitor — {}%", percentage);
+            let _ = tray.set_title(Some(title.as_str()));
+            let _ = tray.set_tooltip(Some(tooltip.as_str()));
         } else {
-            "GLM Quota Monitor".to_string()
-        };
-        let _ = tray.set_tooltip(Some(&tooltip));
+            let _ = tray.set_title(Some(""));
+            let _ = tray.set_tooltip(Some("GLM Quota Monitor"));
+        }
     }
 }
 
 // ========== IPC 命令 ==========
-
-#[tauri::command]
-fn open_settings_command(app: tauri::AppHandle) {
-    open_settings(&app);
-}
 
 #[tauri::command]
 fn close_popover(app: tauri::AppHandle) {
@@ -209,7 +195,7 @@ fn close_popover(app: tauri::AppHandle) {
 fn refresh_all(app: tauri::AppHandle) -> Result<i32, String> {
     let max_pct = refresh_all_accounts(&app);
     MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
-    update_tray_tooltip(&app, max_pct);
+    update_tray_display(&app, max_pct);
     Ok(max_pct)
 }
 
@@ -225,6 +211,10 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
+            // macOS: 隐藏 Dock 图标和菜单栏标签
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             // 初始化数据库
             let db = Database::new(&get_db_path(app))
                 .expect("Failed to initialize database");
@@ -238,20 +228,10 @@ pub fn run() {
 
             app.manage(db);
 
-            // 系统托盘菜单
-            let settings_item = MenuItem::with_id(app, "settings", "设置...", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&settings_item, &quit])?;
-
+            // 系统托盘 — 只响应左键点击
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().unwrap())
                 .tooltip("GLM Quota Monitor")
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "quit" => app.exit(0),
-                    "settings" => open_settings(app),
-                    _ => {}
-                })
                 .on_tray_icon_event(|tray, event| {
                     if let tauri::tray::TrayIconEvent::Click {
                         button: MouseButton::Left,
@@ -268,18 +248,16 @@ pub fn run() {
             // 启动后台定时刷新
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
-                // 首次启动延迟 5 秒后刷新一次
                 std::thread::sleep(Duration::from_secs(5));
                 let max_pct = refresh_all_accounts(&app_handle);
                 MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
-                update_tray_tooltip(&app_handle, max_pct);
+                update_tray_display(&app_handle, max_pct);
 
-                // 定时循环
                 loop {
                     std::thread::sleep(Duration::from_secs(REFRESH_INTERVAL_SECS));
                     let max_pct = refresh_all_accounts(&app_handle);
                     MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
-                    update_tray_tooltip(&app_handle, max_pct);
+                    update_tray_display(&app_handle, max_pct);
                 }
             });
 
@@ -292,7 +270,8 @@ pub fn run() {
             commands::account::update_account_alias,
             commands::quota::get_quota,
             commands::history::get_snapshots,
-            open_settings_command,
+            commands::settings::get_setting,
+            commands::settings::set_setting,
             close_popover,
             refresh_all,
         ])
