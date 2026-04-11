@@ -46,3 +46,20 @@ pub struct AlertRecord {
     pub triggered_at: String,
     pub dismissed: bool,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PeriodSummary {
+    pub period_label: String,
+    pub snapshot_count: i32,
+    pub avg_token_limit_pct: Option<f64>,
+    pub peak_token_limit_pct: Option<f64>,
+    pub avg_time_limit_pct: Option<f64>,
+    pub peak_time_limit_pct: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UsageSummary {
+    pub today: PeriodSummary,
+    pub last_7d: PeriodSummary,
+    pub last_30d: PeriodSummary,
+}

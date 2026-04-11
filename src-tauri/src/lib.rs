@@ -51,7 +51,7 @@ fn create_popover_window(app: &tauri::AppHandle) {
     let window =
         WebviewWindowBuilder::new(app, POPOVER_LABEL, tauri::WebviewUrl::App("index.html".into()))
             .title("GLM Quota Monitor")
-            .inner_size(340.0, 300.0)
+            .inner_size(360.0, 480.0)
             .decorations(false)
             .resizable(false)
             .skip_taskbar(true)
@@ -65,7 +65,7 @@ fn create_popover_window(app: &tauri::AppHandle) {
             if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
                 (rect.position, rect.size)
             {
-                let x = pos.x + size.width as i32 - 340;
+                let x = pos.x + size.width as i32 - 360;
                 let y = pos.y + size.height as i32 + 4;
                 let _ = window.set_position(tauri::Position::Physical(
                     tauri::PhysicalPosition::new(x, y),
@@ -270,6 +270,7 @@ pub fn run() {
             commands::account::update_account_alias,
             commands::quota::get_quota,
             commands::history::get_snapshots,
+            commands::summary::get_usage_summary,
             commands::settings::get_setting,
             commands::settings::set_setting,
             close_popover,

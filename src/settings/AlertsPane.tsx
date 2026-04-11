@@ -1,11 +1,28 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
+function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+  return (
+    <button
+      onClick={onChange}
+      className={`relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0 ${
+        checked ? "bg-[var(--color-accent)]" : "bg-[var(--color-bg-tertiary)]"
+      }`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+          checked ? "translate-x-4" : "translate-x-0"
+        }`}
+      />
+    </button>
+  );
+}
+
 export default function AlertsPane() {
   const [rules, setRules] = useState([
-    { id: "token_5h", label: "5h 窗口超过阈值", threshold: 80, enabled: true },
-    { id: "weekly", label: "周额度超过阈值", threshold: 90, enabled: true },
-    { id: "mcp_monthly", label: "MCP 月度超过阈值", threshold: 90, enabled: true },
+    { id: "token_5h", label: "5h 窗口超过阈值", desc: "Token 使用率告警", threshold: 80, enabled: true },
+    { id: "weekly", label: "周额度超过阈值", desc: "每周配额告警", threshold: 90, enabled: true },
+    { id: "mcp_monthly", label: "MCP 月度超过阈值", desc: "MCP 调用告警", threshold: 90, enabled: true },
   ]);
 
   useEffect(() => {
@@ -41,30 +58,40 @@ export default function AlertsPane() {
   }
 
   return (
-    <div className="space-y-3">
-      <h2 className="text-xs font-semibold text-gray-700">预警设置</h2>
-      <div className="space-y-2">
-        {rules.map((rule) => (
-          <div key={rule.id} className="bg-gray-50 rounded-lg p-2.5 space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-700">{rule.label}</span>
-              <button
-                onClick={() => toggleRule(rule.id)}
-                className={`w-8 h-4.5 rounded-full transition-colors relative ${rule.enabled ? "bg-blue-500" : "bg-gray-300"}`}
-              >
-                <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${rule.enabled ? "left-[14px]" : "left-0.5"}`} />
-              </button>
+    <div className="space-y-2.5">
+      {rules.map((rule) => (
+        <div
+          key={rule.id}
+          className={`bg-[var(--color-bg-secondary)] rounded-[var(--radius-md)] border border-[var(--color-border-subtle)] p-3 space-y-2.5 transition-[var(--transition-fast)] ${
+            !rule.enabled ? "opacity-60" : ""
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-[var(--color-text-primary)]">{rule.label}</div>
+              <div className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5">
+                超过 {rule.threshold}% 时通知
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <input type="range" min={50} max={100} value={rule.threshold}
-                onChange={(e) => setThreshold(rule.id, Number(e.target.value))}
-                disabled={!rule.enabled}
-                className="flex-1 accent-blue-500 h-1" />
-              <span className="text-[10px] text-gray-400 w-7 text-right">{rule.threshold}%</span>
+            <Toggle checked={rule.enabled} onChange={() => toggleRule(rule.id)} />
+          </div>
+          <div className="space-y-1">
+            <input
+              type="range"
+              min={50}
+              max={100}
+              value={rule.threshold}
+              onChange={(e) => setThreshold(rule.id, Number(e.target.value))}
+              disabled={!rule.enabled}
+              className="w-full disabled:opacity-40"
+            />
+            <div className="flex justify-between text-[9px] text-[var(--color-text-tertiary)]">
+              <span>50%</span>
+              <span>100%</span>
             </div>
           </div>
-        ))}
-      </div>
+        </div>
+      ))}
     </div>
   );
 }

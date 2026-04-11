@@ -1,6 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
+function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+  return (
+    <button
+      onClick={onChange}
+      className={`relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0 ${
+        checked ? "bg-[var(--color-accent)]" : "bg-[var(--color-bg-tertiary)]"
+      }`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+          checked ? "translate-x-4" : "translate-x-0"
+        }`}
+      />
+    </button>
+  );
+}
+
 export default function GeneralPane() {
   const [refreshInterval, setRefreshInterval] = useState(5);
   const [autoStart, setAutoStart] = useState(true);
@@ -27,27 +44,35 @@ export default function GeneralPane() {
 
   return (
     <div className="space-y-3">
-      <h2 className="text-xs font-semibold text-gray-700">通用设置</h2>
-
-      <div className="bg-gray-50 rounded-lg p-2.5">
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-xs text-gray-700">刷新间隔</span>
-          <span className="text-[10px] text-gray-400">{refreshInterval} 分钟</span>
+      <div className="bg-[var(--color-bg-secondary)] rounded-[var(--radius-md)] border border-[var(--color-border-subtle)] p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-[var(--color-text-primary)]">刷新间隔</span>
+          <span className="text-[11px] font-semibold tabular-nums text-[var(--color-accent)]">
+            {refreshInterval} min
+          </span>
         </div>
-        <input type="range" min={1} max={30} value={refreshInterval}
+        <input
+          type="range"
+          min={1}
+          max={30}
+          value={refreshInterval}
           onChange={(e) => handleIntervalChange(Number(e.target.value))}
-          className="w-full accent-blue-500 h-1" />
-        <div className="flex justify-between text-[9px] text-gray-300 mt-0.5">
-          <span>1min</span><span>30min</span>
+          className="w-full"
+        />
+        <div className="flex justify-between text-[9px] text-[var(--color-text-tertiary)]">
+          <span>1min</span>
+          <span>30min</span>
         </div>
       </div>
 
-      <div className="bg-gray-50 rounded-lg p-2.5 flex items-center justify-between">
-        <span className="text-xs text-gray-700">开机自启</span>
-        <button onClick={handleAutoStartToggle}
-          className={`w-8 h-4.5 rounded-full transition-colors relative ${autoStart ? "bg-blue-500" : "bg-gray-300"}`}>
-          <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${autoStart ? "left-[14px]" : "left-0.5"}`} />
-        </button>
+      <div className="bg-[var(--color-bg-secondary)] rounded-[var(--radius-md)] border border-[var(--color-border-subtle)] p-3 flex items-center justify-between">
+        <div>
+          <span className="text-xs font-medium text-[var(--color-text-primary)] block">开机自启</span>
+          <span className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5 block">
+            登录时自动启动应用
+          </span>
+        </div>
+        <Toggle checked={autoStart} onChange={handleAutoStartToggle} />
       </div>
     </div>
   );

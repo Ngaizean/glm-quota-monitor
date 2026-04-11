@@ -6,53 +6,121 @@ import AlertsPane from "./AlertsPane";
 import GeneralPane from "./GeneralPane";
 import AboutPane from "./AboutPane";
 
-const tabs = [
-  { id: "accounts", label: "账号" },
-  { id: "alerts", label: "预警" },
-  { id: "general", label: "通用" },
-  { id: "about", label: "关于" },
+const navItems = [
+  {
+    id: "accounts",
+    label: "账号",
+    title: "账号管理",
+    desc: "添加、管理 API Key",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+        <circle cx="12" cy="7" r="4" />
+      </svg>
+    ),
+  },
+  {
+    id: "alerts",
+    label: "预警",
+    title: "预警设置",
+    desc: "配置额度阈值通知",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+        <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+      </svg>
+    ),
+  },
+  {
+    id: "general",
+    label: "通用",
+    title: "通用设置",
+    desc: "刷新间隔、启动偏好",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+    ),
+  },
+  {
+    id: "about",
+    label: "关于",
+    title: "关于",
+    desc: "版本信息",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="16" x2="12" y2="12" />
+        <line x1="12" y1="8" x2="12.01" y2="8" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Settings({ onBack }: { onBack: () => void }) {
   const [activeTab, setActiveTab] = useState("accounts");
+  const currentNav = navItems.find((n) => n.id === activeTab)!;
 
   useEffect(() => {
     const win = getCurrentWindow();
-    win.setSize(new LogicalSize(340, 480));
+    win.setSize(new LogicalSize(440, 520));
     return () => {
-      win.setSize(new LogicalSize(340, 300));
+      win.setSize(new LogicalSize(360, 480));
     };
   }, []);
 
   return (
-    <div className="w-full h-full bg-white rounded-2xl shadow-xl border border-gray-200/50 flex flex-col select-none overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 shrink-0">
-        <button onClick={onBack}
-          className="text-[11px] text-gray-400 hover:text-gray-700 transition-colors flex items-center gap-1">
-          ← 返回
+    <div className="w-full h-full flex select-none overflow-hidden bg-[var(--color-bg-primary)] rounded-2xl shadow-[var(--shadow-lg)] border border-[var(--color-border)]">
+      {/* Sidebar */}
+      <nav className="w-[72px] bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] flex flex-col py-3 px-2 shrink-0">
+        <button
+          onClick={onBack}
+          className="p-2 rounded-[var(--radius-sm)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-[var(--transition-fast)] mb-2 flex items-center justify-center"
+          title="返回"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
         </button>
-        <span className="text-xs font-semibold text-gray-700">设置</span>
-        <div className="w-10" />
-      </div>
 
-      <div className="flex border-b border-gray-100 shrink-0">
-        {tabs.map((tab) => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex-1 py-2 text-xs transition-colors ${
-              activeTab === tab.id
-                ? "text-blue-600 border-b-2 border-blue-600"
-                : "text-gray-400 hover:text-gray-600"
-            }`}>
-            {tab.label}
-          </button>
-        ))}
-      </div>
+        <div className="space-y-0.5">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex flex-col items-center gap-0.5 py-2 rounded-[var(--radius-sm)] text-[10px] transition-[var(--transition-fast)] ${
+                activeTab === item.id
+                  ? "bg-[var(--color-accent-subtle)] text-[var(--color-accent)]"
+                  : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
+              }`}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        {activeTab === "accounts" && <AccountsPane />}
-        {activeTab === "alerts" && <AlertsPane />}
-        {activeTab === "general" && <GeneralPane />}
-        {activeTab === "about" && <AboutPane />}
+        <div className="flex-1" />
+        <div className="text-[9px] text-[var(--color-text-tertiary)] text-center">v1.0.0</div>
+      </nav>
+
+      {/* Content */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="px-5 pt-4 pb-2 shrink-0">
+          <h1 className="text-[13px] font-semibold tracking-tight text-[var(--color-text-primary)]">
+            {currentNav.title}
+          </h1>
+          <p className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5">
+            {currentNav.desc}
+          </p>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 pb-4">
+          {activeTab === "accounts" && <AccountsPane />}
+          {activeTab === "alerts" && <AlertsPane />}
+          {activeTab === "general" && <GeneralPane />}
+          {activeTab === "about" && <AboutPane />}
+        </div>
       </div>
     </div>
   );
