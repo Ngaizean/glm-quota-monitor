@@ -19,33 +19,28 @@ interface UsageSummaryData {
 function SummaryCard({ data, label }: { data: PeriodSummary; label: string }) {
   const hasData = data.snapshot_count > 0;
   const tokenPeak = data.peak_token_limit_pct;
-  const timePeak = data.peak_time_limit_pct;
 
   return (
-    <div className="bg-[var(--color-bg-secondary)] rounded-[var(--radius-md)] p-2.5 space-y-2 border border-[var(--color-border-subtle)]">
-      <div className="text-[10px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
+    <div className="flex-1 rounded-xl bg-[var(--color-bg-secondary)] p-3 space-y-2 min-w-0 border border-[var(--color-border-subtle)]">
+      <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] uppercase tracking-widest">
         {label}
       </div>
-      <div className="space-y-1">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] text-[var(--color-text-tertiary)]">Token</span>
-          <span className={`text-[11px] font-semibold tabular-nums ${
-            !hasData ? "text-[var(--color-text-tertiary)]" : tokenPeak && tokenPeak > 85 ? "text-[var(--color-danger)]" : tokenPeak && tokenPeak > 60 ? "text-[var(--color-warning)]" : "text-[var(--color-text-primary)]"
-          }`}>
-            {tokenPeak != null ? `${tokenPeak.toFixed(0)}%` : "--"}
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] text-[var(--color-text-tertiary)]">Time</span>
-          <span className={`text-[11px] font-semibold tabular-nums ${
-            !hasData ? "text-[var(--color-text-tertiary)]" : timePeak && timePeak > 85 ? "text-[var(--color-danger)]" : timePeak && timePeak > 60 ? "text-[var(--color-warning)]" : "text-[var(--color-text-primary)]"
-          }`}>
-            {timePeak != null ? `${timePeak.toFixed(0)}%` : "--"}
-          </span>
-        </div>
+      <div className="text-[15px] font-bold tabular-nums text-[var(--color-text-primary)] leading-none">
+        {hasData && tokenPeak != null ? `${tokenPeak.toFixed(0)}%` : "--"}
       </div>
-      <div className="text-[9px] text-[var(--color-text-tertiary)]">
-        {data.snapshot_count} 条记录
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] text-[var(--color-text-tertiary)]">
+          {hasData ? `${data.snapshot_count} 条` : "无数据"}
+        </span>
+        {hasData && data.peak_time_limit_pct != null && (
+          <span className={`text-[9px] font-medium tabular-nums ${
+            data.peak_time_limit_pct > 85 ? "text-[var(--color-danger)]"
+              : data.peak_time_limit_pct > 60 ? "text-[var(--color-warning)]"
+              : "text-[var(--color-success)]"
+          }`}>
+            {data.peak_time_limit_pct.toFixed(0)}%
+          </span>
+        )}
       </div>
     </div>
   );
@@ -66,11 +61,11 @@ export default function UsageSummary({ accountId }: { accountId: string }) {
 
   if (loading) {
     return (
-      <div className="space-y-2">
-        <div className="h-3 w-24 bg-[var(--color-bg-tertiary)] rounded animate-pulse" />
+      <div className="space-y-2.5">
+        <div className="h-3 w-20 skeleton rounded" />
         <div className="grid grid-cols-3 gap-2">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-20 bg-[var(--color-bg-secondary)] rounded-[var(--radius-md)] animate-pulse border border-[var(--color-border-subtle)]" />
+            <div key={i} className="h-[70px] skeleton rounded-xl" />
           ))}
         </div>
       </div>
@@ -86,9 +81,9 @@ export default function UsageSummary({ accountId }: { accountId: string }) {
   ];
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-[10px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider px-0.5">
-        额度使用汇总
+    <div className="space-y-2.5">
+      <h3 className="text-[9px] font-bold text-[var(--color-text-tertiary)] uppercase tracking-widest px-0.5">
+        额度使用峰值
       </h3>
       <div className="grid grid-cols-3 gap-2">
         {periods.map(({ data, label }) => (

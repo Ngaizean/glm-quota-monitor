@@ -6,21 +6,28 @@ interface HeaderProps {
 
 export default function Header({ loading, onRefresh, onSettings }: HeaderProps) {
   return (
-    <div className="sticky top-0 z-10 backdrop-blur-xl bg-[var(--color-bg-glass)] border-b border-[var(--color-border-subtle)] px-4 py-2.5">
-      <div className="flex items-center justify-between">
+    <div className="sticky top-0 z-10 backdrop-blur-2xl bg-[var(--color-bg-glass)] border-b border-[var(--color-border-subtle)]">
+      <div className="flex items-center justify-between px-4 py-2.5">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-md bg-[var(--color-accent)] flex items-center justify-center text-white text-[10px] font-bold shadow-sm">
-            G
+          <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[var(--color-accent)] to-violet-500 flex items-center justify-center shadow-sm">
+            <span className="text-white text-[9px] font-bold tracking-tight">G</span>
           </div>
           <span className="text-[13px] font-semibold tracking-tight text-[var(--color-text-primary)]">
             GLM Quota
           </span>
+          {loading && (
+            <div className="flex gap-0.5">
+              <span className="w-1 h-1 rounded-full bg-[var(--color-accent)] animate-bounce" style={{ animationDelay: "0ms" }} />
+              <span className="w-1 h-1 rounded-full bg-[var(--color-accent)] animate-bounce" style={{ animationDelay: "75ms" }} />
+              <span className="w-1 h-1 rounded-full bg-[var(--color-accent)] animate-bounce" style={{ animationDelay: "150ms" }} />
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-0.5">
           <button
             onClick={onRefresh}
             disabled={loading}
-            className="p-1.5 rounded-md hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] disabled:opacity-50"
+            className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] disabled:opacity-40"
             title="刷新"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -30,7 +37,7 @@ export default function Header({ loading, onRefresh, onSettings }: HeaderProps) 
           </button>
           <button
             onClick={onSettings}
-            className="p-1.5 rounded-md hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
+            className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
             title="设置"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

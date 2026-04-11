@@ -8,43 +8,49 @@ function formatResetTime(ts: number): string {
   return `${hours}h ${mins}m`;
 }
 
+function getStatusColors(pct: number) {
+  if (pct > 85) return {
+    bar: "bg-gradient-to-r from-red-400 to-rose-500",
+    dot: "bg-red-500",
+    text: "text-red-600",
+  };
+  if (pct > 60) return {
+    bar: "bg-gradient-to-r from-amber-400 to-orange-400",
+    dot: "bg-amber-500",
+    text: "text-amber-600",
+  };
+  return {
+    bar: "bg-gradient-to-r from-emerald-400 to-teal-500",
+    dot: "bg-emerald-500",
+    text: "text-[var(--color-text-primary)]",
+  };
+}
+
 function QuotaBar({ title, percentage, resetTime }: {
   title: string; percentage: number; resetTime: number;
 }) {
-  const gradientClass =
-    percentage > 85
-      ? "bg-gradient-to-r from-red-400 to-red-500"
-      : percentage > 60
-        ? "bg-gradient-to-r from-amber-400 to-amber-500"
-        : "bg-gradient-to-r from-emerald-400 to-emerald-500";
-
-  const dotColor =
-    percentage > 85
-      ? "bg-red-500"
-      : percentage > 60
-        ? "bg-amber-500"
-        : "bg-emerald-500";
+  const colors = getStatusColors(percentage);
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotColor}`} />
-          <span className="text-[11px] text-[var(--color-text-secondary)]">{title}</span>
-        </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-[var(--color-text-tertiary)]">
-            重置 {formatResetTime(resetTime)}
+          <span className={`inline-block w-[5px] h-[5px] rounded-full ${colors.dot}`} />
+          <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">{title}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] text-[var(--color-text-tertiary)] tabular-nums">
+            {formatResetTime(resetTime)}
           </span>
-          <span className="text-xs font-semibold tabular-nums text-[var(--color-text-primary)] w-10 text-right">
+          <span className={`text-[13px] font-bold tabular-nums w-12 text-right ${colors.text}`}>
             {percentage}%
           </span>
         </div>
       </div>
-      <div className="w-full h-1.5 bg-[var(--color-bg-tertiary)] rounded-full overflow-hidden">
+      <div className="w-full h-[6px] bg-[var(--color-bg-tertiary)] rounded-full overflow-hidden">
         <div
-          className={`h-full rounded-full ${gradientClass} transition-all duration-700 ease-out`}
-          style={{ width: `${Math.min(percentage, 100)}%` }}
+          className={`h-full rounded-full ${colors.bar} animate-progress`}
+          style={{ width: `${Math.min(percentage, 100)}%`, transition: "width 0.7s cubic-bezier(0.16, 1, 0.3, 1)" }}
         />
       </div>
     </div>
@@ -66,7 +72,7 @@ export default function QuotaSection({ limits }: Props) {
   const timeLimit = limits.find((l) => l.type === "TIME_LIMIT");
 
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-4 py-3 space-y-4">
       {tokensLimit && (
         <QuotaBar title="Token 额度" percentage={tokensLimit.percentage} resetTime={tokensLimit.nextResetTime} />
       )}

@@ -62,20 +62,20 @@ export default function AlertsPane() {
       {rules.map((rule) => (
         <div
           key={rule.id}
-          className={`bg-[var(--color-bg-secondary)] rounded-[var(--radius-md)] border border-[var(--color-border-subtle)] p-3 space-y-2.5 transition-[var(--transition-fast)] ${
-            !rule.enabled ? "opacity-60" : ""
+          className={`bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border-subtle)] p-3.5 space-y-3 transition-all duration-200 ${
+            !rule.enabled ? "opacity-50" : ""
           }`}
         >
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs font-medium text-[var(--color-text-primary)]">{rule.label}</div>
               <div className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5">
-                超过 {rule.threshold}% 时通知
+                超过 <span className="font-semibold text-[var(--color-accent)] tabular-nums">{rule.threshold}%</span> 时通知
               </div>
             </div>
             <Toggle checked={rule.enabled} onChange={() => toggleRule(rule.id)} />
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <input
               type="range"
               min={50}
@@ -83,7 +83,7 @@ export default function AlertsPane() {
               value={rule.threshold}
               onChange={(e) => setThreshold(rule.id, Number(e.target.value))}
               disabled={!rule.enabled}
-              className="w-full disabled:opacity-40"
+              className="w-full disabled:opacity-30"
             />
             <div className="flex justify-between text-[9px] text-[var(--color-text-tertiary)]">
               <span>50%</span>
