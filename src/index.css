@@ -47,7 +47,7 @@ html, body, #root {
   padding: 0;
   height: 100%;
   overflow: hidden;
-  background: white;
+  background: transparent;
   color-scheme: dark light;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;

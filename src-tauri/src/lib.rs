@@ -2,6 +2,7 @@ mod alert;
 mod api;
 mod commands;
 mod db;
+mod platform;
 
 use api::client::ZhipuClient;
 use db::Database;
@@ -58,6 +59,10 @@ fn create_popover_window(app: &tauri::AppHandle) {
             .always_on_top(true)
             .build()
             .expect("Failed to create popover window");
+
+    // macOS 圆角窗口（通过 CALayer 实现）
+    #[cfg(target_os = "macos")]
+    platform::macos::apply_rounded_corners(&window, 14.0);
 
     // 定位到托盘图标正下方
     if let Some(tray) = app.tray_by_id("main") {
