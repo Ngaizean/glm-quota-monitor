@@ -1,5 +1,5 @@
 use objc::{msg_send, sel, sel_impl};
-use objc::runtime::{BOOL, Object, YES, NO};
+use objc::runtime::{Object, YES, NO};
 
 pub fn apply_rounded_corners(window: &tauri::WebviewWindow, radius: f64) {
     let ns_window: *mut Object = match window.ns_window() {

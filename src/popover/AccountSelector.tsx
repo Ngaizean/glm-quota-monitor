@@ -1,17 +1,5 @@
 import { getAvatarGradient, getLevelStyle } from "../lib/ui";
-
-interface Account {
-  id: string;
-  alias: string;
-  purpose: string;
-  level: string | null;
-  is_active: boolean;
-}
-
-interface QuotaData {
-  limits: { type: string; percentage: number; nextResetTime: number }[];
-  level: string;
-}
+import type { Account, QuotaData } from "../types";
 
 interface Props {
   accounts: Account[];

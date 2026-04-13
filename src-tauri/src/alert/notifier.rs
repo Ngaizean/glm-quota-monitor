@@ -10,21 +10,21 @@ pub fn check_and_notify(
     quota: &QuotaData,
     notify_fn: &dyn Fn(&str),
 ) {
-    let conn = db.conn.lock().unwrap();
+    let conn = match db.conn.lock() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
 
-    // 查询启用的预警规则
-    let mut stmt = conn
-        .prepare("SELECT rule_type, threshold FROM alert_rules WHERE enabled = 1")
-        .unwrap();
-
-    let rules: Vec<(String, f64)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect();
+    let rules: Vec<(String, f64)> = match conn.prepare("SELECT rule_type, threshold FROM alert_rules WHERE enabled = 1") {
+        Ok(mut stmt) => stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .ok()
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default(),
+        Err(_) => return,
+    };
 
     for (rule_type, threshold) in &rules {
-        // 获取对应额度百分比
         let pct = match rule_type.as_str() {
             "token_5h" => quota
                 .limits
@@ -48,19 +48,16 @@ pub fn check_and_notify(
         };
 
         if pct >= *threshold {
-            // 去重检查
             if has_fired_this_period(&conn, account_id, rule_type) {
                 continue;
             }
 
-            // 触发通知
             let msg = format!(
                 "[{}] {} 使用率已达 {:.0}%（阈值 {:.0}%）",
                 account_alias, rule_type, pct, threshold
             );
             notify_fn(&msg);
 
-            // 记录
             record_alert(&conn, account_id, rule_type, pct);
         }
     }

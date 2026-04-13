@@ -26,6 +26,14 @@ impl ZhipuClient {
         }
     }
 
+    /// 使用共享的 reqwest Client（避免重复创建连接池）
+    pub fn with_client(client: &reqwest::Client, api_key: &str) -> Self {
+        Self {
+            client: client.clone(),
+            api_key: api_key.to_string(),
+        }
+    }
+
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
         let url = format!("{}{}", BASE_URL, path);
         let resp = self
@@ -65,11 +73,17 @@ impl ZhipuClient {
         start_time: &str,
         end_time: &str,
     ) -> Result<ModelUsageData, ApiError> {
-        let path = format!(
-            "/api/monitor/usage/model-usage?startTime={}&endTime={}",
-            start_time, end_time
-        );
-        self.get(&path).await
+        let url = reqwest::Url::parse_with_params(
+            &format!("{}{}", BASE_URL, "/api/monitor/usage/model-usage"),
+            &[("startTime", start_time), ("endTime", end_time)],
+        )
+        .map_err(|e| ApiError::Api {
+            code: -1,
+            msg: e.to_string(),
+        })?;
+        let path = url.path();
+        let query = url.query().unwrap_or("");
+        self.get(&format!("{}?{}", path, query)).await
     }
 
     /// 查询工具用量
@@ -78,10 +92,16 @@ impl ZhipuClient {
         start_time: &str,
         end_time: &str,
     ) -> Result<ToolUsageData, ApiError> {
-        let path = format!(
-            "/api/monitor/usage/tool-usage?startTime={}&endTime={}",
-            start_time, end_time
-        );
-        self.get(&path).await
+        let url = reqwest::Url::parse_with_params(
+            &format!("{}{}", BASE_URL, "/api/monitor/usage/tool-usage"),
+            &[("startTime", start_time), ("endTime", end_time)],
+        )
+        .map_err(|e| ApiError::Api {
+            code: -1,
+            msg: e.to_string(),
+        })?;
+        let path = url.path();
+        let query = url.query().unwrap_or("");
+        self.get(&format!("{}?{}", path, query)).await
     }
 }

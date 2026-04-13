@@ -1,24 +1,39 @@
+use keyring::Entry;
 use thiserror::Error;
+
+const SERVICE_NAME: &str = "glm-quota-monitor";
 
 #[derive(Error, Debug)]
 pub enum CryptoError {
-    #[error("Storage error: {0}")]
-    Storage(String),
+    #[error("Keychain error: {0}")]
+    Keychain(String),
 }
 
-/// 存储 API Key（直接明文存数据库，由 macOS 文件权限保护）
-pub fn store_api_key(_account_id: &str, _api_key: &str) -> Result<(), CryptoError> {
-    // 不再使用 Keychain，直接在 commands 层存入数据库
+/// 将 API Key 存入系统 Keychain
+pub fn store_api_key(account_id: &str, api_key: &str) -> Result<(), CryptoError> {
+    let entry = Entry::new(SERVICE_NAME, account_id)
+        .map_err(|e| CryptoError::Keychain(e.to_string()))?;
+    entry
+        .set_password(api_key)
+        .map_err(|e| CryptoError::Keychain(e.to_string()))?;
     Ok(())
 }
 
-/// 从数据库读取 API Key（在 commands 层直接查询）
-pub fn get_api_key(_account_id: &str) -> Result<String, CryptoError> {
-    // 由 commands 层直接从数据库读取
-    Ok(String::new())
+/// 从系统 Keychain 读取 API Key
+pub fn get_api_key(account_id: &str) -> Result<String, CryptoError> {
+    let entry = Entry::new(SERVICE_NAME, account_id)
+        .map_err(|e| CryptoError::Keychain(e.to_string()))?;
+    entry
+        .get_password()
+        .map_err(|e| CryptoError::Keychain(e.to_string()))
 }
 
-/// 删除 API Key（数据库层处理）
-pub fn delete_api_key(_account_id: &str) -> Result<(), CryptoError> {
+/// 从系统 Keychain 删除 API Key
+pub fn delete_api_key(account_id: &str) -> Result<(), CryptoError> {
+    let entry = Entry::new(SERVICE_NAME, account_id)
+        .map_err(|e| CryptoError::Keychain(e.to_string()))?;
+    entry
+        .delete_password()
+        .map_err(|e| CryptoError::Keychain(e.to_string()))?;
     Ok(())
 }

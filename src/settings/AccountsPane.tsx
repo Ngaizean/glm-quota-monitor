@@ -1,14 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { getAvatarGradient, getLevelStyle } from "../lib/ui";
-
-interface Account {
-  id: string;
-  alias: string;
-  purpose: string;
-  level: string | null;
-  is_active: boolean;
-}
+import type { Account } from "../types";
 
 const inputClass =
   "w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-[var(--color-accent)]/20 focus:border-[var(--color-accent)] transition-[var(--transition-fast)] placeholder:text-[var(--color-text-tertiary)]";

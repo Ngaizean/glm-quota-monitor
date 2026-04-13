@@ -1,3 +1,5 @@
+import type { QuotaLimit } from "../types";
+
 function formatResetTime(ts: number): string {
   if (!ts) return "--";
   const diff = ts - Date.now();
@@ -55,12 +57,6 @@ function QuotaBar({ title, percentage, resetTime }: {
       </div>
     </div>
   );
-}
-
-interface QuotaLimit {
-  type: string;
-  percentage: number;
-  nextResetTime: number;
 }
 
 interface Props {

@@ -1,6 +1,7 @@
 mod alert;
 mod api;
 mod commands;
+mod crypto;
 mod db;
 mod platform;
 
@@ -16,7 +17,7 @@ use tauri::{
 };
 
 const POPOVER_LABEL: &str = "popover";
-const REFRESH_INTERVAL_SECS: u64 = 300; // 5 分钟
+const DEFAULT_REFRESH_INTERVAL_SECS: u64 = 300;
 
 /// 全局最高额度百分比，用于图标显示
 static MAX_PERCENTAGE: AtomicI32 = AtomicI32::new(-1);
@@ -60,11 +61,9 @@ fn create_popover_window(app: &tauri::AppHandle) {
             .build()
             .expect("Failed to create popover window");
 
-    // macOS 圆角窗口（通过 CALayer 实现）
     #[cfg(target_os = "macos")]
     platform::macos::apply_rounded_corners(&window, 14.0);
 
-    // 定位到托盘图标正下方
     if let Some(tray) = app.tray_by_id("main") {
         if let Ok(Some(rect)) = tray.rect() {
             if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
@@ -81,6 +80,38 @@ fn create_popover_window(app: &tauri::AppHandle) {
 }
 
 // ========== 后台刷新 ==========
+
+/// 从数据库读取刷新间隔设置（分钟 → 秒）
+fn get_refresh_interval(db: &Database) -> u64 {
+    let conn = match db.conn.lock() {
+        Ok(c) => c,
+        Err(_) => return DEFAULT_REFRESH_INTERVAL_SECS,
+    };
+    conn.query_row(
+        "SELECT value FROM app_settings WHERE key = 'refresh_interval'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|v| v.parse::<u64>().ok())
+    .map(|mins| mins * 60)
+    .unwrap_or(DEFAULT_REFRESH_INTERVAL_SECS)
+}
+
+/// 从 Keychain 或数据库获取 API Key（兼容旧数据迁移）
+fn resolve_api_key(account_id: &str, db_key: &str) -> Option<String> {
+    // 优先从 Keychain 读取
+    if let Ok(key) = crypto::get_api_key(account_id) {
+        return Some(key);
+    }
+    // 降级：数据库明文（旧数据）
+    if !db_key.is_empty() {
+        // 迁移到 Keychain
+        let _ = crypto::store_api_key(account_id, db_key);
+        return Some(db_key.to_string());
+    }
+    None
+}
 
 /// 刷新所有账号额度，返回最高百分比
 fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
@@ -101,15 +132,16 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
     };
 
     let mut max_pct = 0i32;
+    let http_client = reqwest::Client::new();
 
-    for (account_id, account_alias, api_key) in &accounts {
-        if api_key.is_empty() {
-            continue;
-        }
+    for (account_id, account_alias, db_key) in &accounts {
+        let api_key = match resolve_api_key(account_id, db_key) {
+            Some(k) => k,
+            None => continue,
+        };
 
-        let client = ZhipuClient::new(&api_key);
-        let Ok(rt) = tokio::runtime::Runtime::new() else { continue };
-        let result = rt.block_on(async { client.get_quota_limit().await });
+        let client = ZhipuClient::with_client(&http_client, &api_key);
+        let result = tauri::async_runtime::block_on(client.get_quota_limit());
 
         match result {
             Ok(quota) => {
@@ -119,27 +151,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
                 }
 
                 if let Ok(conn2) = db.conn.lock() {
-                    let now = chrono::Utc::now().to_rfc3339();
-                    let time_limit = quota.limits.iter().find(|l| l.limit_type == "TIME_LIMIT");
-                    let token_limit = quota.limits.iter().find(|l| l.limit_type == "TOKENS_LIMIT");
-
-                    let _ = conn2.execute(
-                        "INSERT INTO usage_snapshots (account_id, timestamp, time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                        rusqlite::params![
-                            account_id,
-                            now,
-                            time_limit.map(|l| l.percentage as f64),
-                            time_limit.map(|l| l.next_reset_time),
-                            token_limit.map(|l| l.percentage as f64),
-                            token_limit.map(|l| l.next_reset_time),
-                        ],
-                    );
-
-                    let _ = conn2.execute(
-                        "UPDATE accounts SET level = ?1 WHERE id = ?2",
-                        rusqlite::params![quota.level, account_id],
-                    );
+                    let _ = db::record_quota_snapshot(&conn2, account_id, &quota);
                 }
 
                 // 预警检查
@@ -172,7 +184,6 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
     max_pct
 }
 
-/// 更新托盘：tooltip + 标题显示百分比
 fn update_tray_display(app: &tauri::AppHandle, percentage: i32) {
     if let Some(tray) = app.tray_by_id("main") {
         if percentage >= 0 {
@@ -216,16 +227,13 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            // macOS: 隐藏 Dock 图标和菜单栏标签
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            // 初始化数据库
             let db = Database::new(&get_db_path(app))
                 .expect("Failed to initialize database");
             db.init_tables().expect("Failed to create tables");
 
-            // 初始化默认预警规则
             {
                 let conn = db.conn.lock().unwrap();
                 alert::rules::init_default_rules(&conn);
@@ -233,7 +241,6 @@ pub fn run() {
 
             app.manage(db);
 
-            // 系统托盘 — 只响应左键点击
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().unwrap())
                 .tooltip("GLM Quota Monitor")
@@ -250,16 +257,24 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // 启动后台定时刷新
+            // 后台定时刷新
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
+                // 首次延迟 5 秒
                 std::thread::sleep(Duration::from_secs(5));
                 let max_pct = refresh_all_accounts(&app_handle);
                 MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
                 update_tray_display(&app_handle, max_pct);
 
                 loop {
-                    std::thread::sleep(Duration::from_secs(REFRESH_INTERVAL_SECS));
+                    // 每次循环读取最新的刷新间隔设置
+                    let interval = if let Some(db) = app_handle.try_state::<Database>() {
+                        get_refresh_interval(&db)
+                    } else {
+                        DEFAULT_REFRESH_INTERVAL_SECS
+                    };
+                    std::thread::sleep(Duration::from_secs(interval));
+
                     let max_pct = refresh_all_accounts(&app_handle);
                     MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
                     update_tray_display(&app_handle, max_pct);

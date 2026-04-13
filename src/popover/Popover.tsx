@@ -1,29 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "./Header";
 import AccountSelector from "./AccountSelector";
 import QuotaSection from "./QuotaSection";
 import UsageSummary from "./UsageSummary";
-
-interface QuotaLimit {
-  type: string;
-  percentage: number;
-  nextResetTime: number;
-}
-
-interface QuotaData {
-  limits: QuotaLimit[];
-  level: string;
-}
-
-interface Account {
-  id: string;
-  alias: string;
-  purpose: string;
-  level: string | null;
-  is_active: boolean;
-}
+import type { Account, QuotaData } from "../types";
 
 function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -33,7 +15,11 @@ function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [error, setError] = useState("");
   const [summaryKey, setSummaryKey] = useState(0);
 
-  function loadAccounts() {
+  // 用 ref 追踪最新值，避免 onFocusChanged 闭包捕获过期的 state
+  const selectedAccountRef = useRef(selectedAccount);
+  selectedAccountRef.current = selectedAccount;
+
+  const loadAccounts = useCallback(() => {
     invoke<Account[]>("list_accounts").then((accs) => {
       setAccounts(accs);
       if (accs.length === 0) {
@@ -44,33 +30,9 @@ function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
       console.error("loadAccounts failed:", e);
       setError(String(e));
     });
-  }
-
-  useEffect(() => { loadAccounts(); }, []);
-
-  useEffect(() => {
-    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-      if (focused) {
-        loadAccounts();
-      } else {
-        getCurrentWindow().hide();
-      }
-    });
-    return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  useEffect(() => {
-    if (accounts.length > 0 && !accounts.find((a) => a.id === selectedAccount)) {
-      setSelectedAccount(accounts[0].id);
-    }
-  }, [accounts]);
-
-  useEffect(() => {
-    if (!selectedAccount) return;
-    fetchQuota(selectedAccount);
-  }, [selectedAccount]);
-
-  async function fetchQuota(accountId: string) {
+  const fetchQuota = useCallback(async (accountId: string) => {
     setLoading(true);
     setError("");
     try {
@@ -81,7 +43,36 @@ function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => { loadAccounts(); }, [loadAccounts]);
+
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused) {
+        loadAccounts();
+        const accountId = selectedAccountRef.current;
+        if (accountId) {
+          fetchQuota(accountId);
+          setSummaryKey((k) => k + 1);
+        }
+      } else {
+        getCurrentWindow().hide();
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, [loadAccounts, fetchQuota]);
+
+  useEffect(() => {
+    if (accounts.length > 0 && !accounts.find((a) => a.id === selectedAccount)) {
+      setSelectedAccount(accounts[0].id);
+    }
+  }, [accounts, selectedAccount]);
+
+  useEffect(() => {
+    if (!selectedAccount) return;
+    fetchQuota(selectedAccount);
+  }, [selectedAccount, fetchQuota]);
 
   async function refreshAll() {
     setLoading(true);

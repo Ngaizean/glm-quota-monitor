@@ -1,4 +1,5 @@
 use crate::api::client::ZhipuClient;
+use crate::crypto;
 use crate::db::models::Account;
 use crate::db::Database;
 use chrono::Utc;
@@ -39,12 +40,16 @@ pub fn add_account(
     let now = Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
 
+    // API Key 存入系统 Keychain，数据库中不存储明文
+    crypto::store_api_key(&id, &api_key)
+        .map_err(|e| format!("Keychain 存储失败: {}", e))?;
+
     {
         let conn = db.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO accounts (id, alias, purpose, platform, level, api_key, is_active, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 'zhipu', ?4, ?5, 1, ?6, ?7)",
-            rusqlite::params![id, alias, purpose, quota.level, api_key, now, now],
+             VALUES (?1, ?2, ?3, 'zhipu', ?4, '', 1, ?5, ?6)",
+            rusqlite::params![id, alias, purpose, quota.level, now, now],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -96,30 +101,24 @@ pub fn delete_account(
     db: State<'_, Database>,
     id: String,
 ) -> Result<(), String> {
+    // 使用事务确保原子删除
     {
         let conn = db.conn.lock().unwrap();
-        // 按外键依赖顺序删除
-        conn.execute(
-            "DELETE FROM alert_history WHERE account_id = ?1",
-            rusqlite::params![id],
-        )
-        .map_err(|e| e.to_string())?;
-        conn.execute(
-            "DELETE FROM alert_rules WHERE account_id = ?1",
-            rusqlite::params![id],
-        )
-        .map_err(|e| e.to_string())?;
-        conn.execute(
-            "DELETE FROM usage_snapshots WHERE account_id = ?1",
-            rusqlite::params![id],
-        )
-        .map_err(|e| e.to_string())?;
-        conn.execute(
-            "DELETE FROM accounts WHERE id = ?1",
-            rusqlite::params![id],
-        )
-        .map_err(|e| e.to_string())?;
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM alert_history WHERE account_id = ?1", rusqlite::params![id])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM alert_rules WHERE account_id = ?1", rusqlite::params![id])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM usage_snapshots WHERE account_id = ?1", rusqlite::params![id])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![id])
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
     }
+
+    // 从 Keychain 删除（失败不影响主流程）
+    let _ = crypto::delete_api_key(&id);
+
     let _ = app.emit("accounts-changed", ());
     Ok(())
 }

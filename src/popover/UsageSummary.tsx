@@ -1,20 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
-
-interface PeriodSummary {
-  period_label: string;
-  snapshot_count: number;
-  avg_token_limit_pct: number | null;
-  peak_token_limit_pct: number | null;
-  avg_time_limit_pct: number | null;
-  peak_time_limit_pct: number | null;
-}
-
-interface UsageSummaryData {
-  today: PeriodSummary;
-  last_7d: PeriodSummary;
-  last_30d: PeriodSummary;
-}
+import type { UsageSummaryData, PeriodSummary } from "../types";
 
 function SummaryCard({ data, label }: { data: PeriodSummary; label: string }) {
   const hasData = data.snapshot_count > 0;

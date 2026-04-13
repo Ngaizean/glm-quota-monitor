@@ -102,7 +102,7 @@ export default function Settings({ onBack }: { onBack: () => void }) {
         </div>
 
         <div className="flex-1" />
-        <div className="text-[8px] text-[var(--color-text-tertiary)] text-center font-medium">v1.0.0</div>
+        <div className="text-[8px] text-[var(--color-text-tertiary)] text-center font-medium">v2.0.0</div>
       </nav>
 
       {/* Content */}
