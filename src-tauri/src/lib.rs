@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 use tauri::{
+    menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder},
     webview::WebviewWindowBuilder,
     Manager,
@@ -38,6 +39,20 @@ fn toggle_popover(app: &tauri::AppHandle) {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
+            // 每次显示前重新定位，跟随托盘图标当前位置
+            if let Some(tray) = app.tray_by_id("main") {
+                if let Ok(Some(rect)) = tray.rect() {
+                    if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
+                        (rect.position, rect.size)
+                    {
+                        let x = pos.x + (size.width as i32 - 360) / 2;
+                        let y = pos.y + size.height as i32 + 4;
+                        let _ = window.set_position(tauri::Position::Physical(
+                            tauri::PhysicalPosition::new(x, y),
+                        ));
+                    }
+                }
+            }
             let _ = window.show();
             let _ = window.set_focus();
         }
@@ -62,14 +77,14 @@ fn create_popover_window(app: &tauri::AppHandle) {
             .expect("Failed to create popover window");
 
     #[cfg(target_os = "macos")]
-    platform::macos::apply_rounded_corners(&window, 14.0);
+    platform::macos::apply_rounded_corners(&window, 12.0);
 
     if let Some(tray) = app.tray_by_id("main") {
         if let Ok(Some(rect)) = tray.rect() {
             if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
                 (rect.position, rect.size)
             {
-                let x = pos.x + size.width as i32 - 360;
+                let x = pos.x + (size.width as i32 - 360) / 2;
                 let y = pos.y + size.height as i32 + 4;
                 let _ = window.set_position(tauri::Position::Physical(
                     tauri::PhysicalPosition::new(x, y),
@@ -145,7 +160,10 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
 
         match result {
             Ok(quota) => {
-                let pct = quota.limits.iter().map(|l| l.percentage).max().unwrap_or(0);
+                let pct = quota.limits.iter()
+                    .find(|l| l.limit_type == "TOKENS_LIMIT")
+                    .map(|l| l.percentage as i32)
+                    .unwrap_or(0);
                 if pct > max_pct {
                     max_pct = pct;
                 }
@@ -241,9 +259,30 @@ pub fn run() {
 
             app.manage(db);
 
+            let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+            let refresh_item = MenuItemBuilder::with_id("refresh", "立即刷新").build(app)?;
+            let tray_menu = MenuBuilder::new(app)
+                .item(&refresh_item)
+                .separator()
+                .item(&quit_item)
+                .build()?;
+
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().unwrap())
                 .tooltip("GLM Quota Monitor")
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(move |app, event| match event.id().as_ref() {
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    "refresh" => {
+                        let max_pct = refresh_all_accounts(app);
+                        MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
+                        update_tray_display(app, max_pct);
+                    }
+                    _ => {}
+                })
                 .on_tray_icon_event(|tray, event| {
                     if let tauri::tray::TrayIconEvent::Click {
                         button: MouseButton::Left,

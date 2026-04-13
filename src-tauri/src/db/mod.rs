@@ -39,9 +39,12 @@ pub fn record_quota_snapshot(
     let time_limit = quota.limits.iter().find(|l| l.limit_type == "TIME_LIMIT");
     let token_limit = quota.limits.iter().find(|l| l.limit_type == "TOKENS_LIMIT");
 
+    // Token 已用量（万为单位）
+    let token_usage = token_limit.and_then(|l| l.usage).unwrap_or(0.0);
+
     conn.execute(
-        "INSERT INTO usage_snapshots (account_id, timestamp, time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO usage_snapshots (account_id, timestamp, time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset, total_tokens_24h)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
             account_id,
             now,
@@ -49,6 +52,7 @@ pub fn record_quota_snapshot(
             time_limit.map(|l| l.next_reset_time),
             token_limit.map(|l| l.percentage as f64),
             token_limit.map(|l| l.next_reset_time),
+            token_usage as i64,
         ],
     )?;
 

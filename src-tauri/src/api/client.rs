@@ -47,7 +47,19 @@ impl ZhipuClient {
             return Err(ApiError::Unauthorized);
         }
 
-        let body: ApiResponse<T> = resp.json().await?;
+        // 先读取文本，解析失败时给出有意义的错误信息
+        let text = resp.text().await?;
+        let body: ApiResponse<T> = serde_json::from_str(&text).map_err(|e| {
+            let preview = if text.len() > 300 {
+                format!("{}...(truncated)", &text[..300])
+            } else {
+                text.clone()
+            };
+            ApiError::Api {
+                code: -1,
+                msg: format!("响应解析失败: {} | 原始响应: {}", e, preview),
+            }
+        })?;
 
         if !body.success || body.code != 200 {
             return Err(ApiError::Api {

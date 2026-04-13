@@ -51,10 +51,10 @@ pub struct AlertRecord {
 pub struct PeriodSummary {
     pub period_label: String,
     pub snapshot_count: i32,
-    pub avg_token_limit_pct: Option<f64>,
-    pub peak_token_limit_pct: Option<f64>,
-    pub avg_time_limit_pct: Option<f64>,
-    pub peak_time_limit_pct: Option<f64>,
+    /// 该时段最后一次快照记录的 token 已用量（万）
+    pub token_usage: Option<f64>,
+    /// 该时段最后一次快照记录的 mcp 调用百分比
+    pub mcp_pct: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

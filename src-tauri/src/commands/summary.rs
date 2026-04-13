@@ -1,58 +1,73 @@
-use crate::db::models::{PeriodSummary, UsageSummary};
+use crate::api::client::ZhipuClient;
+use crate::crypto;
 use crate::db::Database;
-use chrono::{Duration, Utc};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
-fn query_period(conn: &rusqlite::Connection, account_id: &str, since: &str, label: &str) -> PeriodSummary {
-    let result: Result<(i32, Option<f64>, Option<f64>, Option<f64>, Option<f64>), _> = conn.query_row(
-        "SELECT
-            COUNT(*) as snapshot_count,
-            AVG(token_limit_pct) as avg_token_pct,
-            MAX(token_limit_pct) as peak_token_pct,
-            AVG(time_limit_pct) as avg_time_pct,
-            MAX(time_limit_pct) as peak_time_pct
-         FROM usage_snapshots
-         WHERE account_id = ?1 AND timestamp >= ?2",
-        rusqlite::params![account_id, since],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-    );
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TokenUsagePeriod {
+    pub label: String,
+    /// Token 总用量（原始值，单位取决于 API 返回）
+    pub total_tokens: f64,
+    /// 模型调用次数
+    pub total_calls: f64,
+}
 
-    match result {
-        Ok((count, avg_token, peak_token, avg_time, peak_time)) => PeriodSummary {
-            period_label: label.to_string(),
-            snapshot_count: count,
-            avg_token_limit_pct: avg_token,
-            peak_token_limit_pct: peak_token,
-            avg_time_limit_pct: avg_time,
-            peak_time_limit_pct: peak_time,
-        },
-        Err(_) => PeriodSummary {
-            period_label: label.to_string(),
-            snapshot_count: 0,
-            avg_token_limit_pct: None,
-            peak_token_limit_pct: None,
-            avg_time_limit_pct: None,
-            peak_time_limit_pct: None,
-        },
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TokenUsageSummary {
+    pub today: TokenUsagePeriod,
+    pub last_7d: TokenUsagePeriod,
+    pub last_30d: TokenUsagePeriod,
 }
 
 #[tauri::command]
-pub fn get_usage_summary(db: State<'_, Database>, account_id: String) -> Result<UsageSummary, String> {
-    let conn = db.conn.lock().unwrap();
+pub fn get_usage_summary(db: State<'_, Database>, account_id: String) -> Result<TokenUsageSummary, String> {
+    let api_key = match crypto::get_api_key(&account_id) {
+        Ok(key) => key,
+        Err(_) => {
+            let conn = db.conn.lock().unwrap();
+            let db_key: String = conn
+                .query_row(
+                    "SELECT api_key FROM accounts WHERE id = ?1",
+                    rusqlite::params![account_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("账号不存在: {}", e))?;
+            if db_key.is_empty() {
+                return Err("API key not found".to_string());
+            }
+            let _ = crypto::store_api_key(&account_id, &db_key);
+            let _ = conn.execute("UPDATE accounts SET api_key = '' WHERE id = ?1", rusqlite::params![account_id]);
+            db_key
+        }
+    };
 
-    let today_start = Utc::now()
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .to_rfc3339();
-    let seven_days_ago = (Utc::now() - Duration::days(7)).to_rfc3339();
-    let thirty_days_ago = (Utc::now() - Duration::days(30)).to_rfc3339();
+    let client = ZhipuClient::new(&api_key);
 
-    let today = query_period(&conn, &account_id, &today_start, "today");
-    let last_7d = query_period(&conn, &account_id, &seven_days_ago, "7d");
-    let last_30d = query_period(&conn, &account_id, &thirty_days_ago, "30d");
+    let now = chrono::Utc::now();
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+    let seven_days_ago = now - chrono::Duration::days(7);
+    let thirty_days_ago = now - chrono::Duration::days(30);
 
-    Ok(UsageSummary { today, last_7d, last_30d })
+    let fmt = |dt: chrono::DateTime<chrono::Utc>| dt.format("%Y-%m-%d %H:%M:%S").to_string();
+    let now_str = fmt(now);
+    let today_str = fmt(today_start);
+    let seven_str = fmt(seven_days_ago);
+    let thirty_str = fmt(thirty_days_ago);
+
+    let fetch = |start: &str, end: &str, label: &str| -> Result<TokenUsagePeriod, String> {
+        let data = tauri::async_runtime::block_on(client.get_model_usage(start, end))
+            .map_err(|e| e.to_string())?;
+        Ok(TokenUsagePeriod {
+            label: label.to_string(),
+            total_tokens: data.total_usage.total_tokens_usage,
+            total_calls: data.total_usage.total_model_call_count,
+        })
+    };
+
+    let today = fetch(&today_str, &now_str, "Today")?;
+    let last_7d = fetch(&seven_str, &now_str, "7 Days")?;
+    let last_30d = fetch(&thirty_str, &now_str, "30 Days")?;
+
+    Ok(TokenUsageSummary { today, last_7d, last_30d })
 }

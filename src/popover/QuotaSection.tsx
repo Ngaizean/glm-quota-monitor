@@ -45,7 +45,7 @@ function QuotaBar({ title, percentage, resetTime }: {
             {formatResetTime(resetTime)}
           </span>
           <span className={`text-[13px] font-bold tabular-nums w-12 text-right ${colors.text}`}>
-            {percentage}%
+            {Math.round(percentage)}%
           </span>
         </div>
       </div>
@@ -73,7 +73,7 @@ export default function QuotaSection({ limits }: Props) {
         <QuotaBar title="Token 额度" percentage={tokensLimit.percentage} resetTime={tokensLimit.nextResetTime} />
       )}
       {timeLimit && timeLimit.percentage > 0 && (
-        <QuotaBar title="时间窗口" percentage={timeLimit.percentage} resetTime={timeLimit.nextResetTime} />
+        <QuotaBar title="MCP 调用额度" percentage={timeLimit.percentage} resetTime={timeLimit.nextResetTime} />
       )}
     </div>
   );

@@ -1,45 +1,39 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
-import type { UsageSummaryData, PeriodSummary } from "../types";
+import type { TokenUsageSummary, TokenUsagePeriod } from "../types";
 
-function SummaryCard({ data, label }: { data: PeriodSummary; label: string }) {
-  const hasData = data.snapshot_count > 0;
-  const tokenPeak = data.peak_token_limit_pct;
+/** 格式化 token 数量：>=1亿显示亿，>=1万显示万，否则显示原始值 */
+function formatTokens(n: number): string {
+  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}亿`;
+  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}万`;
+  if (n >= 1) return `${n.toFixed(0)}`;
+  return "0";
+}
 
+function SummaryCard({ data, label }: { data: TokenUsagePeriod; label: string }) {
   return (
     <div className="flex-1 rounded-xl bg-[var(--color-bg-secondary)] p-3 space-y-2 min-w-0 border border-[var(--color-border-subtle)]">
       <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] uppercase tracking-widest">
         {label}
       </div>
       <div className="text-[15px] font-bold tabular-nums text-[var(--color-text-primary)] leading-none">
-        {hasData && tokenPeak != null ? `${tokenPeak.toFixed(0)}%` : "--"}
+        {formatTokens(data.total_tokens)}
       </div>
-      <div className="flex items-center justify-between">
-        <span className="text-[9px] text-[var(--color-text-tertiary)]">
-          {hasData ? `${data.snapshot_count} 条` : "无数据"}
-        </span>
-        {hasData && data.peak_time_limit_pct != null && (
-          <span className={`text-[9px] font-medium tabular-nums ${
-            data.peak_time_limit_pct > 85 ? "text-[var(--color-danger)]"
-              : data.peak_time_limit_pct > 60 ? "text-[var(--color-warning)]"
-              : "text-[var(--color-success)]"
-          }`}>
-            {data.peak_time_limit_pct.toFixed(0)}%
-          </span>
-        )}
+      <div className="text-[9px] text-[var(--color-text-tertiary)]">
+        {data.total_calls > 0 ? `${data.total_calls.toFixed(0)} 次调用` : "无数据"}
       </div>
     </div>
   );
 }
 
 export default function UsageSummary({ accountId }: { accountId: string }) {
-  const [summary, setSummary] = useState<UsageSummaryData | null>(null);
+  const [summary, setSummary] = useState<TokenUsageSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!accountId) return;
     setLoading(true);
-    invoke<UsageSummaryData>("get_usage_summary", { accountId })
+    invoke<TokenUsageSummary>("get_usage_summary", { accountId })
       .then((data) => setSummary(data))
       .catch(() => setSummary(null))
       .finally(() => setLoading(false));
@@ -69,7 +63,7 @@ export default function UsageSummary({ accountId }: { accountId: string }) {
   return (
     <div className="space-y-2.5">
       <h3 className="text-[9px] font-bold text-[var(--color-text-tertiary)] uppercase tracking-widest px-0.5">
-        额度使用峰值
+        Token 使用量
       </h3>
       <div className="grid grid-cols-3 gap-2">
         {periods.map(({ data, label }) => (

@@ -14,20 +14,19 @@ export interface QuotaLimit {
 
 export interface QuotaData {
   limits: QuotaLimit[];
-  level: string;
+  level: string | null;
 }
 
-export interface PeriodSummary {
-  period_label: string;
-  snapshot_count: number;
-  avg_token_limit_pct: number | null;
-  peak_token_limit_pct: number | null;
-  avg_time_limit_pct: number | null;
-  peak_time_limit_pct: number | null;
+export interface TokenUsagePeriod {
+  label: string;
+  /** Token 总用量 */
+  total_tokens: number;
+  /** 模型调用次数 */
+  total_calls: number;
 }
 
-export interface UsageSummaryData {
-  today: PeriodSummary;
-  last_7d: PeriodSummary;
-  last_30d: PeriodSummary;
+export interface TokenUsageSummary {
+  today: TokenUsagePeriod;
+  last_7d: TokenUsagePeriod;
+  last_30d: TokenUsagePeriod;
 }

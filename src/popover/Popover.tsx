@@ -51,11 +51,14 @@ function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
     const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) {
         loadAccounts();
-        const accountId = selectedAccountRef.current;
-        if (accountId) {
-          fetchQuota(accountId);
-          setSummaryKey((k) => k + 1);
-        }
+        // 先刷新所有账号（同步托盘图标），再拉取当前账号详情
+        invoke("refresh_all").then(() => {
+          const accountId = selectedAccountRef.current;
+          if (accountId) {
+            fetchQuota(accountId);
+            setSummaryKey((k) => k + 1);
+          }
+        }).catch((e) => console.error("refresh_all failed:", e));
       } else {
         getCurrentWindow().hide();
       }

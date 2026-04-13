@@ -22,7 +22,7 @@ export default function AccountSelector({ accounts, selected, onSelect, quota }:
           <span className="text-[13px] font-semibold text-[var(--color-text-primary)] truncate">
             {current.alias}
           </span>
-          {quota && (
+          {quota && quota.level && (
             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider shrink-0 ${getLevelStyle(quota.level)}`}>
               {quota.level}
             </span>
