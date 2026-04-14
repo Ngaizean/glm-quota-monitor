@@ -1,7 +1,7 @@
 # GLM Quota Monitor — Windows 开发计划书
 
 > 负责人：余泓麟（Alidadei）
-> 审阅人：Ngaizean
+> 审阅人：相互
 > 日期：2026-04-14
 
 ---
