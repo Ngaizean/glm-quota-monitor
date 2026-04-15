@@ -72,16 +72,19 @@ fn create_popover_window(app: &tauri::AppHandle) {
         return;
     }
 
-    let window =
+    let builder =
         WebviewWindowBuilder::new(app, POPOVER_LABEL, tauri::WebviewUrl::App("index.html".into()))
             .title("GLM Quota Monitor")
             .inner_size(360.0, 600.0)
             .decorations(false)
             .resizable(false)
             .skip_taskbar(true)
-            .always_on_top(true)
-            .build()
-            .expect("Failed to create popover window");
+            .always_on_top(true);
+    #[cfg(target_os = "windows")]
+    let builder = builder.shadow(false);
+    let window = builder
+        .build()
+        .expect("Failed to create popover window");
 
     platform::apply_window_decoration(&window);
 
@@ -262,6 +265,29 @@ fn refresh_all(app: tauri::AppHandle) -> Result<RefreshResult, String> {
     Ok(result)
 }
 
+/// Windows: 使用 Win32 原生拖拽（ReleaseCapture + WM_NCLBUTTONDOWN/HTCAPTION）
+/// macOS: data-tauri-drag-region 属性处理拖拽，此命令为空操作
+#[tauri::command]
+fn start_window_drag(window: tauri::WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(hwnd) = window.hwnd() {
+            use std::ffi::c_void;
+            #[link(name = "user32")]
+            extern "system" {
+                fn ReleaseCapture() -> i32;
+                fn SendMessageW(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> isize;
+            }
+            const WM_NCLBUTTONDOWN: u32 = 0x00A1;
+            const HTCAPTION: usize = 2;
+            unsafe {
+                ReleaseCapture();
+                SendMessageW(hwnd.0 as *mut c_void, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            }
+        }
+    }
+}
+
 // ========== 入口 ==========
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -365,6 +391,7 @@ pub fn run() {
             start_window_drag,
             fit_window_size,
             refresh_all,
+            start_window_drag,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
