@@ -70,6 +70,7 @@ fn create_popover_window(app: &tauri::AppHandle) {
             .title("GLM Quota Monitor")
             .inner_size(360.0, 480.0)
             .decorations(false)
+            .transparent(true)
             .resizable(false)
             .skip_taskbar(true)
             .always_on_top(true)
@@ -78,6 +79,8 @@ fn create_popover_window(app: &tauri::AppHandle) {
 
     #[cfg(target_os = "macos")]
     platform::macos::apply_rounded_corners(&window, 12.0);
+    #[cfg(target_os = "windows")]
+    platform::windows::apply_rounded_corners(&window, 12.0);
 
     if let Some(tray) = app.tray_by_id("main") {
         if let Ok(Some(rect)) = tray.rect() {
@@ -205,13 +208,25 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
 fn update_tray_display(app: &tauri::AppHandle, percentage: i32) {
     if let Some(tray) = app.tray_by_id("main") {
         if percentage >= 0 {
-            let title = format!("{}%", percentage);
             let tooltip = format!("GLM Quota Monitor — {}%", percentage);
-            let _ = tray.set_title(Some(title.as_str()));
             let _ = tray.set_tooltip(Some(tooltip.as_str()));
+            #[cfg(target_os = "macos")]
+            {
+                let title = format!("{}%", percentage);
+                let _ = tray.set_title(Some(title.as_str()));
+            }
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(icon) = platform::windows::generate_tray_icon(percentage) {
+                    let _ = tray.set_icon(Some(icon));
+                }
+            }
         } else {
-            let _ = tray.set_title(Some(""));
             let _ = tray.set_tooltip(Some("GLM Quota Monitor"));
+            #[cfg(target_os = "macos")]
+            {
+                let _ = tray.set_title(Some(""));
+            }
         }
     }
 }
