@@ -116,15 +116,15 @@ fn get_refresh_interval(db: &Database) -> u64 {
     .unwrap_or(DEFAULT_REFRESH_INTERVAL_SECS)
 }
 
-/// 从 Keychain 或数据库获取 API Key（兼容旧数据迁移）
+/// 从系统凭据管理器或数据库获取 API Key（兼容旧数据迁移）
 fn resolve_api_key(account_id: &str, db_key: &str) -> Option<String> {
-    // 优先从 Keychain 读取
+    // 优先从系统凭据管理器读取
     if let Ok(key) = crypto::get_api_key(account_id) {
         return Some(key);
     }
     // 降级：数据库明文（旧数据）
     if !db_key.is_empty() {
-        // 迁移到 Keychain
+        // 迁移到系统凭据管理器
         let _ = crypto::store_api_key(account_id, db_key);
         return Some(db_key.to_string());
     }

@@ -28,6 +28,15 @@
     ],
     "macOS": {
       "infoPlist": "../Info.plist"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"]
+      }
     }
   }
 }

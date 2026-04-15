@@ -98,7 +98,7 @@ function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
 
       <div className="flex-1 overflow-y-auto overscroll-contain">
         {error && (
-          <div className="mx-4 mt-3 text-[11px] bg-red-50 text-red-600 rounded-xl p-3 border border-red-100/80">
+          <div className="mx-4 mt-3 text-[11px] text-[var(--color-danger)] rounded-xl p-3 border border-[var(--color-danger)]/20 bg-[var(--color-danger)]/5">
             {error}
           </div>
         )}

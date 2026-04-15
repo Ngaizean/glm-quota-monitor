@@ -6,11 +6,11 @@ use tauri::State;
 
 #[tauri::command]
 pub fn get_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaData, String> {
-    // 从 Keychain 读取 API Key，降级到数据库明文（兼容旧数据迁移）
+    // 从系统凭据管理器读取 API Key，降级到数据库明文（兼容旧数据迁移）
     let api_key = match crypto::get_api_key(&account_id) {
         Ok(key) => key,
         Err(_) => {
-            // 旧数据迁移：从数据库读取明文，迁移到 Keychain
+            // 旧数据迁移：从数据库读取明文，迁移到系统凭据管理器
             let conn = db.conn.lock().unwrap();
             let db_key: String = conn
                 .query_row(
@@ -24,7 +24,7 @@ pub fn get_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaDat
                 return Err("API key not found".to_string());
             }
 
-            // 迁移到 Keychain
+            // 迁移到系统凭据管理器
             let _ = crypto::store_api_key(&account_id, &db_key);
             // 清除数据库明文
             let _ = conn.execute(

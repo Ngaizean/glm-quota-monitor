@@ -40,9 +40,9 @@ pub fn add_account(
     let now = Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
 
-    // API Key 存入系统 Keychain，数据库中不存储明文
+    // API Key 存入系统凭据管理器，数据库中不存储明文
     crypto::store_api_key(&id, &api_key)
-        .map_err(|e| format!("Keychain 存储失败: {}", e))?;
+        .map_err(|e| format!("凭据存储失败: {}", e))?;
 
     {
         let conn = db.conn.lock().unwrap();
@@ -116,7 +116,7 @@ pub fn delete_account(
         tx.commit().map_err(|e| e.to_string())?;
     }
 
-    // 从 Keychain 删除（失败不影响主流程）
+    // 从系统凭据管理器删除（失败不影响主流程）
     let _ = crypto::delete_api_key(&id);
 
     let _ = app.emit("accounts-changed", ());
