@@ -6,3 +6,4 @@ src-tauri/gen/schemas/
 *.dmg
 CLAUDE.md
 /.claude
+docs/WORKLOG_WINDOWS.md
