@@ -7,8 +7,8 @@ interface HeaderProps {
 export default function Header({ loading, onRefresh, onSettings }: HeaderProps) {
   return (
     <div className="sticky top-0 z-10 backdrop-blur-2xl bg-[var(--color-bg-glass)] border-b border-[var(--color-border-subtle)]">
-      <div className="flex items-center justify-between px-4 py-2.5">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-4 py-2.5" data-tauri-drag-region>
+        <div className="flex items-center gap-2" data-tauri-drag-region>
           <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[var(--color-accent)] to-violet-500 flex items-center justify-center shadow-sm">
             <span className="text-white text-[9px] font-bold tracking-tight">G</span>
           </div>
@@ -23,7 +23,7 @@ export default function Header({ loading, onRefresh, onSettings }: HeaderProps) 
             </div>
           )}
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5" data-tauri-drag-region>
           <button
             onClick={onRefresh}
             disabled={loading}

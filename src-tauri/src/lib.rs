@@ -39,23 +39,49 @@ fn toggle_popover(app: &tauri::AppHandle) {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
-            // 每次显示前重新定位，跟随托盘图标当前位置
-            if let Some(tray) = app.tray_by_id("main") {
-                if let Ok(Some(rect)) = tray.rect() {
-                    if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
-                        (rect.position, rect.size)
-                    {
-                        let x = pos.x + (size.width as i32 - 360) / 2;
-                        let y = pos.y + size.height as i32 + 4;
-                        let _ = window.set_position(tauri::Position::Physical(
-                            tauri::PhysicalPosition::new(x, y),
-                        ));
-                    }
-                }
-            }
+            position_popover(&window, app);
             let _ = window.show();
             let _ = window.set_focus();
         }
+    }
+}
+
+/// 将 Popover 定位到托盘图标附近
+/// macOS：图标正下方（菜单栏在顶部）
+/// Windows：图标正上方（任务栏通常在底部）
+fn position_popover(window: &tauri::WebviewWindow, app: &tauri::AppHandle) {
+    let popover_w = 360i32;
+    let popover_h = 480i32;
+
+    if let Some(tray) = app.tray_by_id("main") {
+        if let Ok(Some(rect)) = tray.rect() {
+            if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
+                (rect.position, rect.size)
+            {
+                let x = pos.x + (size.width as i32 - popover_w) / 2;
+                #[cfg(target_os = "macos")]
+                let y = pos.y + size.height as i32 + 4;
+                #[cfg(target_os = "windows")]
+                let y = pos.y - popover_h - 4;
+                let _ = window.set_position(tauri::Position::Physical(
+                    tauri::PhysicalPosition::new(x, y),
+                ));
+                return;
+            }
+        }
+    }
+
+    // Fallback：无法获取托盘位置时，放在屏幕右下角
+    if let Ok(Some(monitor)) = window.primary_monitor() {
+        let screen = monitor.size();
+        let x = screen.width as i32 - popover_w - 20;
+        #[cfg(target_os = "macos")]
+        let y = 40;
+        #[cfg(target_os = "windows")]
+        let y = screen.height as i32 - popover_h - 60;
+        let _ = window.set_position(tauri::Position::Physical(
+            tauri::PhysicalPosition::new(x, y),
+        ));
     }
 }
 
@@ -82,19 +108,7 @@ fn create_popover_window(app: &tauri::AppHandle) {
     #[cfg(target_os = "windows")]
     platform::windows::apply_rounded_corners(&window, 12.0);
 
-    if let Some(tray) = app.tray_by_id("main") {
-        if let Ok(Some(rect)) = tray.rect() {
-            if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
-                (rect.position, rect.size)
-            {
-                let x = pos.x + (size.width as i32 - 360) / 2;
-                let y = pos.y + size.height as i32 + 4;
-                let _ = window.set_position(tauri::Position::Physical(
-                    tauri::PhysicalPosition::new(x, y),
-                ));
-            }
-        }
-    }
+    position_popover(&window, app);
 }
 
 // ========== 后台刷新 ==========
