@@ -20,7 +20,13 @@ impl Database {
     }
 
     pub fn init_tables(&self) -> SqlResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("DB lock error: {}", e);
+                return Err(rusqlite::Error::InvalidPath("数据库锁定".into()));
+            }
+        };
         conn.execute_batch(migrations::MIGRATION_SQL)?;
         if conn.prepare("SELECT purpose FROM accounts LIMIT 0").is_err() {
             conn.execute_batch("ALTER TABLE accounts ADD COLUMN purpose TEXT NOT NULL DEFAULT ''")?;

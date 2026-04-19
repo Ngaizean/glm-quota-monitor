@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+
 interface HeaderProps {
   loading: boolean;
   onRefresh: () => void;
@@ -5,9 +7,20 @@ interface HeaderProps {
 }
 
 export default function Header({ loading, onRefresh, onSettings }: HeaderProps) {
+  const handleDrag = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button") || target.closest("a") || target.closest("input")) return;
+    invoke("start_window_drag");
+  };
+
   return (
     <div className="sticky top-0 z-10 backdrop-blur-2xl bg-[var(--color-bg-glass)] border-b border-[var(--color-border-subtle)]">
-      <div className="flex items-center justify-between px-4 py-2.5">
+      <div
+        className="flex items-center justify-between px-4 py-2.5 cursor-default"
+        data-tauri-drag-region
+        onMouseDown={handleDrag}
+      >
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[var(--color-accent)] to-violet-500 flex items-center justify-center shadow-sm">
             <span className="text-white text-[9px] font-bold tracking-tight">G</span>
@@ -43,6 +56,16 @@ export default function Header({ loading, onRefresh, onSettings }: HeaderProps) 
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          <button
+            onClick={() => invoke("close_popover")}
+            className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
+            title="关闭"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>

@@ -2,29 +2,28 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "./Header";
-import AccountSelector from "./AccountSelector";
-import QuotaSection from "./QuotaSection";
-import UsageSummary from "./UsageSummary";
+import AccountList from "./AccountList";
 import type { Account, QuotaData } from "../types";
 
 function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [selectedAccount, setSelectedAccount] = useState<string>("");
-  const [quota, setQuota] = useState<QuotaData | null>(null);
+  const [expandedId, setExpandedId] = useState<string>("");
+  const [quotas, setQuotas] = useState<Record<string, QuotaData>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [summaryKey, setSummaryKey] = useState(0);
 
-  // 用 ref 追踪最新值，避免 onFocusChanged 闭包捕获过期的 state
-  const selectedAccountRef = useRef(selectedAccount);
-  selectedAccountRef.current = selectedAccount;
+  const expandedRef = useRef(expandedId);
+  expandedRef.current = expandedId;
 
   const loadAccounts = useCallback(() => {
     invoke<Account[]>("list_accounts").then((accs) => {
       setAccounts(accs);
+      if (accs.length > 0 && !accs.find((a) => a.id === expandedRef.current)) {
+        setExpandedId(accs[0].id);
+      }
       if (accs.length === 0) {
-        setSelectedAccount("");
-        setQuota(null);
+        setExpandedId("");
+        setQuotas({});
       }
     }).catch((e) => {
       console.error("loadAccounts failed:", e);
@@ -32,17 +31,17 @@ function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
     });
   }, []);
 
-  const fetchQuota = useCallback(async (accountId: string) => {
-    setLoading(true);
-    setError("");
-    try {
-      const data = await invoke<QuotaData>("get_quota", { accountId });
-      setQuota(data);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+  const fetchAllQuotas = useCallback(async (accs: Account[]) => {
+    const results: Record<string, QuotaData> = {};
+    await Promise.all(
+      accs.map(async (acc) => {
+        try {
+          const data = await invoke<QuotaData>("get_quota", { accountId: acc.id });
+          results[acc.id] = data;
+        } catch { /* skip failed accounts */ }
+      })
+    );
+    return results;
   }, []);
 
   useEffect(() => { loadAccounts(); }, [loadAccounts]);
@@ -51,43 +50,39 @@ function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
     const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) {
         loadAccounts();
-        // 先刷新所有账号（同步托盘图标），再拉取当前账号详情
-        invoke("refresh_all").then(() => {
-          const accountId = selectedAccountRef.current;
-          if (accountId) {
-            fetchQuota(accountId);
-            setSummaryKey((k) => k + 1);
-          }
-        }).catch((e) => console.error("refresh_all failed:", e));
+        invoke("refresh_all").catch((e) => console.error("refresh_all failed:", e));
+        setLoading(true);
+        const currentAccounts = accounts.length > 0 ? accounts : [];
+        fetchAllQuotas(currentAccounts).then((q) => {
+          setQuotas(q);
+          setLoading(false);
+        });
       } else {
         getCurrentWindow().hide();
       }
     });
     return () => { unlisten.then((fn) => fn()); };
-  }, [loadAccounts, fetchQuota]);
+  }, [loadAccounts, fetchAllQuotas, accounts]);
 
   useEffect(() => {
-    if (accounts.length > 0 && !accounts.find((a) => a.id === selectedAccount)) {
-      setSelectedAccount(accounts[0].id);
-    }
-  }, [accounts, selectedAccount]);
-
-  useEffect(() => {
-    if (!selectedAccount) return;
-    fetchQuota(selectedAccount);
-  }, [selectedAccount, fetchQuota]);
+    if (accounts.length === 0) return;
+    setLoading(true);
+    fetchAllQuotas(accounts).then((q) => {
+      setQuotas(q);
+      setLoading(false);
+    });
+  }, [accounts, fetchAllQuotas]);
 
   async function refreshAll() {
     setLoading(true);
     setError("");
     try {
       await invoke("refresh_all");
-      if (selectedAccount) {
-        await fetchQuota(selectedAccount);
-        setSummaryKey((k) => k + 1);
-      }
+      const q = await fetchAllQuotas(accounts);
+      setQuotas(q);
     } catch (e) {
       setError(String(e));
+    } finally {
       setLoading(false);
     }
   }
@@ -98,7 +93,7 @@ function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
 
       <div className="flex-1 overflow-y-auto overscroll-contain">
         {error && (
-          <div className="mx-4 mt-3 text-[11px] bg-red-50 text-red-600 rounded-xl p-3 border border-red-100/80">
+          <div className="mx-4 mt-3 text-[11px] text-[var(--color-danger)] rounded-xl p-3 border border-[var(--color-danger)]/20 bg-[var(--color-danger)]/5">
             {error}
           </div>
         )}
@@ -128,28 +123,13 @@ function Popover({ onOpenSettings }: { onOpenSettings: () => void }) {
           </div>
         )}
 
-        {accounts.length > 0 && (
-          <>
-            <AccountSelector
-              accounts={accounts}
-              selected={selectedAccount}
-              onSelect={setSelectedAccount}
-              quota={quota}
-            />
-
-            <div className="mx-4 border-t border-[var(--color-border-subtle)]" />
-
-            {quota && <QuotaSection limits={quota.limits} />}
-
-            <div className="mx-4 border-t border-[var(--color-border-subtle)]" />
-
-            {selectedAccount && (
-              <div className="px-4 py-3">
-                <UsageSummary key={summaryKey} accountId={selectedAccount} />
-              </div>
-            )}
-          </>
-        )}
+        <AccountList
+          accounts={accounts}
+          expandedId={expandedId}
+          onToggle={setExpandedId}
+          quotas={quotas}
+          loading={loading}
+        />
       </div>
     </div>
   );

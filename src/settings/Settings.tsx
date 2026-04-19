@@ -66,7 +66,7 @@ export default function Settings({ onBack }: { onBack: () => void }) {
     const win = getCurrentWindow();
     win.setSize(new LogicalSize(440, 520));
     return () => {
-      win.setSize(new LogicalSize(360, 480));
+      win.setSize(new LogicalSize(360, 580));
     };
   }, []);
 

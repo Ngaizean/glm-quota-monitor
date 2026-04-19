@@ -39,14 +39,12 @@ fn toggle_popover(app: &tauri::AppHandle) {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
-            // 每次显示前重新定位，跟随托盘图标当前位置
             if let Some(tray) = app.tray_by_id("main") {
                 if let Ok(Some(rect)) = tray.rect() {
                     if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
                         (rect.position, rect.size)
                     {
-                        let x = pos.x + (size.width as i32 - 360) / 2;
-                        let y = pos.y + size.height as i32 + 4;
+                        let (x, y) = platform::popover_position(pos.x, pos.y, size.width, size.height);
                         let _ = window.set_position(tauri::Position::Physical(
                             tauri::PhysicalPosition::new(x, y),
                         ));
@@ -68,7 +66,7 @@ fn create_popover_window(app: &tauri::AppHandle) {
     let window =
         WebviewWindowBuilder::new(app, POPOVER_LABEL, tauri::WebviewUrl::App("index.html".into()))
             .title("GLM Quota Monitor")
-            .inner_size(360.0, 480.0)
+            .inner_size(360.0, 580.0)
             .decorations(false)
             .resizable(false)
             .skip_taskbar(true)
@@ -76,16 +74,14 @@ fn create_popover_window(app: &tauri::AppHandle) {
             .build()
             .expect("Failed to create popover window");
 
-    #[cfg(target_os = "macos")]
-    platform::macos::apply_rounded_corners(&window, 12.0);
+    platform::apply_window_decoration(&window);
 
     if let Some(tray) = app.tray_by_id("main") {
         if let Ok(Some(rect)) = tray.rect() {
             if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
                 (rect.position, rect.size)
             {
-                let x = pos.x + (size.width as i32 - 360) / 2;
-                let y = pos.y + size.height as i32 + 4;
+                let (x, y) = platform::popover_position(pos.x, pos.y, size.width, size.height);
                 let _ = window.set_position(tauri::Position::Physical(
                     tauri::PhysicalPosition::new(x, y),
                 ));
@@ -114,18 +110,16 @@ fn get_refresh_interval(db: &Database) -> u64 {
 }
 
 /// 从 Keychain 或数据库获取 API Key（兼容旧数据迁移）
-fn resolve_api_key(account_id: &str, db_key: &str) -> Option<String> {
-    // 优先从 Keychain 读取
-    if let Ok(key) = crypto::get_api_key(account_id) {
-        return Some(key);
-    }
-    // 降级：数据库明文（旧数据）
-    if !db_key.is_empty() {
-        // 迁移到 Keychain
-        let _ = crypto::store_api_key(account_id, db_key);
-        return Some(db_key.to_string());
-    }
-    None
+fn resolve_api_key_for_refresh(db: &Database, account_id: &str, db_key: &str) -> Option<String> {
+    let db_inner = db;
+    crypto::resolve_api_key(account_id, db_key, &|| {
+        if let Ok(conn) = db_inner.conn.lock() {
+            let _ = conn.execute(
+                "UPDATE accounts SET api_key = '' WHERE id = ?1",
+                rusqlite::params![account_id],
+            );
+        }
+    })
 }
 
 /// 刷新所有账号额度，返回最高百分比
@@ -150,7 +144,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
     let http_client = reqwest::Client::new();
 
     for (account_id, account_alias, db_key) in &accounts {
-        let api_key = match resolve_api_key(account_id, db_key) {
+        let api_key = match resolve_api_key_for_refresh(&db, account_id, db_key) {
             Some(k) => k,
             None => continue,
         };
@@ -203,17 +197,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
 }
 
 fn update_tray_display(app: &tauri::AppHandle, percentage: i32) {
-    if let Some(tray) = app.tray_by_id("main") {
-        if percentage >= 0 {
-            let title = format!("{}%", percentage);
-            let tooltip = format!("GLM Quota Monitor — {}%", percentage);
-            let _ = tray.set_title(Some(title.as_str()));
-            let _ = tray.set_tooltip(Some(tooltip.as_str()));
-        } else {
-            let _ = tray.set_title(Some(""));
-            let _ = tray.set_tooltip(Some("GLM Quota Monitor"));
-        }
-    }
+    platform::update_tray(app, percentage);
 }
 
 // ========== IPC 命令 ==========
@@ -223,6 +207,16 @@ fn close_popover(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window(POPOVER_LABEL) {
         let _ = window.hide();
     }
+}
+
+#[tauri::command]
+fn start_window_drag(app: tauri::AppHandle) {
+    #[cfg(target_os = "windows")]
+    if let Some(window) = app.get_webview_window(POPOVER_LABEL) {
+        platform::windows::start_drag(&window);
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = app;
 }
 
 #[tauri::command]
@@ -245,16 +239,16 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            platform::init_app(app);
 
             let db = Database::new(&get_db_path(app))
                 .expect("Failed to initialize database");
             db.init_tables().expect("Failed to create tables");
 
             {
-                let conn = db.conn.lock().unwrap();
-                alert::rules::init_default_rules(&conn);
+                if let Ok(conn) = db.conn.lock() {
+                    alert::rules::init_default_rules(&conn);
+                }
             }
 
             app.manage(db);
@@ -327,12 +321,15 @@ pub fn run() {
             commands::account::list_accounts,
             commands::account::delete_account,
             commands::account::update_account_alias,
+            commands::alerts::get_alert_rules,
+            commands::alerts::update_alert_rule,
             commands::quota::get_quota,
             commands::history::get_snapshots,
             commands::summary::get_usage_summary,
             commands::settings::get_setting,
             commands::settings::set_setting,
             close_popover,
+            start_window_drag,
             refresh_all,
         ])
         .run(tauri::generate_context!())

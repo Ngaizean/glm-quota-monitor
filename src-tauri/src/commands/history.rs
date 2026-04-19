@@ -8,7 +8,7 @@ pub fn get_snapshots(
     account_id: String,
     limit: Option<i32>,
 ) -> Result<Vec<UsageSnapshot>, String> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
     let limit = limit.unwrap_or(100);
     let mut stmt = conn
         .prepare(

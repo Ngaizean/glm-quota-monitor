@@ -7,9 +7,7 @@ use tauri::State;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenUsagePeriod {
     pub label: String,
-    /// Token 总用量（原始值，单位取决于 API 返回）
     pub total_tokens: f64,
-    /// 模型调用次数
     pub total_calls: f64,
 }
 
@@ -22,25 +20,21 @@ pub struct TokenUsageSummary {
 
 #[tauri::command]
 pub fn get_usage_summary(db: State<'_, Database>, account_id: String) -> Result<TokenUsageSummary, String> {
-    let api_key = match crypto::get_api_key(&account_id) {
-        Ok(key) => key,
-        Err(_) => {
-            let conn = db.conn.lock().unwrap();
-            let db_key: String = conn
-                .query_row(
-                    "SELECT api_key FROM accounts WHERE id = ?1",
-                    rusqlite::params![account_id],
-                    |row| row.get(0),
-                )
-                .map_err(|e| format!("账号不存在: {}", e))?;
-            if db_key.is_empty() {
-                return Err("API key not found".to_string());
-            }
-            let _ = crypto::store_api_key(&account_id, &db_key);
-            let _ = conn.execute("UPDATE accounts SET api_key = '' WHERE id = ?1", rusqlite::params![account_id]);
-            db_key
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+    let db_key: String = conn
+        .query_row(
+            "SELECT api_key FROM accounts WHERE id = ?1",
+            rusqlite::params![account_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("账号不存在: {}", e))?;
+    drop(conn);
+
+    let api_key = crypto::resolve_api_key(&account_id, &db_key, &|| {
+        if let Ok(c) = db.conn.lock() {
+            let _ = c.execute("UPDATE accounts SET api_key = '' WHERE id = ?1", rusqlite::params![account_id]);
         }
-    };
+    }).ok_or("API key not found".to_string())?;
 
     let client = ZhipuClient::new(&api_key);
 

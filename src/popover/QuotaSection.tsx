@@ -14,17 +14,17 @@ function getStatusColors(pct: number) {
   if (pct > 85) return {
     bar: "bg-gradient-to-r from-red-400 to-rose-500",
     dot: "bg-red-500",
-    text: "text-red-600",
+    text: "text-[var(--color-danger)]",
   };
   if (pct > 60) return {
     bar: "bg-gradient-to-r from-amber-400 to-orange-400",
     dot: "bg-amber-500",
-    text: "text-amber-600",
+    text: "text-[var(--color-warning)]",
   };
   return {
     bar: "bg-gradient-to-r from-emerald-400 to-teal-500",
     dot: "bg-emerald-500",
-    text: "text-[var(--color-text-primary)]",
+    text: "text-[var(--color-success)]",
   };
 }
 

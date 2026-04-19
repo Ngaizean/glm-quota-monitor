@@ -14,9 +14,9 @@ export function getAvatarGradient(name: string): string {
 
 export function getLevelStyle(level: string | null): string {
   const styles: Record<string, string> = {
-    lite: "bg-slate-100 text-slate-500",
+    lite: "bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)]",
     pro: "bg-[var(--color-accent-subtle)] text-[var(--color-accent)]",
-    max: "bg-violet-50 text-violet-500",
+    max: "bg-violet-500/10 text-violet-400",
   };
-  return styles[level || ""] || "bg-slate-100 text-slate-400";
+  return styles[level || ""] || "bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)]";
 }

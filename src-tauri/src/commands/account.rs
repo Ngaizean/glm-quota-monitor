@@ -16,7 +16,7 @@ pub fn add_account(
 ) -> Result<Account, String> {
     // 检查 alias + purpose 是否重复
     {
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let exists: bool = conn
             .query_row(
                 "SELECT COUNT(*) > 0 FROM accounts WHERE alias = ?1 AND purpose = ?2 AND is_active = 1",
@@ -42,10 +42,10 @@ pub fn add_account(
 
     // API Key 存入系统 Keychain，数据库中不存储明文
     crypto::store_api_key(&id, &api_key)
-        .map_err(|e| format!("Keychain 存储失败: {}", e))?;
+        .map_err(|e| format!("凭据存储失败: {}", e))?;
 
     {
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         conn.execute(
             "INSERT INTO accounts (id, alias, purpose, platform, level, api_key, is_active, created_at, updated_at)
              VALUES (?1, ?2, ?3, 'zhipu', ?4, '', 1, ?5, ?6)",
@@ -70,7 +70,7 @@ pub fn add_account(
 
 #[tauri::command]
 pub fn list_accounts(db: State<'_, Database>) -> Result<Vec<Account>, String> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
     let mut stmt = conn
         .prepare("SELECT id, alias, purpose, platform, level, is_active, created_at, updated_at FROM accounts WHERE is_active = 1")
         .map_err(|e| e.to_string())?;
@@ -103,7 +103,7 @@ pub fn delete_account(
 ) -> Result<(), String> {
     // 使用事务确保原子删除
     {
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM alert_history WHERE account_id = ?1", rusqlite::params![id])
             .map_err(|e| e.to_string())?;
@@ -116,9 +116,7 @@ pub fn delete_account(
         tx.commit().map_err(|e| e.to_string())?;
     }
 
-    // 从 Keychain 删除（失败不影响主流程）
     let _ = crypto::delete_api_key(&id);
-
     let _ = app.emit("accounts-changed", ());
     Ok(())
 }
@@ -131,7 +129,7 @@ pub fn update_account_alias(
     alias: String,
 ) -> Result<(), String> {
     {
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE accounts SET alias = ?1, updated_at = ?2 WHERE id = ?3",

@@ -3,7 +3,7 @@ use tauri::State;
 
 #[tauri::command]
 pub fn get_setting(db: State<'_, Database>, key: String) -> Result<Option<String>, String> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
     let result = conn
         .query_row(
             "SELECT value FROM app_settings WHERE key = ?1",
@@ -22,7 +22,7 @@ pub fn set_setting(
     value: String,
 ) -> Result<(), String> {
     {
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         conn.execute(
             "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
             rusqlite::params![key, value],
