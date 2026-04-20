@@ -265,29 +265,6 @@ fn refresh_all(app: tauri::AppHandle) -> Result<RefreshResult, String> {
     Ok(result)
 }
 
-/// Windows: 使用 Win32 原生拖拽（ReleaseCapture + WM_NCLBUTTONDOWN/HTCAPTION）
-/// macOS: data-tauri-drag-region 属性处理拖拽，此命令为空操作
-#[tauri::command]
-fn start_window_drag(window: tauri::WebviewWindow) {
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(hwnd) = window.hwnd() {
-            use std::ffi::c_void;
-            #[link(name = "user32")]
-            extern "system" {
-                fn ReleaseCapture() -> i32;
-                fn SendMessageW(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> isize;
-            }
-            const WM_NCLBUTTONDOWN: u32 = 0x00A1;
-            const HTCAPTION: usize = 2;
-            unsafe {
-                ReleaseCapture();
-                SendMessageW(hwnd.0 as *mut c_void, WM_NCLBUTTONDOWN, HTCAPTION, 0);
-            }
-        }
-    }
-}
-
 // ========== 入口 ==========
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -391,7 +368,6 @@ pub fn run() {
             start_window_drag,
             fit_window_size,
             refresh_all,
-            start_window_drag,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
