@@ -38,12 +38,3 @@ pub struct AlertRule {
     pub account_id: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AlertRecord {
-    pub id: i64,
-    pub account_id: String,
-    pub rule_type: String,
-    pub value: Option<f64>,
-    pub triggered_at: String,
-    pub dismissed: bool,
-}

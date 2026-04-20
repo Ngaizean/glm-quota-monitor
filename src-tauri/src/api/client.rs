@@ -90,22 +90,4 @@ impl ZhipuClient {
         self.get(&format!("{}?{}", path, query)).await
     }
 
-    /// 查询工具用量
-    pub async fn get_tool_usage(
-        &self,
-        start_time: &str,
-        end_time: &str,
-    ) -> Result<ToolUsageData, ApiError> {
-        let url = reqwest::Url::parse_with_params(
-            &format!("{}{}", BASE_URL, "/api/monitor/usage/tool-usage"),
-            &[("startTime", start_time), ("endTime", end_time)],
-        )
-        .map_err(|e| ApiError::Api {
-            code: -1,
-            msg: e.to_string(),
-        })?;
-        let path = url.path();
-        let query = url.query().unwrap_or("");
-        self.get(&format!("{}?{}", path, query)).await
-    }
 }
