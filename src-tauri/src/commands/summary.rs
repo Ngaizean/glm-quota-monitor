@@ -36,7 +36,7 @@ pub fn get_usage_summary(db: State<'_, Database>, account_id: String) -> Result<
         }
     }).ok_or("API key not found".to_string())?;
 
-    let client = ZhipuClient::new(&api_key);
+    let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
 
     let now = chrono::Utc::now();
     let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();

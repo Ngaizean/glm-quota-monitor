@@ -30,19 +30,19 @@ pub fn check_and_notify(
                 .limits
                 .iter()
                 .find(|l| l.limit_type == "TIME_LIMIT")
-                .map(|l| l.percentage as f64)
+                .map(|l| l.percentage)
                 .unwrap_or(0.0),
             "weekly" => quota
                 .limits
                 .iter()
                 .find(|l| l.limit_type == "TOKENS_LIMIT")
-                .map(|l| l.percentage as f64)
+                .map(|l| l.percentage)
                 .unwrap_or(0.0),
             "mcp_monthly" => quota
                 .limits
                 .iter()
                 .find(|l| l.limit_type == "MCP_MONTHLY")
-                .map(|l| l.percentage as f64)
+                .map(|l| l.percentage)
                 .unwrap_or(0.0),
             _ => continue,
         };

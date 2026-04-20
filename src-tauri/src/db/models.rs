@@ -8,6 +8,7 @@ pub struct Account {
     pub platform: String,
     pub level: Option<String>,
     pub is_active: bool,
+    pub is_primary: bool,
     pub created_at: String,
     pub updated_at: String,
     // api_key 不序列化到前端，仅在内部使用
@@ -45,21 +46,4 @@ pub struct AlertRecord {
     pub value: Option<f64>,
     pub triggered_at: String,
     pub dismissed: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PeriodSummary {
-    pub period_label: String,
-    pub snapshot_count: i32,
-    /// 该时段最后一次快照记录的 token 已用量（万）
-    pub token_usage: Option<f64>,
-    /// 该时段最后一次快照记录的 mcp 调用百分比
-    pub mcp_pct: Option<f64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UsageSummary {
-    pub today: PeriodSummary,
-    pub last_7d: PeriodSummary,
-    pub last_30d: PeriodSummary,
 }

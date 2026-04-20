@@ -6,9 +6,12 @@ mod db;
 mod platform;
 
 use api::client::ZhipuClient;
+use api::types::QuotaData;
 use db::Database;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::LazyLock;
 use std::time::Duration;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -20,8 +23,14 @@ use tauri::{
 const POPOVER_LABEL: &str = "popover";
 const DEFAULT_REFRESH_INTERVAL_SECS: u64 = 300;
 
-/// 全局最高额度百分比，用于图标显示
 static MAX_PERCENTAGE: AtomicI32 = AtomicI32::new(-1);
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+#[derive(serde::Serialize)]
+struct RefreshResult {
+    max_pct: i32,
+    quotas: HashMap<String, QuotaData>,
+}
 
 fn get_db_path(app: &tauri::App) -> PathBuf {
     let app_dir = app
@@ -66,7 +75,7 @@ fn create_popover_window(app: &tauri::AppHandle) {
     let window =
         WebviewWindowBuilder::new(app, POPOVER_LABEL, tauri::WebviewUrl::App("index.html".into()))
             .title("GLM Quota Monitor")
-            .inner_size(360.0, 580.0)
+            .inner_size(360.0, 600.0)
             .decorations(false)
             .resizable(false)
             .skip_taskbar(true)
@@ -92,7 +101,6 @@ fn create_popover_window(app: &tauri::AppHandle) {
 
 // ========== 后台刷新 ==========
 
-/// 从数据库读取刷新间隔设置（分钟 → 秒）
 fn get_refresh_interval(db: &Database) -> u64 {
     let conn = match db.conn.lock() {
         Ok(c) => c,
@@ -109,11 +117,9 @@ fn get_refresh_interval(db: &Database) -> u64 {
     .unwrap_or(DEFAULT_REFRESH_INTERVAL_SECS)
 }
 
-/// 从 Keychain 或数据库获取 API Key（兼容旧数据迁移）
 fn resolve_api_key_for_refresh(db: &Database, account_id: &str, db_key: &str) -> Option<String> {
-    let db_inner = db;
     crypto::resolve_api_key(account_id, db_key, &|| {
-        if let Ok(conn) = db_inner.conn.lock() {
+        if let Ok(conn) = db.conn.lock() {
             let _ = conn.execute(
                 "UPDATE accounts SET api_key = '' WHERE id = ?1",
                 rusqlite::params![account_id],
@@ -122,18 +128,26 @@ fn resolve_api_key_for_refresh(db: &Database, account_id: &str, db_key: &str) ->
     })
 }
 
-/// 刷新所有账号额度，返回最高百分比
-fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
+fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
     let db = match app.try_state::<Database>() {
         Some(db) => db,
-        None => return 0,
+        None => return RefreshResult { max_pct: 0, quotas: HashMap::new() },
     };
 
-    let accounts: Vec<(String, String, String)> = {
-        let Ok(guard) = db.conn.lock() else { return 0 };
-        let result = guard.prepare("SELECT id, alias, api_key FROM accounts WHERE is_active = 1");
-        let Ok(mut stmt) = result else { return 0 };
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)));
+    // (id, alias, api_key, is_primary)
+    let accounts: Vec<(String, String, String, bool)> = {
+        let Ok(guard) = db.conn.lock() else {
+            return RefreshResult { max_pct: 0, quotas: HashMap::new() };
+        };
+        let result = guard.prepare(
+            "SELECT id, alias, api_key, COALESCE(is_primary, 0) FROM accounts WHERE is_active = 1"
+        );
+        let Ok(mut stmt) = result else {
+            return RefreshResult { max_pct: 0, quotas: HashMap::new() };
+        };
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get::<_, i32>(3)? == 1))
+        });
         match rows {
             Ok(r) => r.filter_map(|r| r.ok()).collect(),
             Err(_) => Vec::new(),
@@ -141,15 +155,16 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
     };
 
     let mut max_pct = 0i32;
-    let http_client = reqwest::Client::new();
+    let mut primary_pct: Option<i32> = None;
+    let mut quotas = HashMap::new();
 
-    for (account_id, account_alias, db_key) in &accounts {
+    for (account_id, account_alias, db_key, is_primary) in &accounts {
         let api_key = match resolve_api_key_for_refresh(&db, account_id, db_key) {
             Some(k) => k,
             None => continue,
         };
 
-        let client = ZhipuClient::with_client(&http_client, &api_key);
+        let client = ZhipuClient::with_client(&HTTP_CLIENT, &api_key);
         let result = tauri::async_runtime::block_on(client.get_quota_limit());
 
         match result {
@@ -161,12 +176,16 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
                 if pct > max_pct {
                     max_pct = pct;
                 }
+                if *is_primary {
+                    primary_pct = Some(pct);
+                }
+
+                quotas.insert(account_id.clone(), quota.clone());
 
                 if let Ok(conn2) = db.conn.lock() {
                     let _ = db::record_quota_snapshot(&conn2, account_id, &quota);
                 }
 
-                // 预警检查
                 let app_clone = app.clone();
                 let aid = account_id.clone();
                 let alias = account_alias.clone();
@@ -193,7 +212,8 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> i32 {
         }
     }
 
-    max_pct
+    let display_pct = primary_pct.unwrap_or(max_pct);
+    RefreshResult { max_pct: display_pct, quotas }
 }
 
 fn update_tray_display(app: &tauri::AppHandle, percentage: i32) {
@@ -220,11 +240,26 @@ fn start_window_drag(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn refresh_all(app: tauri::AppHandle) -> Result<i32, String> {
-    let max_pct = refresh_all_accounts(&app);
-    MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
-    update_tray_display(&app, max_pct);
-    Ok(max_pct)
+fn fit_window_size(app: tauri::AppHandle, height: f64) {
+    if let Some(window) = app.get_webview_window(POPOVER_LABEL) {
+        let pos = match window.outer_position() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let scale = window.scale_factor().unwrap_or(2.0);
+        let new_w = (360.0 * scale as f64) as u32;
+        let new_h = (height * scale as f64) as u32;
+        let _ = window.set_size(tauri::PhysicalSize::new(new_w, new_h));
+        let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+    }
+}
+
+#[tauri::command]
+fn refresh_all(app: tauri::AppHandle) -> Result<RefreshResult, String> {
+    let result = refresh_all_accounts(&app);
+    MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
+    update_tray_display(&app, result.max_pct);
+    Ok(result)
 }
 
 // ========== 入口 ==========
@@ -271,9 +306,9 @@ pub fn run() {
                         app.exit(0);
                     }
                     "refresh" => {
-                        let max_pct = refresh_all_accounts(app);
-                        MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
-                        update_tray_display(app, max_pct);
+                        let result = refresh_all_accounts(app);
+                        MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
+                        update_tray_display(app, result.max_pct);
                     }
                     _ => {}
                 })
@@ -290,17 +325,14 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // 后台定时刷新
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
-                // 首次延迟 5 秒
                 std::thread::sleep(Duration::from_secs(5));
-                let max_pct = refresh_all_accounts(&app_handle);
-                MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
-                update_tray_display(&app_handle, max_pct);
+                let result = refresh_all_accounts(&app_handle);
+                MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
+                update_tray_display(&app_handle, result.max_pct);
 
                 loop {
-                    // 每次循环读取最新的刷新间隔设置
                     let interval = if let Some(db) = app_handle.try_state::<Database>() {
                         get_refresh_interval(&db)
                     } else {
@@ -308,9 +340,9 @@ pub fn run() {
                     };
                     std::thread::sleep(Duration::from_secs(interval));
 
-                    let max_pct = refresh_all_accounts(&app_handle);
-                    MAX_PERCENTAGE.store(max_pct, Ordering::SeqCst);
-                    update_tray_display(&app_handle, max_pct);
+                    let result = refresh_all_accounts(&app_handle);
+                    MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
+                    update_tray_display(&app_handle, result.max_pct);
                 }
             });
 
@@ -321,6 +353,7 @@ pub fn run() {
             commands::account::list_accounts,
             commands::account::delete_account,
             commands::account::update_account_alias,
+            commands::account::set_primary_account,
             commands::alerts::get_alert_rules,
             commands::alerts::update_alert_rule,
             commands::quota::get_quota,
@@ -330,6 +363,7 @@ pub fn run() {
             commands::settings::set_setting,
             close_popover,
             start_window_drag,
+            fit_window_size,
             refresh_all,
         ])
         .run(tauri::generate_context!())

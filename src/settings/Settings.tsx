@@ -1,6 +1,4 @@
-import { LogicalSize } from "@tauri-apps/api/dpi";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import AccountsPane from "./AccountsPane";
 import AlertsPane from "./AlertsPane";
 import GeneralPane from "./GeneralPane";
@@ -58,20 +56,15 @@ const navItems = [
   },
 ];
 
-export default function Settings({ onBack }: { onBack: () => void }) {
+export default function Settings({ onBack, screenHeight }: { onBack: () => void; screenHeight: number }) {
   const [activeTab, setActiveTab] = useState("accounts");
   const currentNav = navItems.find((n) => n.id === activeTab)!;
 
-  useEffect(() => {
-    const win = getCurrentWindow();
-    win.setSize(new LogicalSize(440, 520));
-    return () => {
-      win.setSize(new LogicalSize(360, 580));
-    };
-  }, []);
-
   return (
-    <div className="w-full h-full flex select-none overflow-hidden bg-[var(--color-bg-primary)] rounded-2xl shadow-[var(--shadow-popover)]">
+    <div
+      className="w-full flex select-none overflow-hidden bg-[var(--color-bg-primary)] rounded-2xl shadow-[var(--shadow-popover)]"
+      style={{ maxHeight: screenHeight }}
+    >
       {/* Sidebar */}
       <nav className="w-[76px] bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] flex flex-col py-3 px-2.5 shrink-0">
         <button
@@ -115,7 +108,7 @@ export default function Settings({ onBack }: { onBack: () => void }) {
             {currentNav.desc}
           </p>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 pb-5">
+        <div className="flex-1 scroll-area px-5 pb-5">
           <div key={activeTab} className="animate-fade-in">
             {activeTab === "accounts" && <AccountsPane />}
             {activeTab === "alerts" && <AlertsPane />}

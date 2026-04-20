@@ -19,14 +19,6 @@ pub struct ZhipuClient {
 }
 
 impl ZhipuClient {
-    pub fn new(api_key: &str) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            api_key: api_key.to_string(),
-        }
-    }
-
-    /// 使用共享的 reqwest Client（避免重复创建连接池）
     pub fn with_client(client: &reqwest::Client, api_key: &str) -> Self {
         Self {
             client: client.clone(),

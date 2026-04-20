@@ -1,7 +1,12 @@
 use keyring::Entry;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 use thiserror::Error;
 
 const SERVICE_NAME: &str = "glm-quota-monitor";
+
+static CACHE: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Error, Debug)]
 pub enum CryptoError {
@@ -9,32 +14,44 @@ pub enum CryptoError {
     CredentialStore(String),
 }
 
-/// 将 API Key 存入系统凭据管理器
 pub fn store_api_key(account_id: &str, api_key: &str) -> Result<(), CryptoError> {
     let entry = Entry::new(SERVICE_NAME, account_id)
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
     entry
         .set_password(api_key)
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(account_id.to_string(), api_key.to_string());
+    }
     Ok(())
 }
 
-/// 从系统凭据管理器读取 API Key
 pub fn get_api_key(account_id: &str) -> Result<String, CryptoError> {
+    if let Ok(cache) = CACHE.lock() {
+        if let Some(key) = cache.get(account_id) {
+            return Ok(key.clone());
+        }
+    }
     let entry = Entry::new(SERVICE_NAME, account_id)
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
-    entry
+    let key = entry
         .get_password()
-        .map_err(|e| CryptoError::CredentialStore(e.to_string()))
+        .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(account_id.to_string(), key.clone());
+    }
+    Ok(key)
 }
 
-/// 从系统凭据管理器删除 API Key
 pub fn delete_api_key(account_id: &str) -> Result<(), CryptoError> {
     let entry = Entry::new(SERVICE_NAME, account_id)
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
     entry
         .delete_password()
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.remove(account_id);
+    }
     Ok(())
 }
 

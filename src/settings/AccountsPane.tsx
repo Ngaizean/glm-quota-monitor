@@ -69,7 +69,7 @@ export default function AccountsPane() {
       </div>
 
       {error && (
-        <div className="text-[11px] bg-red-50 text-red-600 rounded-xl p-3 border border-red-100/80">
+        <div className="text-[11px] text-[var(--color-danger)] rounded-xl p-3 border border-[var(--color-danger)]/20 bg-[var(--color-danger)]/5">
           {error}
         </div>
       )}
@@ -114,7 +114,7 @@ export default function AccountsPane() {
                   </span>
                 </div>
                 <button onClick={() => handleDelete(acc.id)}
-                  className="text-[10px] font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-danger)] transition-[var(--transition-fast)] p-1 rounded-md hover:bg-red-50">
+                  className="text-[10px] font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-danger)] transition-[var(--transition-fast)] p-1 rounded-md hover:bg-[var(--color-danger)]/5">
                   删除
                 </button>
               </div>

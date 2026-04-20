@@ -4,6 +4,7 @@ export interface Account {
   purpose: string;
   level: string | null;
   is_active: boolean;
+  is_primary: boolean;
 }
 
 export interface QuotaLimit {

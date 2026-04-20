@@ -31,6 +31,9 @@ impl Database {
         if conn.prepare("SELECT purpose FROM accounts LIMIT 0").is_err() {
             conn.execute_batch("ALTER TABLE accounts ADD COLUMN purpose TEXT NOT NULL DEFAULT ''")?;
         }
+        if conn.prepare("SELECT is_primary FROM accounts LIMIT 0").is_err() {
+            conn.execute_batch("ALTER TABLE accounts ADD COLUMN is_primary INTEGER DEFAULT 0")?;
+        }
         Ok(())
     }
 }

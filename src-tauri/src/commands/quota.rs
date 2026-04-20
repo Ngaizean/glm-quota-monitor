@@ -22,7 +22,7 @@ pub fn get_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaDat
         }
     }).ok_or("API key not found".to_string())?;
 
-    let client = ZhipuClient::new(&api_key);
+    let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
     let quota = tauri::async_runtime::block_on(client.get_quota_limit())
         .map_err(|e| e.to_string())?;
 

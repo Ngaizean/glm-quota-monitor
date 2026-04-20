@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
+import Toggle from "../lib/Toggle";
 
 interface AlertRule {
   id: number;
@@ -13,23 +14,6 @@ const RULE_LABELS: Record<string, { label: string; desc: string }> = {
   weekly: { label: "周额度超过阈值", desc: "每周配额告警" },
   mcp_monthly: { label: "MCP 月度超过阈值", desc: "MCP 调用告警" },
 };
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
-  return (
-    <button
-      onClick={onChange}
-      className={`relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0 ${
-        checked ? "bg-[var(--color-accent)]" : "bg-[var(--color-bg-tertiary)]"
-      }`}
-    >
-      <span
-        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-          checked ? "translate-x-4" : "translate-x-0"
-        }`}
-      />
-    </button>
-  );
-}
 
 export default function AlertsPane() {
   const [rules, setRules] = useState<AlertRule[]>([]);
