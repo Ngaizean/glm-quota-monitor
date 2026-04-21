@@ -31,3 +31,9 @@ export interface TokenUsageSummary {
   last_7d: TokenUsagePeriod;
   last_30d: TokenUsagePeriod;
 }
+
+export interface AgentBinding {
+  agent: "claude_code" | "openclaw";
+  account_id: string | null;
+  label: string;
+}

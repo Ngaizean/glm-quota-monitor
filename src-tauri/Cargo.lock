@@ -1620,6 +1620,7 @@ name = "glm-quota-monitor"
 version = "2.0.0"
 dependencies = [
  "chrono",
+ "dirs 6.0.0",
  "keyring",
  "objc",
  "reqwest 0.12.28",

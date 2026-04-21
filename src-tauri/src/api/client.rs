@@ -90,4 +90,25 @@ impl ZhipuClient {
         self.get(&format!("{}?{}", path, query)).await
     }
 
+    /// 获取可用模型列表（OpenAI 兼容格式，不走 ApiResponse 包装）
+    pub async fn list_models(&self) -> Result<ModelListResponse, ApiError> {
+        let url = format!("{}/api/paas/v4/models", BASE_URL);
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ApiError::Unauthorized);
+        }
+
+        let text = resp.text().await?;
+        serde_json::from_str(&text).map_err(|e| ApiError::Api {
+            code: -1,
+            msg: format!("模型列表解析失败: {}", e),
+        })
+    }
+
 }

@@ -108,3 +108,15 @@ pub struct TotalModelUsage {
     pub total_tokens_usage: f64,
 }
 
+// ========== 模型列表 ==========
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ModelListResponse {
+    pub data: Vec<ModelInfo>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ModelInfo {
+    pub id: String,
+}
+

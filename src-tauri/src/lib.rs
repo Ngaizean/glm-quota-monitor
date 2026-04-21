@@ -220,6 +220,12 @@ fn update_tray_display(app: &tauri::AppHandle, percentage: i32) {
     platform::update_tray(app, percentage);
 }
 
+fn do_refresh(app: &tauri::AppHandle) {
+    let result = refresh_all_accounts(app);
+    MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
+    update_tray_display(app, result.max_pct);
+}
+
 // ========== IPC 命令 ==========
 
 #[tauri::command]
@@ -306,9 +312,7 @@ pub fn run() {
                         app.exit(0);
                     }
                     "refresh" => {
-                        let result = refresh_all_accounts(app);
-                        MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
-                        update_tray_display(app, result.max_pct);
+                        do_refresh(app);
                     }
                     _ => {}
                 })
@@ -328,9 +332,7 @@ pub fn run() {
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(5));
-                let result = refresh_all_accounts(&app_handle);
-                MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
-                update_tray_display(&app_handle, result.max_pct);
+                do_refresh(&app_handle);
 
                 loop {
                     let interval = if let Some(db) = app_handle.try_state::<Database>() {
@@ -339,10 +341,7 @@ pub fn run() {
                         DEFAULT_REFRESH_INTERVAL_SECS
                     };
                     std::thread::sleep(Duration::from_secs(interval));
-
-                    let result = refresh_all_accounts(&app_handle);
-                    MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
-                    update_tray_display(&app_handle, result.max_pct);
+                    do_refresh(&app_handle);
                 }
             });
 
@@ -354,6 +353,12 @@ pub fn run() {
             commands::account::delete_account,
             commands::account::update_account_alias,
             commands::account::set_primary_account,
+            commands::agent::bind_agent,
+            commands::agent::get_agent_bindings,
+            commands::agent::unbind_agent,
+            commands::agent::fetch_models,
+            commands::agent::get_default_model,
+            commands::agent::set_default_model,
             commands::alerts::get_alert_rules,
             commands::alerts::update_alert_rule,
             commands::quota::get_quota,
