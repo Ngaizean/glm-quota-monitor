@@ -2,6 +2,7 @@ import { useState } from "react";
 import AccountsPane from "./AccountsPane";
 import AlertsPane from "./AlertsPane";
 import GeneralPane from "./GeneralPane";
+import SpinPane from "./SpinPane";
 import AboutPane from "./AboutPane";
 
 const navItems = [
@@ -26,6 +27,18 @@ const navItems = [
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
         <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+      </svg>
+    ),
+  },
+  {
+    id: "spin",
+    label: "空转",
+    title: "空转设置",
+    desc: "自动触发额度计时器",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
       </svg>
     ),
   },
@@ -112,6 +125,7 @@ export default function Settings({ onBack, screenHeight }: { onBack: () => void;
           <div key={activeTab} className="animate-fade-in">
             {activeTab === "accounts" && <AccountsPane />}
             {activeTab === "alerts" && <AlertsPane />}
+            {activeTab === "spin" && <SpinPane />}
             {activeTab === "general" && <GeneralPane />}
             {activeTab === "about" && <AboutPane />}
           </div>

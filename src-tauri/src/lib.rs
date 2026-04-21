@@ -342,6 +342,26 @@ pub fn run() {
                     };
                     std::thread::sleep(Duration::from_secs(interval));
                     do_refresh(&app_handle);
+
+                    // 空转调度
+                    if let Some(db) = app_handle.try_state::<Database>() {
+                        if let Ok(conn) = db.conn.lock() {
+                            let config = commands::spin::read_config(&conn);
+                            let history = commands::spin::read_history(&conn);
+                            if let Some(history_key) = commands::spin::should_spin(&config, &history, &conn) {
+                                let model = commands::spin::read_spin_model(&conn);
+                                let account_id = config.account_id.clone();
+                                drop(conn);
+                                if let Some(account_id) = account_id {
+                                    if let Err(err) = commands::spin::send_spin_request(&account_id, &model) {
+                                        eprintln!("Auto spin failed: {}", err);
+                                    } else if let Ok(conn2) = db.conn.lock() {
+                                        let _ = commands::spin::record_spin_history(&conn2, &history_key);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             });
 
@@ -359,6 +379,9 @@ pub fn run() {
             commands::agent::fetch_models,
             commands::agent::get_default_model,
             commands::agent::set_default_model,
+            commands::spin::spin_now,
+            commands::spin::set_spin_config,
+            commands::spin::get_spin_status,
             commands::alerts::get_alert_rules,
             commands::alerts::update_alert_rule,
             commands::quota::get_quota,
