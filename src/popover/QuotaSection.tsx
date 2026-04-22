@@ -65,15 +65,17 @@ interface Props {
 
 export default function QuotaSection({ limits }: Props) {
   const tokensLimit = limits.find((l) => l.type === "TOKENS_LIMIT");
-  const timeLimit = limits.find((l) => l.type === "TIME_LIMIT");
+  const mcpLimit =
+    limits.find((l) => l.type === "TIME_LIMIT") ??
+    limits.find((l) => l.type === "MCP_MONTHLY");
 
   return (
     <div className="px-4 py-3 space-y-4">
       {tokensLimit && (
         <QuotaBar title="Token 额度" percentage={tokensLimit.percentage} resetTime={tokensLimit.nextResetTime} />
       )}
-      {timeLimit && timeLimit.percentage > 0 && (
-        <QuotaBar title="MCP 调用额度" percentage={timeLimit.percentage} resetTime={timeLimit.nextResetTime} />
+      {mcpLimit && (
+        <QuotaBar title="MCP 调用额度" percentage={mcpLimit.percentage} resetTime={mcpLimit.nextResetTime} />
       )}
     </div>
   );

@@ -43,23 +43,29 @@ fn get_db_path(app: &tauri::App) -> PathBuf {
 
 // ========== 窗口管理 ==========
 
+fn position_popover(window: &tauri::WebviewWindow, app: &tauri::AppHandle) {
+    if let Some(tray) = app.tray_by_id("main") {
+        if let Ok(Some(rect)) = tray.rect() {
+            if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
+                (rect.position, rect.size)
+            {
+                let scale = window.scale_factor().unwrap_or(2.0);
+                let window_w = (platform::POPOVER_WIDTH_LOGICAL * scale) as u32;
+                let (x, y) = platform::popover_position(pos.x, pos.y, size.width, size.height, window_w);
+                let _ = window.set_position(tauri::Position::Physical(
+                    tauri::PhysicalPosition::new(x, y),
+                ));
+            }
+        }
+    }
+}
+
 fn toggle_popover(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window(POPOVER_LABEL) {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
-            if let Some(tray) = app.tray_by_id("main") {
-                if let Ok(Some(rect)) = tray.rect() {
-                    if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
-                        (rect.position, rect.size)
-                    {
-                        let (x, y) = platform::popover_position(pos.x, pos.y, size.width, size.height);
-                        let _ = window.set_position(tauri::Position::Physical(
-                            tauri::PhysicalPosition::new(x, y),
-                        ));
-                    }
-                }
-            }
+            position_popover(&window, app);
             let _ = window.show();
             let _ = window.set_focus();
         }
@@ -80,23 +86,15 @@ fn create_popover_window(app: &tauri::AppHandle) {
             .resizable(false)
             .skip_taskbar(true)
             .always_on_top(true)
+            .visible(false)
             .build()
             .expect("Failed to create popover window");
 
     platform::apply_window_decoration(&window);
-
-    if let Some(tray) = app.tray_by_id("main") {
-        if let Ok(Some(rect)) = tray.rect() {
-            if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
-                (rect.position, rect.size)
-            {
-                let (x, y) = platform::popover_position(pos.x, pos.y, size.width, size.height);
-                let _ = window.set_position(tauri::Position::Physical(
-                    tauri::PhysicalPosition::new(x, y),
-                ));
-            }
-        }
-    }
+    position_popover(&window, app);
+    let _ = window.show();
+    let _ = window.set_focus();
+    return;
 }
 
 // ========== 后台刷新 ==========
