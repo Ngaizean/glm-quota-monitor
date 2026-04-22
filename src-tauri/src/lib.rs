@@ -94,7 +94,6 @@ fn create_popover_window(app: &tauri::AppHandle) {
     position_popover(&window, app);
     let _ = window.show();
     let _ = window.set_focus();
-    return;
 }
 
 // ========== 后台刷新 ==========
@@ -224,6 +223,29 @@ fn do_refresh(app: &tauri::AppHandle) {
     update_tray_display(app, result.max_pct);
 }
 
+fn run_spin_scheduler(app: &tauri::AppHandle) {
+    if let Some(db) = app.try_state::<Database>() {
+        if let Ok(conn) = db.conn.lock() {
+            let config = commands::spin::read_config(&conn);
+            let history = commands::spin::read_history(&conn);
+            if let Some(history_key) = commands::spin::should_spin(&config, &history, &conn) {
+                let model = commands::spin::read_spin_model(&conn);
+                let account_id = config.account_id.clone();
+                drop(conn);
+                if let Some(account_id) = account_id {
+                    if let Err(err) = commands::spin::send_spin_request(&account_id, &model) {
+                        eprintln!("Auto spin failed: {}", err);
+                    } else if let Some(db2) = app.try_state::<Database>() {
+                        if let Ok(conn2) = db2.conn.lock() {
+                            let _ = commands::spin::record_spin_history(&conn2, &history_key);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ========== IPC 命令 ==========
 
 #[tauri::command]
@@ -340,26 +362,15 @@ pub fn run() {
                     };
                     std::thread::sleep(Duration::from_secs(interval));
                     do_refresh(&app_handle);
+                }
+            });
 
-                    // 空转调度
-                    if let Some(db) = app_handle.try_state::<Database>() {
-                        if let Ok(conn) = db.conn.lock() {
-                            let config = commands::spin::read_config(&conn);
-                            let history = commands::spin::read_history(&conn);
-                            if let Some(history_key) = commands::spin::should_spin(&config, &history, &conn) {
-                                let model = commands::spin::read_spin_model(&conn);
-                                let account_id = config.account_id.clone();
-                                drop(conn);
-                                if let Some(account_id) = account_id {
-                                    if let Err(err) = commands::spin::send_spin_request(&account_id, &model) {
-                                        eprintln!("Auto spin failed: {}", err);
-                                    } else if let Ok(conn2) = db.conn.lock() {
-                                        let _ = commands::spin::record_spin_history(&conn2, &history_key);
-                                    }
-                                }
-                            }
-                        }
-                    }
+            let automation_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(30));
+                loop {
+                    run_spin_scheduler(&automation_handle);
+                    std::thread::sleep(Duration::from_secs(60));
                 }
             });
 

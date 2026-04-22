@@ -5,14 +5,13 @@ import type { Account } from "../types";
 
 interface PeakPeriod {
   start: string;
-  end: string;
 }
 
 interface SpinConfig {
   enabled: boolean;
   mode: string;
   peak_periods: PeakPeriod[];
-  lead_hours: number;
+  lead_minutes: number;
   fixed_time: string;
   account_id: string | null;
 }
@@ -33,6 +32,14 @@ const timeClass =
 
 const numberClass =
   "w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-[var(--color-accent)]/20 focus:border-[var(--color-accent)] transition-[var(--transition-fast)]";
+
+function formatLeadMinutes(minutes: number) {
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours > 0 && mins > 0) return `${hours} 小时 ${mins} 分`;
+  if (hours > 0) return `${hours} 小时`;
+  return `${mins} 分钟`;
+}
 
 export default function SpinPane() {
   const [status, setStatus] = useState<SpinStatus | null>(null);
@@ -109,7 +116,7 @@ export default function SpinPane() {
 
   function addPeakPeriod() {
     if (!status) return;
-    const next = [...status.config.peak_periods, { start: "19:00", end: "23:00" }];
+    const next = [...status.config.peak_periods, { start: "19:00" }];
     updateConfig({ peak_periods: next });
   }
 
@@ -136,6 +143,8 @@ export default function SpinPane() {
   }
 
   const { config, last_spin, next_spin } = status;
+  const leadHours = Math.floor(config.lead_minutes / 60);
+  const leadMins = config.lead_minutes % 60;
 
   return (
     <div className="space-y-3">
@@ -201,29 +210,47 @@ export default function SpinPane() {
           <div className="space-y-3">
             <div>
               <label className="text-[10px] text-[var(--color-text-tertiary)] mb-1 block">
-                提前空转小时数
+                提前空转时间
               </label>
-              <input
-                type="number"
-                min={1}
-                max={5}
-                value={config.lead_hours}
-                onChange={(e) =>
-                  updateConfig({
-                    lead_hours: Math.max(1, Math.min(5, Number(e.target.value) || 3)),
-                  })
-                }
-                className={numberClass}
-              />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="text-[9px] text-[var(--color-text-tertiary)] mb-1 block">小时</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={5}
+                    value={leadHours}
+                    onChange={(e) => {
+                      const hours = Math.max(0, Math.min(5, Number(e.target.value) || 0));
+                      updateConfig({ lead_minutes: Math.max(5, hours * 60 + leadMins) });
+                    }}
+                    className={numberClass}
+                  />
+                </div>
+                <div>
+                  <span className="text-[9px] text-[var(--color-text-tertiary)] mb-1 block">分钟</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={59}
+                    value={leadMins}
+                    onChange={(e) => {
+                      const mins = Math.max(0, Math.min(59, Number(e.target.value) || 0));
+                      updateConfig({ lead_minutes: Math.max(5, leadHours * 60 + mins) });
+                    }}
+                    className={numberClass}
+                  />
+                </div>
+              </div>
               <p className="text-[9px] text-[var(--color-text-tertiary)] mt-1">
-                在每个高峰开始前 {config.lead_hours} 小时内，如计时器未启动，则自动空转
+                在每个高峰开始前 {formatLeadMinutes(config.lead_minutes)} 内，如计时器未启动，则自动空转
               </p>
             </div>
 
             <div className="space-y-2">
               {config.peak_periods.map((period, index) => (
                 <div
-                  key={`${period.start}-${period.end}-${index}`}
+                  key={`${period.start}-${index}`}
                   className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-xl p-3 space-y-2"
                 >
                   <div className="flex items-center justify-between">
@@ -238,29 +265,16 @@ export default function SpinPane() {
                       删除
                     </button>
                   </div>
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <label className="text-[10px] text-[var(--color-text-tertiary)] mb-1 block">
-                        开始
-                      </label>
-                      <input
-                        type="time"
-                        value={period.start}
-                        onChange={(e) => updatePeakPeriod(index, { start: e.target.value })}
-                        className={timeClass}
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] text-[var(--color-text-tertiary)] mb-1 block">
-                        结束
-                      </label>
-                      <input
-                        type="time"
-                        value={period.end}
-                        onChange={(e) => updatePeakPeriod(index, { end: e.target.value })}
-                        className={timeClass}
-                      />
-                    </div>
+                  <div>
+                    <label className="text-[10px] text-[var(--color-text-tertiary)] mb-1 block">
+                      开始
+                    </label>
+                    <input
+                      type="time"
+                      value={period.start}
+                      onChange={(e) => updatePeakPeriod(index, { start: e.target.value })}
+                      className={timeClass}
+                    />
                   </div>
                 </div>
               ))}

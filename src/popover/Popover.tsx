@@ -14,25 +14,34 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [quotas, setQuotas] = useState<Record<string, QuotaData>>({});
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState("");
 
   const refreshAll = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const result = await invoke<RefreshResult>("refresh_all");
-      setQuotas(result.quotas);
-      const accs = await invoke<Account[]>("list_accounts");
+      const accountsPromise = invoke<Account[]>("list_accounts");
+      const refreshPromise = invoke<RefreshResult>("refresh_all");
+
+      const accs = await accountsPromise;
       setAccounts(accs);
+
+      const result = await refreshPromise;
+      setQuotas(result.quotas);
+      setInitialized(true);
     } catch (e) {
       setError(String(e));
+      setInitialized(true);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { refreshAll(); }, [refreshAll]);
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
 
   useEffect(() => {
     const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
@@ -42,7 +51,9 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
         getCurrentWindow().hide();
       }
     });
-    return () => { unlisten.then((fn) => fn()); };
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, [refreshAll]);
 
   function toggleExpand(id: string) {
@@ -71,7 +82,15 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
             {error}
           </div>
         )}
-        {!accounts.length && !error && (
+
+        {!initialized && (
+          <div className="px-4 py-4 space-y-3">
+            <div className="skeleton h-18 rounded-2xl" />
+            <div className="skeleton h-18 rounded-2xl" />
+          </div>
+        )}
+
+        {initialized && !loading && !accounts.length && !error && (
           <div className="flex flex-col items-center justify-center py-16 space-y-3">
             <div className="w-14 h-14 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] flex items-center justify-center">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -95,6 +114,7 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
             </button>
           </div>
         )}
+
         <AccountList
           accounts={accounts}
           expandedIds={expandedIds}
