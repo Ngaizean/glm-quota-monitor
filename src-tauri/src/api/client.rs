@@ -111,4 +111,42 @@ impl ZhipuClient {
         })
     }
 
+    /// 空转：使用 Coding Plan 的 Anthropic 兼容接口触发额度计时器
+    pub async fn spin_with_model(&self, model: &str) -> Result<(), ApiError> {
+        let url = format!("{}/api/anthropic/v1/messages", BASE_URL);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({
+                "model": model,
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "hi"}]
+            }))
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ApiError::Unauthorized);
+        }
+
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+
+        let text = resp.text().await.unwrap_or_default();
+        Err(ApiError::Api {
+            code: status.as_u16() as i32,
+            msg: if text.is_empty() {
+                format!("空转请求失败: HTTP {}", status)
+            } else {
+                text
+            },
+        })
+    }
+
+
 }

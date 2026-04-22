@@ -4,4 +4,5 @@ pub mod alerts;
 pub mod history;
 pub mod quota;
 pub mod settings;
+pub mod spin;
 pub mod summary;

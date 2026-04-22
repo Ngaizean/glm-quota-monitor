@@ -134,15 +134,15 @@ export default function GeneralPane() {
             {defaultModel || "glm-5.1"}
           </span>
         </div>
-        <div className="relative" ref={dropdownRef}>
+        <div className="space-y-2" ref={dropdownRef}>
           <button
             onClick={handleOpenModelDropdown}
             className="w-full py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg hover:border-[var(--color-accent)] transition-[var(--transition-fast)]"
           >
-            {modelsLoading ? "加载模型列表..." : "选择默认模型"}
+            {modelsLoading ? "加载模型列表..." : modelDropdownOpen ? "收起模型列表" : "选择默认模型"}
           </button>
           {modelDropdownOpen && (
-            <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg shadow-[var(--shadow-lg)] max-h-48 overflow-y-auto scroll-area animate-fade-in">
+            <div className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg shadow-[var(--shadow-popover)] max-h-48 overflow-y-auto scroll-area overscroll-contain animate-slide-down">
               {availableModels.map((m) => (
                 <button
                   key={m}
