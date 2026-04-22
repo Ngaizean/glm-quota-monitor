@@ -165,7 +165,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
         let result = tauri::async_runtime::block_on(client.get_quota_limit());
 
         match result {
-            Ok(quota) => {
+            Ok(mut quota) => {
                 let pct = quota.limits.iter()
                     .find(|l| l.limit_type == "TOKENS_LIMIT")
                     .map(|l| l.percentage as i32)
@@ -177,16 +177,21 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                     primary_pct = Some(pct);
                 }
 
-                quotas.insert(account_id.clone(), quota.clone());
-
                 if let Ok(conn2) = db.conn.lock() {
                     let _ = db::record_quota_snapshot(&conn2, account_id, &quota);
+                    quota.last_active = conn2.query_row(
+                        "SELECT timestamp FROM usage_snapshots WHERE account_id = ?1 ORDER BY timestamp DESC LIMIT 1",
+                        rusqlite::params![account_id],
+                        |row| row.get::<_, String>(0),
+                    ).ok();
                 }
+
+                quotas.insert(account_id.clone(), quota.clone());
+                let quota_clone = quota.clone();
 
                 let app_clone = app.clone();
                 let aid = account_id.clone();
                 let alias = account_alias.clone();
-                let quota_clone = quota.clone();
                 alert::check_and_notify(
                     &db,
                     &aid,

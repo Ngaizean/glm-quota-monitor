@@ -16,6 +16,7 @@ export interface QuotaLimit {
 export interface QuotaData {
   limits: QuotaLimit[];
   level: string | null;
+  last_active: string | null;
 }
 
 export interface TokenUsagePeriod {

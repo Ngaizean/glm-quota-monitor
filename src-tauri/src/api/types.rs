@@ -18,6 +18,8 @@ pub struct QuotaData {
     /// level 可能为 null（无用量/未激活时）
     #[serde(default, deserialize_with = "deserialize_string_or_null")]
     pub level: String,
+    #[serde(default)]
+    pub last_active: Option<String>,
 }
 
 /// 兼容 API 返回 null / 缺失字段时默认为空字符串
