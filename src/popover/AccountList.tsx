@@ -3,6 +3,22 @@ import QuotaSection from "./QuotaSection";
 import UsageSummary from "./UsageSummary";
 import type { Account, QuotaData } from "../types";
 
+function formatLastActive(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return null;
+  const diff = Date.now() - date.getTime();
+  if (diff < 0) return null;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "刚刚";
+  if (mins < 60) return `${mins} 分钟前`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} 天前`;
+  return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 interface Props {
   accounts: Account[];
   expandedIds: Set<string>;
@@ -123,13 +139,16 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                 expanded ? "max-h-[1000px] opacity-100" : "max-h-0 opacity-0"
               } overflow-hidden`}
             >
-              {acc.purpose && (
-                <div className="px-3 pb-1.5">
+              <div className="px-3 pb-1.5 flex items-center justify-between">
+                <span className="text-[10px] text-[var(--color-text-tertiary)]">
+                  {acc.purpose}
+                </span>
+                {formatLastActive(quota?.last_active) && (
                   <span className="text-[10px] text-[var(--color-text-tertiary)]">
-                    {acc.purpose}
+                    上次活跃 {formatLastActive(quota?.last_active)}
                   </span>
-                </div>
-              )}
+                )}
+              </div>
               <div className="mx-3 border-t border-[var(--color-border-subtle)]" />
               {quota && <QuotaSection limits={quota.limits} />}
               <div className="mx-3 border-t border-[var(--color-border-subtle)]" />

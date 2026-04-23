@@ -7,12 +7,11 @@ use tauri::State;
 
 const SPIN_CONFIG_KEY: &str = "spin_config";
 const SPIN_HISTORY_KEY: &str = "spin_history";
-const DEFAULT_LEAD_HOURS: u32 = 3;
+const DEFAULT_LEAD_MINUTES: u32 = 180;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PeakPeriod {
     pub start: String,
-    pub end: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -23,8 +22,10 @@ pub struct SpinConfig {
     pub mode: String,
     #[serde(default)]
     pub peak_periods: Vec<PeakPeriod>,
-    #[serde(default = "default_lead_hours")]
-    pub lead_hours: u32,
+    #[serde(default = "default_lead_minutes")]
+    pub lead_minutes: u32,
+    #[serde(default)]
+    pub lead_hours: Option<u32>,
     #[serde(default = "default_fixed_time")]
     pub fixed_time: String,
     #[serde(default)]
@@ -41,7 +42,8 @@ impl Default for SpinConfig {
             enabled: false,
             mode: default_mode(),
             peak_periods: default_peak_periods(),
-            lead_hours: default_lead_hours(),
+            lead_minutes: default_lead_minutes(),
+            lead_hours: None,
             fixed_time: default_fixed_time(),
             account_id: None,
             peak_start: None,
@@ -74,8 +76,16 @@ fn normalize_mode(mode: &str) -> String {
     }
 }
 
-fn default_lead_hours() -> u32 {
-    DEFAULT_LEAD_HOURS
+fn default_lead_minutes() -> u32 {
+    DEFAULT_LEAD_MINUTES
+}
+
+fn normalize_lead_minutes(lead_minutes: u32, legacy_lead_hours: Option<u32>) -> u32 {
+    if let Some(hours) = legacy_lead_hours {
+        (hours * 60).clamp(5, 300)
+    } else {
+        lead_minutes.clamp(5, 300)
+    }
 }
 
 fn default_fixed_time() -> String {
@@ -85,18 +95,17 @@ fn default_fixed_time() -> String {
 fn default_peak_periods() -> Vec<PeakPeriod> {
     vec![PeakPeriod {
         start: "09:00".to_string(),
-        end: "14:00".to_string(),
     }]
 }
 
 impl SpinConfig {
     fn normalized(mut self) -> Self {
         self.mode = normalize_mode(&self.mode);
-        self.lead_hours = self.lead_hours.clamp(1, 5);
+        self.lead_minutes = normalize_lead_minutes(self.lead_minutes, self.lead_hours);
 
         if self.peak_periods.is_empty() {
-            if let (Some(start), Some(end)) = (self.peak_start.clone(), self.peak_end.clone()) {
-                self.peak_periods.push(PeakPeriod { start, end });
+            if let Some(start) = self.peak_start.clone() {
+                self.peak_periods.push(PeakPeriod { start });
             }
         }
 
@@ -104,13 +113,15 @@ impl SpinConfig {
             self.peak_periods = default_peak_periods();
         }
 
-        self.peak_periods.retain(|p| parse_time(&p.start).is_some() && parse_time(&p.end).is_some());
+        self.peak_periods.retain(|p| parse_time(&p.start).is_some());
         self.peak_periods.sort_by_key(|p| time_to_minutes(&p.start).unwrap_or(u32::MAX));
+        self.peak_periods.dedup_by(|a, b| a.start == b.start);
 
         if self.peak_periods.is_empty() {
             self.peak_periods = default_peak_periods();
         }
 
+        self.lead_hours = None;
         self.peak_start = None;
         self.peak_end = None;
         self
@@ -141,7 +152,8 @@ pub fn read_history(conn: &rusqlite::Connection) -> Vec<String> {
 }
 
 fn write_history(conn: &rusqlite::Connection, history: &[String]) -> Result<(), String> {
-    let trimmed: Vec<String> = history.iter().rev().take(30).cloned().collect::<Vec<_>>().into_iter().rev().collect();
+    let start = history.len().saturating_sub(30);
+    let trimmed = &history[start..];
     let json = serde_json::to_string(&trimmed).map_err(|e| format!("历史序列化失败: {}", e))?;
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
@@ -239,7 +251,7 @@ fn current_peak_slot(config: &SpinConfig, history: &[String], now_mins: u32, tod
         if history.iter().any(|h| h == &slot_key) {
             continue;
         }
-        let window_start = start_mins.saturating_sub(config.lead_hours * 60);
+        let window_start = start_mins.saturating_sub(config.lead_minutes);
         if now_mins >= window_start && now_mins < start_mins {
             return Some(slot_key);
         }
@@ -256,7 +268,7 @@ fn next_peak_slot(config: &SpinConfig, history: &[String], now_mins: u32, today:
         if history.iter().any(|h| h == &slot_key) {
             continue;
         }
-        let window_start = start_mins.saturating_sub(config.lead_hours * 60);
+        let window_start = start_mins.saturating_sub(config.lead_minutes);
         if now_mins < start_mins {
             return Some(format!("{:02}:{:02}", window_start / 60, window_start % 60));
         }

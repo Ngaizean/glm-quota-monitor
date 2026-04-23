@@ -1,14 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getAvatarGradient, getLevelStyle } from "../lib/ui";
 import type { Account, AgentBinding } from "../types";
 
 const inputClass =
   "w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-[var(--color-accent)]/20 focus:border-[var(--color-accent)] transition-[var(--transition-fast)] placeholder:text-[var(--color-text-tertiary)]";
 
+type AgentType = "claude_code" | "openclaw";
+
 export default function AccountsPane() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bindings, setBindings] = useState<Record<string, string | null>>({});
+  const [defaultModel, setDefaultModel] = useState("glm-5.1");
+  const [modelCache, setModelCache] = useState<Record<string, string[]>>({});
+  const [picker, setPicker] = useState<{ accountId: string; agent: AgentType } | null>(null);
+  const [pickerLoading, setPickerLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [alias, setAlias] = useState("");
   const [purpose, setPurpose] = useState("");
@@ -22,11 +28,13 @@ export default function AccountsPane() {
 
   async function refresh() {
     try {
-      const [accs, binds] = await Promise.all([
+      const [accs, binds, model] = await Promise.all([
         invoke<Account[]>("list_accounts"),
         invoke<AgentBinding[]>("get_agent_bindings"),
+        invoke<string>("get_default_model"),
       ]);
       setAccounts(accs);
+      setDefaultModel(model || "glm-5.1");
       const map: Record<string, string | null> = {};
       for (const b of binds) {
         map[b.agent] = b.account_id;
@@ -68,20 +76,44 @@ export default function AccountsPane() {
     }
   }
 
-  async function handleBind(agent: string, accountId: string) {
+  async function handleBind(agent: AgentType, accountId: string, model?: string) {
     try {
-      await invoke("bind_agent", { agent, accountId });
+      await invoke("bind_agent", { agent, accountId, model });
+      setPicker(null);
       await refresh();
     } catch (e) {
       setError(String(e));
     }
   }
 
-  const groups = accounts.reduce<Record<string, Account[]>>((acc, cur) => {
-    if (!acc[cur.alias]) acc[cur.alias] = [];
-    acc[cur.alias].push(cur);
-    return acc;
-  }, {});
+  async function openPicker(agent: AgentType, accountId: string) {
+    const cacheKey = `${accountId}`;
+    if (picker?.accountId === accountId && picker.agent === agent) {
+      setPicker(null);
+      return;
+    }
+    setPicker({ accountId, agent });
+    if (modelCache[cacheKey]) return;
+    setPickerLoading(true);
+    try {
+      const models = await invoke<string[]>("fetch_models", { accountId });
+      setModelCache((prev) => ({ ...prev, [cacheKey]: models }));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPickerLoading(false);
+    }
+  }
+
+  const groups = useMemo(
+    () =>
+      accounts.reduce<Record<string, Account[]>>((acc, cur) => {
+        if (!acc[cur.alias]) acc[cur.alias] = [];
+        acc[cur.alias].push(cur);
+        return acc;
+      }, {}),
+    [accounts],
+  );
 
   return (
     <div className="space-y-3">
@@ -105,27 +137,9 @@ export default function AccountsPane() {
 
       {showAdd && (
         <div className="bg-[var(--color-bg-secondary)] rounded-xl p-3.5 space-y-2.5 border border-[var(--color-border-subtle)] animate-slide-down">
-          <input
-            type="text"
-            placeholder="账号名称"
-            value={alias}
-            onChange={(e) => setAlias(e.target.value)}
-            className={inputClass}
-          />
-          <input
-            type="text"
-            placeholder="Key 用途（如：开发、日常）"
-            value={purpose}
-            onChange={(e) => setPurpose(e.target.value)}
-            className={inputClass}
-          />
-          <input
-            type="password"
-            placeholder="API Key（id.secret）"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            className={`${inputClass} font-mono`}
-          />
+          <input type="text" placeholder="账号名称" value={alias} onChange={(e) => setAlias(e.target.value)} className={inputClass} />
+          <input type="text" placeholder="Key 用途（如：开发、日常）" value={purpose} onChange={(e) => setPurpose(e.target.value)} className={inputClass} />
+          <input type="password" placeholder="API Key（id.secret）" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className={`${inputClass} font-mono`} />
           <button
             onClick={handleAdd}
             disabled={loading || !alias.trim() || !purpose.trim() || !apiKey.trim()}
@@ -138,94 +152,152 @@ export default function AccountsPane() {
 
       <div className="space-y-2">
         {Object.entries(groups).map(([name, keys]) => (
-          <div
-            key={name}
-            className="bg-[var(--color-bg-secondary)] rounded-xl overflow-hidden border border-[var(--color-border-subtle)]"
-          >
+          <div key={name} className="bg-[var(--color-bg-secondary)] rounded-xl overflow-hidden border border-[var(--color-border-subtle)]">
             <div className="px-3 py-2.5 border-b border-[var(--color-border-subtle)] flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div
-                  className={`w-6 h-6 rounded-lg bg-gradient-to-br ${getAvatarGradient(name)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}
-                >
+                <div className={`w-6 h-6 rounded-lg bg-gradient-to-br ${getAvatarGradient(name)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>
                   {name.charAt(0).toUpperCase()}
                 </div>
-                <span className="text-xs font-semibold text-[var(--color-text-primary)]">
-                  {name}
-                </span>
+                <span className="text-xs font-semibold text-[var(--color-text-primary)]">{name}</span>
               </div>
-              <span className="text-[10px] text-[var(--color-text-tertiary)] font-medium">
-                {keys.length} Key
-              </span>
+              <span className="text-[10px] text-[var(--color-text-tertiary)] font-medium">{keys.length} Key</span>
             </div>
-            {keys.map((acc) => (
-              <div
-                key={acc.id}
-                className="flex items-center justify-between px-3 py-2.5 hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)]"
-              >
-                <div className="flex items-center gap-2.5">
-                  <span className="text-xs text-[var(--color-text-secondary)]">
-                    {acc.purpose}
-                  </span>
-                  <span
-                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider ${getLevelStyle(acc.level)}`}
-                  >
-                    {acc.level ?? "—"}
-                  </span>
+
+            {keys.map((acc) => {
+              const isPickerOpen = picker?.accountId === acc.id;
+              const models = modelCache[acc.id] ?? [];
+              return (
+                <div key={acc.id} className="border-b border-[var(--color-border-subtle)] last:border-b-0">
+                  <div className="flex items-center justify-between px-3 py-2.5 hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)]">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-xs text-[var(--color-text-secondary)]">{acc.purpose}</span>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider ${getLevelStyle(acc.level)}`}>
+                        {acc.level ?? "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1">
+                        <div className="flex">
+                          <button
+                            onClick={() => handleBind("claude_code", acc.id)}
+                            title={bindings["claude_code"] === acc.id ? `Claude Code 已绑定（默认模型：${defaultModel}）` : `绑定到 Claude Code（默认模型：${defaultModel}）`}
+                            className={`text-[9px] font-bold px-2.5 py-0.5 rounded-l-md border transition-[var(--transition-fast)] ${
+                              bindings["claude_code"] === acc.id
+                                ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                                : "text-[var(--color-text-tertiary)] border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                            }`}
+                          >
+                            CC
+                          </button>
+                          <button
+                            onClick={() => openPicker("claude_code", acc.id)}
+                            className={`text-[9px] px-1.5 py-0.5 rounded-r-md border-l-0 border transition-[var(--transition-fast)] ${
+                              isPickerOpen && picker?.agent === "claude_code"
+                                ? "border-[var(--color-accent)] text-white bg-[var(--color-accent)]"
+                                : bindings["claude_code"] === acc.id
+                                  ? "border-[var(--color-accent)] text-white/80 bg-[var(--color-accent)] hover:text-white"
+                                  : "border-[var(--color-border)] text-[var(--color-text-tertiary)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                            }`}
+                            title="选择 Claude Code 覆盖模型"
+                          >
+                            ▾
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <div className="flex">
+                          <button
+                            onClick={() => handleBind("openclaw", acc.id)}
+                            title={bindings["openclaw"] === acc.id ? `OpenClaw 已绑定（默认模型：${defaultModel}）` : `绑定到 OpenClaw（默认模型：${defaultModel}）`}
+                            className={`text-[9px] font-bold px-2.5 py-0.5 rounded-l-md border transition-[var(--transition-fast)] ${
+                              bindings["openclaw"] === acc.id
+                                ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                                : "text-[var(--color-text-tertiary)] border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                            }`}
+                          >
+                            OC
+                          </button>
+                          <button
+                            onClick={() => openPicker("openclaw", acc.id)}
+                            className={`text-[9px] px-1.5 py-0.5 rounded-r-md border-l-0 border transition-[var(--transition-fast)] ${
+                              isPickerOpen && picker?.agent === "openclaw"
+                                ? "border-[var(--color-accent)] text-white bg-[var(--color-accent)]"
+                                : bindings["openclaw"] === acc.id
+                                  ? "border-[var(--color-accent)] text-white/80 bg-[var(--color-accent)] hover:text-white"
+                                  : "border-[var(--color-border)] text-[var(--color-text-tertiary)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                            }`}
+                            title="选择 OpenClaw 覆盖模型"
+                          >
+                            ▾
+                          </button>
+                        </div>
+                      </div>
+
+                      <button onClick={() => handleDelete(acc.id)} className="text-[10px] font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-danger)] transition-[var(--transition-fast)] p-1 rounded-md hover:bg-[var(--color-danger)]/5">
+                        删除
+                      </button>
+                    </div>
+                  </div>
+
+                  {isPickerOpen && (
+                    <div className="px-3 pb-3">
+                      <div className="rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-primary)] p-2.5 space-y-2 animate-slide-down">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-[var(--color-text-tertiary)]">
+                            {picker?.agent === "claude_code" ? "Claude Code" : "OpenClaw"} 覆盖模型
+                          </span>
+                          <button
+                            onClick={() => setPicker(null)}
+                            className="text-[10px] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
+                          >
+                            收起
+                          </button>
+                        </div>
+
+                        <button
+                          onClick={() => handleBind(picker!.agent, acc.id)}
+                          className="w-full text-left px-3 py-2 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] transition-[var(--transition-fast)]"
+                        >
+                          <div className="text-[11px] font-medium text-[var(--color-text-primary)]">使用默认模型</div>
+                          <div className="text-[10px] text-[var(--color-text-tertiary)] font-mono mt-0.5">{defaultModel}</div>
+                        </button>
+
+                        <div className="max-h-40 overflow-y-auto scroll-area overscroll-contain rounded-lg border border-[var(--color-border-subtle)]">
+                          {pickerLoading ? (
+                            <div className="px-3 py-2 text-[10px] text-[var(--color-text-tertiary)]">加载模型中...</div>
+                          ) : models.length ? (
+                            models.map((model) => (
+                              <button
+                                key={model}
+                                onClick={() => handleBind(picker!.agent, acc.id, model)}
+                                className="w-full text-left px-3 py-2 text-[10px] font-mono text-[var(--color-text-secondary)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] transition-[var(--transition-fast)] border-b border-[var(--color-border-subtle)] last:border-b-0"
+                              >
+                                {model}
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-3 py-2 text-[10px] text-[var(--color-text-tertiary)]">暂无可用模型</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => handleBind("claude_code", acc.id)}
-                    title={bindings["claude_code"] === acc.id ? "Claude Code 已绑定" : "绑定到 Claude Code"}
-                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md transition-[var(--transition-fast)] ${
-                      bindings["claude_code"] === acc.id
-                        ? "bg-[var(--color-accent)] text-white"
-                        : "text-[var(--color-text-tertiary)] border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
-                    }`}
-                  >
-                    CC
-                  </button>
-                  <button
-                    onClick={() => handleBind("openclaw", acc.id)}
-                    title={bindings["openclaw"] === acc.id ? "OpenClaw 已绑定" : "绑定到 OpenClaw"}
-                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md transition-[var(--transition-fast)] ${
-                      bindings["openclaw"] === acc.id
-                        ? "bg-[var(--color-accent)] text-white"
-                        : "text-[var(--color-text-tertiary)] border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
-                    }`}
-                  >
-                    OC
-                  </button>
-                  <button
-                    onClick={() => handleDelete(acc.id)}
-                    className="text-[10px] font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-danger)] transition-[var(--transition-fast)] p-1 rounded-md hover:bg-[var(--color-danger)]/5"
-                  >
-                    删除
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ))}
+
         {accounts.length === 0 && !showAdd && (
           <div className="text-center py-10">
             <div className="w-10 h-10 mx-auto rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] flex items-center justify-center mb-2">
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="var(--color-text-tertiary)"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19" />
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
             </div>
-            <p className="text-[11px] text-[var(--color-text-tertiary)]">
-              暂无账号，点击上方添加
-            </p>
+            <p className="text-[11px] text-[var(--color-text-tertiary)]">暂无账号，点击上方添加</p>
           </div>
         )}
       </div>

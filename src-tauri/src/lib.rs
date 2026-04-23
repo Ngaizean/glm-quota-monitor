@@ -51,7 +51,8 @@ fn position_popover(window: &tauri::WebviewWindow, app: &tauri::AppHandle) {
             {
                 let scale = window.scale_factor().unwrap_or(2.0);
                 let window_w = (platform::POPOVER_WIDTH_LOGICAL * scale) as u32;
-                let (x, y) = platform::popover_position(pos.x, pos.y, size.width, size.height, window_w);
+                let window_h = window.inner_size().unwrap_or(tauri::PhysicalSize::new(window_w, 600)).height;
+                let (x, y) = platform::popover_position(pos.x, pos.y, size.width, size.height, window_w, window_h);
                 let _ = window.set_position(tauri::Position::Physical(
                     tauri::PhysicalPosition::new(x, y),
                 ));
@@ -94,7 +95,6 @@ fn create_popover_window(app: &tauri::AppHandle) {
     position_popover(&window, app);
     let _ = window.show();
     let _ = window.set_focus();
-    return;
 }
 
 // ========== 后台刷新 ==========
@@ -166,7 +166,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
         let result = tauri::async_runtime::block_on(client.get_quota_limit());
 
         match result {
-            Ok(quota) => {
+            Ok(mut quota) => {
                 let pct = quota.limits.iter()
                     .find(|l| l.limit_type == "TOKENS_LIMIT")
                     .map(|l| l.percentage as i32)
@@ -178,16 +178,48 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                     primary_pct = Some(pct);
                 }
 
-                quotas.insert(account_id.clone(), quota.clone());
-
                 if let Ok(conn2) = db.conn.lock() {
                     let _ = db::record_quota_snapshot(&conn2, account_id, &quota);
+
+                    // 快照对比检测活跃：当前 token_pct > 上一次 → 有使用
+                    let current_pct = quota.limits.iter()
+                        .find(|l| l.limit_type == "TOKENS_LIMIT")
+                        .map(|l| l.percentage)
+                        .unwrap_or(0.0);
+                    let prev_pct = conn2.query_row(
+                        "SELECT token_limit_pct FROM usage_snapshots \
+                         WHERE account_id = ?1 AND token_limit_pct IS NOT NULL \
+                         ORDER BY timestamp DESC LIMIT 1 OFFSET 1",
+                        rusqlite::params![account_id],
+                        |row| row.get::<_, Option<f64>>(0),
+                    ).ok().flatten();
+
+                    if let Some(prev) = prev_pct {
+                        if current_pct > prev {
+                            let now_str = chrono::Utc::now().to_rfc3339();
+                            let key = format!("last_active_{}", account_id);
+                            let _ = conn2.execute(
+                                "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+                                rusqlite::params![key, now_str],
+                            );
+                        }
+                    }
+
+                    // 读取持久化的 last_active
+                    let key = format!("last_active_{}", account_id);
+                    quota.last_active = conn2.query_row(
+                        "SELECT value FROM app_settings WHERE key = ?1",
+                        rusqlite::params![key],
+                        |row| row.get::<_, String>(0),
+                    ).ok();
                 }
+
+                quotas.insert(account_id.clone(), quota.clone());
+                let quota_clone = quota.clone();
 
                 let app_clone = app.clone();
                 let aid = account_id.clone();
                 let alias = account_alias.clone();
-                let quota_clone = quota.clone();
                 alert::check_and_notify(
                     &db,
                     &aid,
@@ -222,6 +254,29 @@ fn do_refresh(app: &tauri::AppHandle) {
     let result = refresh_all_accounts(app);
     MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
     update_tray_display(app, result.max_pct);
+}
+
+fn run_spin_scheduler(app: &tauri::AppHandle) {
+    if let Some(db) = app.try_state::<Database>() {
+        if let Ok(conn) = db.conn.lock() {
+            let config = commands::spin::read_config(&conn);
+            let history = commands::spin::read_history(&conn);
+            if let Some(history_key) = commands::spin::should_spin(&config, &history, &conn) {
+                let model = commands::spin::read_spin_model(&conn);
+                let account_id = config.account_id.clone();
+                drop(conn);
+                if let Some(account_id) = account_id {
+                    if let Err(err) = commands::spin::send_spin_request(&account_id, &model) {
+                        eprintln!("Auto spin failed: {}", err);
+                    } else if let Some(db2) = app.try_state::<Database>() {
+                        if let Ok(conn2) = db2.conn.lock() {
+                            let _ = commands::spin::record_spin_history(&conn2, &history_key);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ========== IPC 命令 ==========
@@ -340,26 +395,15 @@ pub fn run() {
                     };
                     std::thread::sleep(Duration::from_secs(interval));
                     do_refresh(&app_handle);
+                }
+            });
 
-                    // 空转调度
-                    if let Some(db) = app_handle.try_state::<Database>() {
-                        if let Ok(conn) = db.conn.lock() {
-                            let config = commands::spin::read_config(&conn);
-                            let history = commands::spin::read_history(&conn);
-                            if let Some(history_key) = commands::spin::should_spin(&config, &history, &conn) {
-                                let model = commands::spin::read_spin_model(&conn);
-                                let account_id = config.account_id.clone();
-                                drop(conn);
-                                if let Some(account_id) = account_id {
-                                    if let Err(err) = commands::spin::send_spin_request(&account_id, &model) {
-                                        eprintln!("Auto spin failed: {}", err);
-                                    } else if let Ok(conn2) = db.conn.lock() {
-                                        let _ = commands::spin::record_spin_history(&conn2, &history_key);
-                                    }
-                                }
-                            }
-                        }
-                    }
+            let automation_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(30));
+                loop {
+                    run_spin_scheduler(&automation_handle);
+                    std::thread::sleep(Duration::from_secs(60));
                 }
             });
 
