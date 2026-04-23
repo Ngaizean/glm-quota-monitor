@@ -55,7 +55,7 @@ pub fn delete_api_key(account_id: &str) -> Result<(), CryptoError> {
     Ok(())
 }
 
-/// 从 Keychain 或数据库明文获取 API Key，自动迁移并清除明文
+/// 从系统凭据管理器或数据库明文获取 API Key，自动迁移并清除明文
 pub fn resolve_api_key(account_id: &str, db_key: &str, clear_db_fn: &dyn Fn()) -> Option<String> {
     if let Ok(key) = get_api_key(account_id) {
         return Some(key);

@@ -51,7 +51,8 @@ fn position_popover(window: &tauri::WebviewWindow, app: &tauri::AppHandle) {
             {
                 let scale = window.scale_factor().unwrap_or(2.0);
                 let window_w = (platform::POPOVER_WIDTH_LOGICAL * scale) as u32;
-                let (x, y) = platform::popover_position(pos.x, pos.y, size.width, size.height, window_w);
+                let window_h = window.inner_size().unwrap_or(tauri::PhysicalSize::new(window_w, 600)).height;
+                let (x, y) = platform::popover_position(pos.x, pos.y, size.width, size.height, window_w, window_h);
                 let _ = window.set_position(tauri::Position::Physical(
                     tauri::PhysicalPosition::new(x, y),
                 ));
