@@ -5,9 +5,6 @@ pub mod windows;
 
 use tauri::WebviewWindow;
 
-#[cfg(target_os = "windows")]
-const POPOVER_HEIGHT: i32 = 480;
-
 pub const POPOVER_WIDTH_LOGICAL: f64 = 360.0;
 
 /// 应用平台特定的窗口装饰（圆角、透明等）
@@ -19,24 +16,28 @@ pub fn apply_window_decoration(window: &WebviewWindow) {
 }
 
 /// 根据托盘位置计算弹出窗口坐标 (x, y)
+/// window_h: 当前 Popover 实际高度（像素）
 pub fn popover_position(
     tray_x: i32,
     tray_y: i32,
     tray_w: u32,
     tray_h: u32,
     window_w: u32,
+    window_h: u32,
 ) -> (i32, i32) {
     let x = tray_x + (tray_w as i32 - window_w as i32) / 2;
     #[cfg(target_os = "macos")]
     {
+        let _ = window_h;
         (x, tray_y + tray_h as i32 + 4)
     }
     #[cfg(target_os = "windows")]
     {
-        (x, tray_y - POPOVER_HEIGHT - 4)
+        (x, tray_y - window_h as i32 - 4)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
+        let _ = window_h;
         (x, tray_y + tray_h as i32 + 4)
     }
 }
