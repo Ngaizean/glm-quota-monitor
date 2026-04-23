@@ -9,7 +9,7 @@ export default function AboutPane() {
           GLM Quota Monitor
         </h2>
         <span className="inline-block text-[10px] font-medium text-[var(--color-text-tertiary)] bg-[var(--color-bg-secondary)] px-2 py-0.5 rounded-md border border-[var(--color-border-subtle)]">
-          v4.1.0
+          v4.2.0
         </span>
       </div>
       <p className="text-[11px] text-[var(--color-text-tertiary)] text-center leading-relaxed">
