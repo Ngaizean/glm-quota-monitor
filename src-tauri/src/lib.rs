@@ -179,9 +179,34 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
 
                 if let Ok(conn2) = db.conn.lock() {
                     let _ = db::record_quota_snapshot(&conn2, account_id, &quota);
-                    quota.last_active = conn2.query_row(
-                        "SELECT timestamp FROM usage_snapshots WHERE account_id = ?1 ORDER BY timestamp DESC LIMIT 1",
+
+                    // 快照对比检测活跃：当前 token_pct > 上一次 → 有使用
+                    let current_pct = quota.limits.iter()
+                        .find(|l| l.limit_type == "TOKENS_LIMIT")
+                        .map(|l| l.percentage)
+                        .unwrap_or(0.0);
+                    let prev_pct: f64 = conn2.query_row(
+                        "SELECT token_limit_pct FROM usage_snapshots \
+                         WHERE account_id = ?1 AND token_limit_pct IS NOT NULL \
+                         ORDER BY timestamp DESC LIMIT 1 OFFSET 1",
                         rusqlite::params![account_id],
+                        |row| row.get::<_, Option<f64>>(0),
+                    ).ok().flatten().unwrap_or(-1.0);
+
+                    if current_pct > prev_pct {
+                        let now_str = chrono::Utc::now().to_rfc3339();
+                        let key = format!("last_active_{}", account_id);
+                        let _ = conn2.execute(
+                            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+                            rusqlite::params![key, now_str],
+                        );
+                    }
+
+                    // 读取持久化的 last_active
+                    let key = format!("last_active_{}", account_id);
+                    quota.last_active = conn2.query_row(
+                        "SELECT value FROM app_settings WHERE key = ?1",
+                        rusqlite::params![key],
                         |row| row.get::<_, String>(0),
                     ).ok();
                 }
