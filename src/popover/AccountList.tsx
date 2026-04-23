@@ -139,18 +139,16 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                 expanded ? "max-h-[1000px] opacity-100" : "max-h-0 opacity-0"
               } overflow-hidden`}
             >
-              {acc.purpose && (
-                <div className="px-3 pb-1.5 flex items-center justify-between">
+              <div className="px-3 pb-1.5 flex items-center justify-between">
+                <span className="text-[10px] text-[var(--color-text-tertiary)]">
+                  {acc.purpose}
+                </span>
+                {formatLastActive(quota?.last_active) && (
                   <span className="text-[10px] text-[var(--color-text-tertiary)]">
-                    {acc.purpose}
+                    上次活跃 {formatLastActive(quota?.last_active)}
                   </span>
-                  {formatLastActive(quota?.last_active) && (
-                    <span className="text-[10px] text-[var(--color-text-tertiary)]">
-                      上次活跃 {formatLastActive(quota?.last_active)}
-                    </span>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
               <div className="mx-3 border-t border-[var(--color-border-subtle)]" />
               {quota && <QuotaSection limits={quota.limits} />}
               <div className="mx-3 border-t border-[var(--color-border-subtle)]" />
