@@ -33,6 +33,7 @@ pub fn popover_position(
     }
     #[cfg(target_os = "windows")]
     {
+        let _ = tray_h;
         (x, tray_y - window_h as i32 - 4)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -46,6 +47,8 @@ pub fn popover_position(
 pub fn init_app(app: &mut tauri::App) {
     #[cfg(target_os = "macos")]
     macos::init_app(app);
+    #[cfg(target_os = "windows")]
+    windows::init_app(app);
 }
 
 /// 更新托盘显示（macOS 用文字，Windows 用图标）
