@@ -54,29 +54,15 @@ fn write_claude_code_key(api_key: &str, model: &str) -> Result<(), String> {
         serde_json::json!({})
     };
 
-    if settings.get("env").is_none() {
-        settings["env"] = serde_json::json!({});
-    }
-
-    let env = settings["env"].as_object_mut().ok_or("env 格式错误")?;
-    env.insert(
-        "ANTHROPIC_BASE_URL".into(),
-        serde_json::Value::String("https://open.bigmodel.cn/api/anthropic".into()),
-    );
-    env.insert(
-        "ANTHROPIC_AUTH_TOKEN".into(),
-        serde_json::Value::String(api_key.into()),
-    );
-    env.insert(
-        "ANTHROPIC_MODEL".into(),
-        serde_json::Value::String(model.into()),
-    );
-    env.entry("ANTHROPIC_DEFAULT_HAIKU_MODEL")
-        .or_insert(serde_json::Value::String(model.into()));
-    env.entry("ANTHROPIC_DEFAULT_SONNET_MODEL")
-        .or_insert(serde_json::Value::String(model.into()));
-    env.entry("ANTHROPIC_DEFAULT_OPUS_MODEL")
-        .or_insert(serde_json::Value::String(model.into()));
+    // 重写整个 env，只保留 GLM 需要的最小配置，清除可能残留的代理等字段
+    settings["env"] = serde_json::json!({
+        "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
+        "ANTHROPIC_AUTH_TOKEN": api_key,
+        "ANTHROPIC_MODEL": model,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+    });
 
     write_json(&path, &settings)
 }
