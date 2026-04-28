@@ -11,7 +11,7 @@ pub struct ApiResponse<T> {
 
 // ========== 额度查询 ==========
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct QuotaData {
     #[serde(default)]
     pub limits: Vec<QuotaLimit>,
@@ -20,6 +20,12 @@ pub struct QuotaData {
     pub level: String,
     #[serde(default)]
     pub last_active: Option<String>,
+    /// API 调用失败时的错误信息（如 401 Key 无效）
+    #[serde(default, skip_deserializing)]
+    pub error: Option<String>,
+    /// 是否为离线降级数据（来自本地缓存）
+    #[serde(default, skip_deserializing)]
+    pub is_offline: bool,
 }
 
 /// 兼容 API 返回 null / 缺失字段时默认为空字符串

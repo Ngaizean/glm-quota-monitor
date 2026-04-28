@@ -1,6 +1,7 @@
 pub mod account;
 pub mod agent;
 pub mod alerts;
+pub mod cost;
 pub mod history;
 pub mod quota;
 pub mod settings;

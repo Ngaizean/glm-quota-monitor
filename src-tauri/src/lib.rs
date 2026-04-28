@@ -4,6 +4,7 @@ mod commands;
 mod crypto;
 mod db;
 mod platform;
+mod pricing;
 
 use api::client::ZhipuClient;
 use api::types::QuotaData;
@@ -238,6 +239,66 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
             }
             Err(e) => {
                 eprintln!("Failed to refresh account {}: {}", account_id, e);
+
+                // 网络异常降级：从本地缓存构造 QuotaData
+                let mut offline_quota = QuotaData::default();
+                offline_quota.is_offline = true;
+
+                if let Ok(conn2) = db.conn.lock() {
+                    // 读取最近快照
+                    let snap_limits: Option<(Option<f64>, Option<i64>, Option<f64>, Option<i64>)> = conn2.query_row(
+                        "SELECT time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset \
+                         FROM usage_snapshots WHERE account_id = ?1 ORDER BY timestamp DESC LIMIT 1",
+                        rusqlite::params![account_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    ).ok();
+
+                    if let Some((time_pct, time_reset, token_pct, token_reset)) = snap_limits {
+                        if let (Some(pct), Some(reset)) = (time_pct, time_reset) {
+                            offline_quota.limits.push(crate::api::types::QuotaLimit {
+                                limit_type: "TIME_LIMIT".into(),
+                                percentage: pct,
+                                next_reset_time: reset,
+                                unit: None, number: None, usage: None, current_value: None,
+                                remaining: None, usage_details: None,
+                            });
+                        }
+                        if let (Some(pct), Some(reset)) = (token_pct, token_reset) {
+                            offline_quota.limits.push(crate::api::types::QuotaLimit {
+                                limit_type: "TOKENS_LIMIT".into(),
+                                percentage: pct,
+                                next_reset_time: reset,
+                                unit: None, number: None, usage: None, current_value: None,
+                                remaining: None, usage_details: None,
+                            });
+                        }
+                    }
+
+                    // 读取 level
+                    offline_quota.level = conn2.query_row(
+                        "SELECT COALESCE(level, '') FROM accounts WHERE id = ?1",
+                        rusqlite::params![account_id],
+                        |row| row.get(0),
+                    ).unwrap_or_default();
+
+                    // 读取 last_active
+                    let key = format!("last_active_{}", account_id);
+                    offline_quota.last_active = conn2.query_row(
+                        "SELECT value FROM app_settings WHERE key = ?1",
+                        rusqlite::params![key],
+                        |row| row.get::<_, String>(0),
+                    ).ok();
+                }
+
+                // 401 特殊标记
+                if matches!(e, crate::api::client::ApiError::Unauthorized) {
+                    offline_quota.error = Some("API Key 无效或已过期".into());
+                } else if offline_quota.limits.is_empty() {
+                    // 完全无缓存时不展示
+                    continue;
+                }
+
+                quotas.insert(account_id.clone(), offline_quota);
             }
         }
     }
@@ -426,8 +487,14 @@ pub fn run() {
             commands::spin::get_spin_status,
             commands::alerts::get_alert_rules,
             commands::alerts::update_alert_rule,
+            commands::cost::get_cost_estimate,
+            commands::cost::set_plan_price,
+            commands::cost::get_plan_price,
+            commands::cost::set_unit_price,
+            commands::cost::get_unit_price,
             commands::quota::get_quota,
             commands::history::get_snapshots,
+            commands::history::get_token_history,
             commands::summary::get_usage_summary,
             commands::settings::get_setting,
             commands::settings::set_setting,

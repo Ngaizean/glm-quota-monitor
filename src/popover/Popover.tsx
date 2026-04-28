@@ -98,23 +98,26 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
         )}
 
         {initialized && !loading && !accounts.length && !error && (
-          <div className="flex flex-col items-center justify-center py-16 space-y-3">
-            <div className="w-14 h-14 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] flex items-center justify-center">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                <circle cx="12" cy="7" r="4" />
-                <line x1="12" y1="11" x2="12" y2="11.01" />
-              </svg>
+          <div className="flex flex-col items-center justify-center py-16 space-y-4 animate-fade-in">
+            <div className="relative">
+              <div className="w-16 h-16 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] flex items-center justify-center">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                  <line x1="12" y1="11" x2="12" y2="11.01" />
+                </svg>
+              </div>
+              <div className="absolute -inset-1 rounded-2xl border-2 border-[var(--color-accent)]/20 animate-ping-slow" />
             </div>
-            <div className="text-center space-y-1">
-              <p className="text-xs font-medium text-[var(--color-text-secondary)]">暂无账号</p>
-              <p className="text-[10px] text-[var(--color-text-tertiary)]">添加 API Key 开始监控额度</p>
+            <div className="text-center space-y-1.5">
+              <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">开始使用</p>
+              <p className="text-[10px] text-[var(--color-text-tertiary)] leading-relaxed max-w-[200px]">添加智谱 API Key，<br />即可实时监控额度用量</p>
             </div>
             <button
               onClick={onOpenSettings}
-              className="text-[11px] font-medium text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-[var(--transition-fast)] flex items-center gap-1"
+              className="text-[11px] font-semibold px-5 py-2 bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] rounded-xl transition-[var(--transition-fast)] shadow-sm flex items-center gap-1.5"
             >
-              添加账号
+              添加 API Key
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="9 18 15 12 9 6" />
               </svg>

@@ -1,5 +1,6 @@
 use crate::db::models::UsageSnapshot;
 use crate::db::Database;
+use serde::Serialize;
 use tauri::State;
 
 #[tauri::command]
@@ -43,4 +44,45 @@ pub fn get_snapshots(
         .collect();
 
     Ok(snapshots)
+}
+
+#[derive(Debug, Serialize)]
+pub struct TokenHistoryPoint {
+    pub timestamp: String,
+    pub token_pct: f64,
+    pub time_pct: f64,
+}
+
+#[tauri::command]
+pub fn get_token_history(
+    db: State<'_, Database>,
+    account_id: String,
+) -> Result<Vec<TokenHistoryPoint>, String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT timestamp, COALESCE(token_limit_pct, 0), COALESCE(time_limit_pct, 0)
+             FROM usage_snapshots
+             WHERE account_id = ?1
+             ORDER BY timestamp DESC
+             LIMIT 24",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let points: Vec<TokenHistoryPoint> = stmt
+        .query_map(rusqlite::params![account_id], |row| {
+            Ok(TokenHistoryPoint {
+                timestamp: row.get(0)?,
+                token_pct: row.get(1)?,
+                time_pct: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|p| p.ok())
+        .collect();
+
+    // 反转为时间正序（从旧到新）
+    let mut points = points;
+    points.reverse();
+    Ok(points)
 }

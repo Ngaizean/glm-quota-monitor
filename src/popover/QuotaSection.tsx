@@ -6,8 +6,8 @@ function formatResetTime(ts: number): string {
   if (diff <= 0) return "即将重置";
   const hours = Math.floor(diff / 3600000);
   const mins = Math.floor((diff % 3600000) / 60000);
-  if (hours > 24) return `${Math.floor(hours / 24)}d`;
-  return `${hours}h ${mins}m`;
+  if (hours > 24) return `${Math.floor(hours / 24)}天`;
+  return `${hours}时${mins}分`;
 }
 
 function getStatusColors(pct: number) {
@@ -61,16 +61,22 @@ function QuotaBar({ title, percentage, resetTime }: {
 
 interface Props {
   limits: QuotaLimit[];
+  isOffline?: boolean;
 }
 
-export default function QuotaSection({ limits }: Props) {
+export default function QuotaSection({ limits, isOffline }: Props) {
   const tokensLimit = limits.find((l) => l.type === "TOKENS_LIMIT");
   const mcpLimit =
     limits.find((l) => l.type === "TIME_LIMIT") ??
     limits.find((l) => l.type === "MCP_MONTHLY");
 
   return (
-    <div className="px-4 py-3 space-y-4">
+    <div className="px-4 py-3 space-y-4 relative">
+      {isOffline && (
+        <div className="absolute top-2 right-3 text-[8px] font-medium text-[var(--color-text-tertiary)] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 rounded">
+          离线数据
+        </div>
+      )}
       {tokensLimit && (
         <QuotaBar title="Token 额度" percentage={tokensLimit.percentage} resetTime={tokensLimit.nextResetTime} />
       )}

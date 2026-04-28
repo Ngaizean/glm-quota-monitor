@@ -1,4 +1,40 @@
+import { useState } from "react";
+
+const CURRENT_VERSION = "v4.3.0";
+
+interface GithubRelease {
+  tag_name: string;
+  html_url: string;
+}
+
 export default function AboutPane() {
+  const [checking, setChecking] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState("");
+  const [updateUrl, setUpdateUrl] = useState("");
+
+  async function handleCheckUpdate() {
+    setChecking(true);
+    setUpdateMsg("");
+    setUpdateUrl("");
+    try {
+      const resp = await fetch(
+        "https://api.github.com/repos/Ngaizean/glm-quota-monitor/releases/latest"
+      );
+      const release: GithubRelease = await resp.json();
+      const latest = release.tag_name;
+      if (latest && latest !== CURRENT_VERSION) {
+        setUpdateMsg(`发现新版本 ${latest}`);
+        setUpdateUrl(release.html_url);
+      } else {
+        setUpdateMsg("已是最新版本");
+      }
+    } catch {
+      setUpdateMsg("检查失败，请稍后重试");
+    } finally {
+      setChecking(false);
+    }
+  }
+
   return (
     <div className="flex flex-col items-center justify-center py-10 space-y-4">
       <div className="w-16 h-16 bg-gradient-to-br from-[var(--color-accent)] to-violet-500 rounded-2xl flex items-center justify-center text-white text-xl font-bold shadow-lg shadow-[var(--color-accent)]/20">
@@ -9,12 +45,33 @@ export default function AboutPane() {
           GLM Quota Monitor
         </h2>
         <span className="inline-block text-[10px] font-medium text-[var(--color-text-tertiary)] bg-[var(--color-bg-secondary)] px-2 py-0.5 rounded-md border border-[var(--color-border-subtle)]">
-          v4.2.0
+          {CURRENT_VERSION}
         </span>
       </div>
       <p className="text-[11px] text-[var(--color-text-tertiary)] text-center leading-relaxed">
         智谱 GLM Coding Plan<br />额度监控工具
       </p>
+      <div className="flex flex-col items-center gap-2">
+        <button
+          onClick={handleCheckUpdate}
+          disabled={checking}
+          className="text-[11px] font-medium px-4 py-1.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] border border-[var(--color-border-subtle)] rounded-lg text-[var(--color-text-secondary)] transition-[var(--transition-fast)] disabled:opacity-40"
+        >
+          {checking ? "检查中..." : "检查更新"}
+        </button>
+        {updateMsg && !updateUrl && (
+          <span className="text-[10px] text-[var(--color-text-tertiary)]">{updateMsg}</span>
+        )}
+        {updateUrl && (
+          <a
+            href={updateUrl}
+            target="_blank"
+            className="text-[10px] font-medium text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
+          >
+            {updateMsg} →
+          </a>
+        )}
+      </div>
       <a
         href="https://github.com/Ngaizean/glm-quota-monitor"
         target="_blank"

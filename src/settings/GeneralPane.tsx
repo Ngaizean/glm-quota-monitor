@@ -91,7 +91,7 @@ export default function GeneralPane() {
             </span>
           </div>
           <span className="text-[12px] font-bold tabular-nums text-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-2 py-0.5 rounded-md">
-            {refreshInterval} min
+            {refreshInterval} 分钟
           </span>
         </div>
         <input
@@ -103,8 +103,8 @@ export default function GeneralPane() {
           className="w-full"
         />
         <div className="flex justify-between text-[9px] text-[var(--color-text-tertiary)]">
-          <span>1 min</span>
-          <span>30 min</span>
+          <span>1 分钟</span>
+          <span>30 分钟</span>
         </div>
       </div>
 

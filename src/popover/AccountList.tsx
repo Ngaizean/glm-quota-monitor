@@ -1,4 +1,5 @@
 import { getAvatarGradient, getLevelStyle } from "../lib/ui";
+import CostBar from "./CostBar";
 import QuotaSection from "./QuotaSection";
 import UsageSummary from "./UsageSummary";
 import type { Account, QuotaData } from "../types";
@@ -149,11 +150,25 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                   </span>
                 )}
               </div>
+              {quota?.error && (
+                <div className="mx-3 mb-1.5 text-[10px] text-[var(--color-danger)] flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/20">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  {quota.error}
+                </div>
+              )}
               <div className="mx-3 border-t border-[var(--color-border-subtle)]" />
-              {quota && <QuotaSection limits={quota.limits} />}
+              {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}
               <div className="mx-3 border-t border-[var(--color-border-subtle)]" />
               <div className="px-3 py-2.5">
                 <UsageSummary accountId={acc.id} />
+              </div>
+              <div className="mx-3 border-t border-[var(--color-border-subtle)]" />
+              <div className="px-3 py-2.5">
+                <CostBar accountId={acc.id} />
               </div>
             </div>
           </div>

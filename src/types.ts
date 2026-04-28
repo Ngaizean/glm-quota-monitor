@@ -17,6 +17,14 @@ export interface QuotaData {
   limits: QuotaLimit[];
   level: string | null;
   last_active: string | null;
+  error?: string | null;
+  is_offline?: boolean;
+}
+
+export interface TokenHistoryPoint {
+  timestamp: string;
+  token_pct: number;
+  time_pct: number;
 }
 
 export interface TokenUsagePeriod {
@@ -37,4 +45,13 @@ export interface AgentBinding {
   agent: "claude_code" | "openclaw";
   account_id: string | null;
   label: string;
+}
+
+export interface CostEstimate {
+  today_cost: number;
+  cost_7d: number;
+  cost_30d: number;
+  plan_price: number;
+  daily_avg: number;
+  ratio: number;
 }
