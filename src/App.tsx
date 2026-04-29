@@ -29,16 +29,14 @@ function App() {
     return () => observer.disconnect();
   }, []);
 
-  if (page === "settings") {
-    return (
-      <div ref={containerRef}>
-        <Settings onBack={handleBack} screenHeight={SCREEN_H} />
-      </div>
-    );
-  }
   return (
     <div ref={containerRef}>
-      <Popover onOpenSettings={handleOpenSettings} screenHeight={SCREEN_H} />
+      <div style={{ display: page === "quota" ? "block" : "none" }}>
+        <Popover onOpenSettings={handleOpenSettings} screenHeight={SCREEN_H} />
+      </div>
+      <div style={{ display: page === "settings" ? "block" : "none" }}>
+        <Settings onBack={handleBack} screenHeight={SCREEN_H} />
+      </div>
     </div>
   );
 }

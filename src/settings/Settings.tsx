@@ -108,7 +108,7 @@ export default function Settings({ onBack, screenHeight }: { onBack: () => void;
         </div>
 
         <div className="flex-1" />
-        <div className="text-[8px] text-[var(--color-text-tertiary)] text-center font-medium">v4.2.0</div>
+        <div className="text-[8px] text-[var(--color-text-tertiary)] text-center font-medium">v4.4.0</div>
       </nav>
 
       {/* Content */}

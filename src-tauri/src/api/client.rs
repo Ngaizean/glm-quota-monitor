@@ -147,6 +147,4 @@ impl ZhipuClient {
             },
         })
     }
-
-
 }

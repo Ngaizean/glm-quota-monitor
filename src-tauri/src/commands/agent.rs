@@ -54,15 +54,17 @@ fn write_claude_code_key(api_key: &str, model: &str) -> Result<(), String> {
         serde_json::json!({})
     };
 
-    // 重写整个 env，只保留 GLM 需要的最小配置，清除可能残留的代理等字段
-    settings["env"] = serde_json::json!({
-        "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
-        "ANTHROPIC_AUTH_TOKEN": api_key,
-        "ANTHROPIC_MODEL": model,
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
-    });
+    // 合并 GLM 配置到现有 env，保留用户其他环境变量
+    if settings["env"].is_null() {
+        settings["env"] = serde_json::json!({});
+    }
+    let env = settings["env"].as_object_mut().unwrap();
+    env.insert("ANTHROPIC_BASE_URL".into(), serde_json::Value::String("https://open.bigmodel.cn/api/anthropic".into()));
+    env.insert("ANTHROPIC_AUTH_TOKEN".into(), serde_json::Value::String(api_key.into()));
+    env.insert("ANTHROPIC_MODEL".into(), serde_json::Value::String(model.into()));
+    env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), serde_json::Value::String(model.into()));
+    env.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".into(), serde_json::Value::String(model.into()));
+    env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), serde_json::Value::String(model.into()));
 
     write_json(&path, &settings)
 }
@@ -73,36 +75,33 @@ fn write_openclaw_key(api_key: &str, model: &str) -> Result<(), String> {
         .join(".openclaw");
     let path = oc_dir.join("openclaw.json");
 
-    std::fs::create_dir_all(&oc_dir).map_err(|e| format!("创建目录失败: {}", e))?;
+    if !path.exists() {
+        return Err("OpenClaw 配置文件不存在，请先安装并初始化 OpenClaw".to_string());
+    }
 
-    let mut config: serde_json::Value = if path.exists() {
-        read_json(&path)?
-    } else {
-        serde_json::json!({
-            "providers": {
-                "zai": {
-                    "name": "zai",
-                    "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
-                    "api_format": "openai-completions"
-                }
-            },
-            "auth": { "profiles": {} },
-            "agents": { "defaults": {} }
-        })
-    };
+    let mut config = read_json(&path)?;
 
+    // 写入 API Key：保留已有的 provider/mode 字段，只更新 apiKey
     if config["auth"]["profiles"].is_null() {
         config["auth"] = serde_json::json!({ "profiles": {} });
     }
+    let profile = &mut config["auth"]["profiles"]["zai:default"];
+    if profile.is_null() {
+        *profile = serde_json::json!({ "provider": "zai", "mode": "api_key" });
+    }
+    profile["apiKey"] = serde_json::Value::String(api_key.into());
 
-    config["auth"]["profiles"]["zai:default"] = serde_json::json!({
-        "provider": "zai",
-        "mode": "api_key",
-        "apiKey": api_key
-    });
-
-    config["agents"]["defaults"]["model"] =
-        serde_json::Value::String(format!("zai/{}", model));
+    // 更新模型：只修改 model.primary，保留 fallbacks 和其他字段
+    let model_obj = &mut config["agents"]["defaults"]["model"];
+    if model_obj.is_object() {
+        model_obj["primary"] = serde_json::Value::String(format!("zai/{}", model));
+    } else {
+        // 旧格式（纯字符串），升级为对象
+        *model_obj = serde_json::json!({
+            "primary": format!("zai/{}", model),
+            "fallbacks": []
+        });
+    }
 
     write_json(&path, &config)
 }

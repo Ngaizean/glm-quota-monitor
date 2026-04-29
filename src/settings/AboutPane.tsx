@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const CURRENT_VERSION = "v4.3.0";
+const CURRENT_VERSION = "v4.4.0";
 
 interface GithubRelease {
   tag_name: string;

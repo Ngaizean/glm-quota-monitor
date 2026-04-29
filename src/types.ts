@@ -25,6 +25,7 @@ export interface TokenHistoryPoint {
   timestamp: string;
   token_pct: number;
   time_pct: number;
+  tokens_24h: number | null;
 }
 
 export interface TokenUsagePeriod {

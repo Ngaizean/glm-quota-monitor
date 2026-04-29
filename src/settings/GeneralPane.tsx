@@ -48,7 +48,16 @@ export default function GeneralPane() {
         setAvailableModels([]);
         return;
       }
-      const models = await invoke<string[]>("fetch_models", { accountId: accounts[0].id });
+      // 遍历账号尝试获取模型列表，直到成功
+      let models: string[] = [];
+      for (const acc of accounts) {
+        try {
+          models = await invoke<string[]>("fetch_models", { accountId: acc.id });
+          if (models.length > 0) break;
+        } catch {
+          continue;
+        }
+      }
       setAvailableModels(models);
       if (!defaultModel && models.length > 0) {
         const latest = models[models.length - 1];

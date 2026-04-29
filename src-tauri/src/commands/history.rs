@@ -51,6 +51,7 @@ pub struct TokenHistoryPoint {
     pub timestamp: String,
     pub token_pct: f64,
     pub time_pct: f64,
+    pub tokens_24h: Option<i64>,
 }
 
 #[tauri::command]
@@ -61,7 +62,7 @@ pub fn get_token_history(
     let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
     let mut stmt = conn
         .prepare(
-            "SELECT timestamp, COALESCE(token_limit_pct, 0), COALESCE(time_limit_pct, 0)
+            "SELECT timestamp, COALESCE(token_limit_pct, 0), COALESCE(time_limit_pct, 0), total_tokens_24h
              FROM usage_snapshots
              WHERE account_id = ?1
              ORDER BY timestamp DESC
@@ -75,6 +76,7 @@ pub fn get_token_history(
                 timestamp: row.get(0)?,
                 token_pct: row.get(1)?,
                 time_pct: row.get(2)?,
+                tokens_24h: row.get(3)?,
             })
         })
         .map_err(|e| e.to_string())?

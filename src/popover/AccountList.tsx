@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { getAvatarGradient, getLevelStyle } from "../lib/ui";
 import CostBar from "./CostBar";
 import QuotaSection from "./QuotaSection";
@@ -64,6 +65,20 @@ function StarButton({ isPrimary, onClick }: { isPrimary: boolean; onClick: () =>
         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
       </svg>
     </button>
+  );
+}
+
+function Expandable({ open, children }: { open: boolean; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const height = ref.current?.scrollHeight ?? 800;
+  return (
+    <div
+      ref={ref}
+      className="transition-all duration-200 ease-in-out overflow-hidden"
+      style={{ maxHeight: open ? `${height}px` : "0px", opacity: open ? 1 : 0 }}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -135,11 +150,7 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
               <ChevronIcon open={expanded} />
             </button>
 
-            <div
-              className={`transition-all duration-200 ease-in-out ${
-                expanded ? "max-h-[1000px] opacity-100" : "max-h-0 opacity-0"
-              } overflow-hidden`}
-            >
+            <Expandable open={expanded}>
               <div className="px-3 pb-1.5 flex items-center justify-between">
                 <span className="text-[10px] text-[var(--color-text-tertiary)]">
                   {acc.purpose}
@@ -160,17 +171,14 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                   {quota.error}
                 </div>
               )}
-              <div className="mx-3 border-t border-[var(--color-border-subtle)]" />
               {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}
-              <div className="mx-3 border-t border-[var(--color-border-subtle)]" />
               <div className="px-3 py-2.5">
                 <UsageSummary accountId={acc.id} />
               </div>
-              <div className="mx-3 border-t border-[var(--color-border-subtle)]" />
-              <div className="px-3 py-2.5">
+              <div className="px-3 pb-3">
                 <CostBar accountId={acc.id} />
               </div>
-            </div>
+            </Expandable>
           </div>
         );
       })}

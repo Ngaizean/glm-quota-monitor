@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CostEstimate } from "../types";
 
 function formatCost(v: number): string {
@@ -12,6 +12,12 @@ export default function CostBar({ accountId }: { accountId: string }) {
   const [data, setData] = useState<CostEstimate | null>(null);
   const [planPrice, setPlanPrice] = useState(0);
   const [unitPrice, setUnitPrice] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const debouncedInvoke = useCallback((cmd: string, args: Record<string, unknown>) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => invoke(cmd, args), 600);
+  }, []);
 
   useEffect(() => {
     invoke<CostEstimate>("get_cost_estimate", { accountId })
@@ -86,7 +92,7 @@ export default function CostBar({ accountId }: { accountId: string }) {
               const v = Number(e.target.value);
               if (v > 0) {
                 setPlanPrice(v);
-                invoke("set_plan_price", { accountId, price: v });
+                debouncedInvoke("set_plan_price", { accountId, price: v });
               }
             }}
           />
@@ -103,7 +109,7 @@ export default function CostBar({ accountId }: { accountId: string }) {
               const v = Number(e.target.value);
               if (v > 0) {
                 setUnitPrice(v);
-                invoke("set_unit_price", { accountId, price: v });
+                debouncedInvoke("set_unit_price", { accountId, price: v });
               }
             }}
           />
