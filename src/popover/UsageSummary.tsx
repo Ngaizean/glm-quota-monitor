@@ -135,7 +135,7 @@ function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
   );
 }
 
-export default function UsageSummary({ accountId }: { accountId: string }) {
+export default function UsageSummary({ accountId, tokenPct }: { accountId: string; tokenPct: number | null }) {
   const [summary, setSummary] = useState<TokenUsageSummary | null>(null);
   const [history, setHistory] = useState<TokenHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -168,13 +168,10 @@ export default function UsageSummary({ accountId }: { accountId: string }) {
 
   if (!summary) return null;
 
-  // 当前 token 配额水位（取最新快照）
-  const currentPct = history.length > 0 ? history[history.length - 1].token_pct : null;
-
   return (
     <div className="space-y-2.5">
       <div className="flex gap-2">
-        <TodayCard data={summary.today} tokenPct={currentPct} />
+        <TodayCard data={summary.today} tokenPct={tokenPct} />
         <div className="flex flex-col gap-2 flex-1">
           <PeriodCard data={summary.last_7d} label="近 7 天" days={7} prevTokens={summary.today.total_tokens * 7} />
           <PeriodCard data={summary.last_30d} label="近 30 天" days={30} prevTokens={summary.last_7d.total_tokens * 4} />

@@ -173,7 +173,7 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
               )}
               {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}
               <div className="px-3 py-2.5">
-                <UsageSummary accountId={acc.id} />
+                <UsageSummary accountId={acc.id} tokenPct={tokenPct} />
               </div>
               <div className="px-3 pb-3">
                 <CostBar accountId={acc.id} />
