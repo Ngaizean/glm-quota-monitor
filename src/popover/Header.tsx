@@ -4,15 +4,13 @@ interface HeaderProps {
   loading: boolean;
   onRefresh: () => void;
   onSettings: () => void;
-  onDragStart?: () => void;
 }
 
-export default function Header({ loading, onRefresh, onSettings, onDragStart }: HeaderProps) {
+export default function Header({ loading, onRefresh, onSettings }: HeaderProps) {
   const handleDrag = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest("button") || target.closest("a") || target.closest("input")) return;
-    onDragStart?.();
     invoke("start_window_drag");
   };
 

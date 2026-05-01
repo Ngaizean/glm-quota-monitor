@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import AccountsPane from "./AccountsPane";
 import AlertsPane from "./AlertsPane";
 import GeneralPane from "./GeneralPane";
@@ -113,7 +114,16 @@ export default function Settings({ onBack, screenHeight }: { onBack: () => void;
 
       {/* Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-5 pt-5 pb-3 shrink-0">
+        <div
+          className="px-5 pt-5 pb-3 shrink-0 cursor-default"
+          data-tauri-drag-region
+          onMouseDown={(e) => {
+            if (e.button !== 0) return;
+            const target = e.target as HTMLElement;
+            if (target.closest("button") || target.closest("a") || target.closest("input")) return;
+            invoke("start_window_drag");
+          }}
+        >
           <h1 className="text-[14px] font-semibold tracking-tight text-[var(--color-text-primary)]">
             {currentNav.title}
           </h1>

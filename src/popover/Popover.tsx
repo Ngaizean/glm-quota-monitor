@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Header from "./Header";
 import AccountList from "./AccountList";
 import type { Account, QuotaData } from "../types";
@@ -17,12 +17,6 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState("");
-  const isDragging = useRef(false);
-
-  const handleDragStart = useCallback(() => {
-    isDragging.current = true;
-    setTimeout(() => { isDragging.current = false; }, 500);
-  }, []);
 
   const refreshAll = useCallback(async () => {
     setLoading(true);
@@ -52,10 +46,7 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
   useEffect(() => {
     const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) {
-        isDragging.current = false;
         refreshAll();
-      } else if (!isDragging.current) {
-        getCurrentWindow().hide();
       }
     });
     return () => {
@@ -82,7 +73,7 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
       className="w-full flex flex-col select-none bg-[var(--color-bg-primary)] rounded-2xl shadow-[var(--shadow-popover)]"
       style={{ maxHeight: screenHeight }}
     >
-      <Header loading={loading} onRefresh={refreshAll} onSettings={onOpenSettings} onDragStart={handleDragStart} />
+      <Header loading={loading} onRefresh={refreshAll} onSettings={onOpenSettings} />
       <div className="flex-1 min-h-0 scroll-area overscroll-contain">
         {error && (
           <div className="mx-4 mt-3 text-[11px] text-[var(--color-danger)] rounded-xl p-3 border border-[var(--color-danger)]/20 bg-[var(--color-danger)]/5">
