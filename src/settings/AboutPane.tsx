@@ -2,6 +2,17 @@ import { useState } from "react";
 
 const CURRENT_VERSION = "v4.4.0";
 
+function isNewer(remote: string, local: string): boolean {
+  const parse = (v: string) => v.replace(/^v/, "").split(".").map(Number);
+  const r = parse(remote);
+  const l = parse(local);
+  for (let i = 0; i < 3; i++) {
+    if ((r[i] ?? 0) > (l[i] ?? 0)) return true;
+    if ((r[i] ?? 0) < (l[i] ?? 0)) return false;
+  }
+  return false;
+}
+
 interface GithubRelease {
   tag_name: string;
   html_url: string;
@@ -22,7 +33,7 @@ export default function AboutPane() {
       );
       const release: GithubRelease = await resp.json();
       const latest = release.tag_name;
-      if (latest && latest !== CURRENT_VERSION) {
+      if (latest && isNewer(latest, CURRENT_VERSION)) {
         setUpdateMsg(`发现新版本 ${latest}`);
         setUpdateUrl(release.html_url);
       } else {

@@ -19,16 +19,15 @@ pub struct TokenUsageSummary {
 }
 
 #[tauri::command]
-pub fn get_usage_summary(db: State<'_, Database>, account_id: String) -> Result<TokenUsageSummary, String> {
-    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-    let db_key: String = conn
-        .query_row(
+pub async fn get_usage_summary(db: State<'_, Database>, account_id: String) -> Result<TokenUsageSummary, String> {
+    let db_key = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        conn.query_row(
             "SELECT api_key FROM accounts WHERE id = ?1",
             rusqlite::params![account_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("账号不存在: {}", e))?;
-    drop(conn);
+            |row| row.get::<_, String>(0),
+        ).map_err(|e| format!("账号不存在: {}", e))?
+    };
 
     let api_key = crypto::resolve_api_key(&account_id, &db_key, &|| {
         if let Ok(c) = db.conn.lock() {
@@ -38,30 +37,43 @@ pub fn get_usage_summary(db: State<'_, Database>, account_id: String) -> Result<
 
     let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
 
-    let now = chrono::Utc::now();
-    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+    let now = chrono::Local::now();
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap()
+        .and_local_timezone(chrono::Local).unwrap();
     let seven_days_ago = now - chrono::Duration::days(7);
     let thirty_days_ago = now - chrono::Duration::days(30);
 
-    let fmt = |dt: chrono::DateTime<chrono::Utc>| dt.format("%Y-%m-%d %H:%M:%S").to_string();
+    let fmt = |dt: chrono::DateTime<chrono::Local>| dt.format("%Y-%m-%d %H:%M:%S").to_string();
     let now_str = fmt(now);
     let today_str = fmt(today_start);
     let seven_str = fmt(seven_days_ago);
     let thirty_str = fmt(thirty_days_ago);
 
-    let fetch = |start: &str, end: &str, label: &str| -> Result<TokenUsagePeriod, String> {
-        let data = tauri::async_runtime::block_on(client.get_model_usage(start, end))
-            .map_err(|e| e.to_string())?;
-        Ok(TokenUsagePeriod {
-            label: label.to_string(),
-            total_tokens: data.total_usage.total_tokens_usage,
-            total_calls: data.total_usage.total_model_call_count,
-        })
-    };
+    let (today_res, seven_res, thirty_res) = tokio::join!(
+        client.get_model_usage(&today_str, &now_str),
+        client.get_model_usage(&seven_str, &now_str),
+        client.get_model_usage(&thirty_str, &now_str),
+    );
 
-    let today = fetch(&today_str, &now_str, "Today")?;
-    let last_7d = fetch(&seven_str, &now_str, "7 Days")?;
-    let last_30d = fetch(&thirty_str, &now_str, "30 Days")?;
+    let today_data = today_res.map_err(|e| e.to_string())?;
+    let seven_data = seven_res.map_err(|e| e.to_string())?;
+    let thirty_data = thirty_res.map_err(|e| e.to_string())?;
 
-    Ok(TokenUsageSummary { today, last_7d, last_30d })
+    Ok(TokenUsageSummary {
+        today: TokenUsagePeriod {
+            label: "Today".to_string(),
+            total_tokens: today_data.total_usage.total_tokens_usage,
+            total_calls: today_data.total_usage.total_model_call_count,
+        },
+        last_7d: TokenUsagePeriod {
+            label: "7 Days".to_string(),
+            total_tokens: seven_data.total_usage.total_tokens_usage,
+            total_calls: seven_data.total_usage.total_model_call_count,
+        },
+        last_30d: TokenUsagePeriod {
+            label: "30 Days".to_string(),
+            total_tokens: thirty_data.total_usage.total_tokens_usage,
+            total_calls: thirty_data.total_usage.total_model_call_count,
+        },
+    })
 }

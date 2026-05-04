@@ -44,7 +44,7 @@ pub fn record_quota_snapshot(
     account_id: &str,
     quota: &QuotaData,
 ) -> SqlResult<()> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Local::now().to_rfc3339();
     let time_limit = quota.limits.iter().find(|l| l.limit_type == "TIME_LIMIT");
     let token_limit = quota.limits.iter().find(|l| l.limit_type == "TOKENS_LIMIT");
 
@@ -61,7 +61,7 @@ pub fn record_quota_snapshot(
             time_limit.map(|l| l.next_reset_time),
             token_limit.map(|l| l.percentage as f64),
             token_limit.map(|l| l.next_reset_time),
-            token_usage as i64,
+            token_usage,
         ],
     )?;
 

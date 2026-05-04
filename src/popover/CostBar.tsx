@@ -90,8 +90,8 @@ export default function CostBar({ accountId }: { accountId: string }) {
             className="w-12 text-right text-[10px] font-bold tabular-nums text-[var(--color-accent)] bg-transparent outline-none"
             onChange={(e) => {
               const v = Number(e.target.value);
+              setPlanPrice(v);
               if (v > 0) {
-                setPlanPrice(v);
                 debouncedInvoke("set_plan_price", { accountId, price: v });
               }
             }}
@@ -107,8 +107,8 @@ export default function CostBar({ accountId }: { accountId: string }) {
             className="w-12 text-right text-[10px] font-bold tabular-nums text-[var(--color-accent)] bg-transparent outline-none"
             onChange={(e) => {
               const v = Number(e.target.value);
+              setUnitPrice(v);
               if (v > 0) {
-                setUnitPrice(v);
                 debouncedInvoke("set_unit_price", { accountId, price: v });
               }
             }}

@@ -1,13 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Popover from "./popover/Popover";
 import Settings from "./settings/Settings";
-
-const SCREEN_H = window.screen.availHeight;
 
 function App() {
   const [page, setPage] = useState<"quota" | "settings">("quota");
   const containerRef = useRef<HTMLDivElement>(null);
+  const SCREEN_H = useMemo(() => window.screen.availHeight, []);
 
   const handleOpenSettings = useCallback(() => setPage("settings"), []);
   const handleBack = useCallback(() => setPage("quota"), []);
@@ -27,16 +26,16 @@ function App() {
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [SCREEN_H]);
 
   return (
     <div ref={containerRef}>
-      <div style={{ display: page === "quota" ? "block" : "none" }}>
+      {page === "quota" && (
         <Popover onOpenSettings={handleOpenSettings} screenHeight={SCREEN_H} />
-      </div>
-      <div style={{ display: page === "settings" ? "block" : "none" }}>
+      )}
+      {page === "settings" && (
         <Settings onBack={handleBack} screenHeight={SCREEN_H} />
-      </div>
+      )}
     </div>
   );
 }

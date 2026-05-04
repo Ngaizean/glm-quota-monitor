@@ -56,11 +56,9 @@ function TodayCard({ data, tokenPct }: { data: TokenUsagePeriod; tokenPct: numbe
   );
 }
 
-/** 时段卡片 — 总量 + 日均 + 趋势箭头 */
-function PeriodCard({ data, label, days, prevTokens }: { data: TokenUsagePeriod; label: string; days: number; prevTokens?: number }) {
+/** 时段卡片 — 总量 + 日均 */
+function PeriodCard({ data, label, days }: { data: TokenUsagePeriod; label: string; days: number }) {
   const avg = data.total_tokens / days;
-  const trend = prevTokens && prevTokens > 0 ? ((data.total_tokens - prevTokens) / prevTokens * 100) : null;
-  const trendUp = trend !== null && trend > 0;
 
   return (
     <div className="flex-1 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] px-3 py-2.5 min-w-0">
@@ -69,11 +67,6 @@ function PeriodCard({ data, label, days, prevTokens }: { data: TokenUsagePeriod;
         <span className="text-[13px] font-bold tabular-nums text-[var(--color-text-primary)] leading-none">
           {formatTokens(data.total_tokens)}
         </span>
-        {trend !== null && (
-          <span className={`text-[9px] font-medium ${trendUp ? "text-amber-500" : "text-emerald-500"}`}>
-            {trendUp ? "↑" : "↓"}{Math.abs(trend).toFixed(0)}%
-          </span>
-        )}
       </div>
       <div className="text-[9px] text-[var(--color-text-tertiary)] mt-0.5">
         均值 {formatTokens(avg)}/天
@@ -142,15 +135,18 @@ export default function UsageSummary({ accountId, tokenPct }: { accountId: strin
 
   useEffect(() => {
     if (!accountId) return;
+    let stale = false;
     setLoading(true);
     Promise.all([
       invoke<TokenUsageSummary>("get_usage_summary", { accountId }).catch(() => null),
       invoke<TokenHistoryPoint[]>("get_token_history", { accountId }).catch(() => []),
     ]).then(([sum, hist]) => {
+      if (stale) return;
       setSummary(sum);
       setHistory(hist);
       setLoading(false);
     });
+    return () => { stale = true; };
   }, [accountId]);
 
   if (loading) {
@@ -173,8 +169,8 @@ export default function UsageSummary({ accountId, tokenPct }: { accountId: strin
       <div className="flex gap-2">
         <TodayCard data={summary.today} tokenPct={tokenPct} />
         <div className="flex flex-col gap-2 flex-1">
-          <PeriodCard data={summary.last_7d} label="近 7 天" days={7} prevTokens={summary.today.total_tokens * 7} />
-          <PeriodCard data={summary.last_30d} label="近 30 天" days={30} prevTokens={summary.last_7d.total_tokens * 4} />
+          <PeriodCard data={summary.last_7d} label="近 7 天" days={7} />
+          <PeriodCard data={summary.last_30d} label="近 30 天" days={30} />
         </div>
       </div>
       <TrendBars data={history} />

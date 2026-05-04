@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     platform    TEXT NOT NULL DEFAULT 'zhipu',
     level       TEXT,
     api_key     TEXT NOT NULL,
+    is_primary  INTEGER DEFAULT 0,
     is_active   INTEGER DEFAULT 1,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
@@ -21,7 +22,7 @@ CREATE TABLE IF NOT EXISTS usage_snapshots (
     token_limit_reset   INTEGER,
     mcp_limit_pct       REAL,
     mcp_limit_reset     INTEGER,
-    total_tokens_24h    INTEGER,
+    total_tokens_24h    REAL,
     total_calls_24h     INTEGER,
     raw_response        TEXT
 );

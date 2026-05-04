@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "./Header";
 import AccountList from "./AccountList";
 import type { Account, QuotaData } from "../types";
@@ -39,6 +39,14 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
     }
   }, []);
 
+  const lastRefreshRef = useRef(0);
+  const debouncedRefresh = useCallback(() => {
+    const now = Date.now();
+    if (now - lastRefreshRef.current < 3000) return;
+    lastRefreshRef.current = now;
+    refreshAll();
+  }, [refreshAll]);
+
   useEffect(() => {
     refreshAll();
   }, [refreshAll]);
@@ -46,7 +54,7 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
   useEffect(() => {
     const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) {
-        refreshAll();
+        debouncedRefresh();
       }
     });
     return () => {

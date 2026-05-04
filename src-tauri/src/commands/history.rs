@@ -51,7 +51,7 @@ pub struct TokenHistoryPoint {
     pub timestamp: String,
     pub token_pct: f64,
     pub time_pct: f64,
-    pub tokens_24h: Option<i64>,
+    pub tokens_24h: Option<f64>,
 }
 
 #[tauri::command]

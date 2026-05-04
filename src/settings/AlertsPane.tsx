@@ -9,11 +9,13 @@ interface AlertRule {
   enabled: boolean;
 }
 
-const RULE_LABELS: Record<string, { label: string; desc: string }> = {
-  token_5h: { label: "5h 窗口超过阈值", desc: "Token 使用率告警" },
-  weekly: { label: "周额度超过阈值", desc: "每周配额告警" },
-  mcp_monthly: { label: "MCP 月度超过阈值", desc: "MCP 调用告警" },
-};
+const IDLE_PRESETS = [
+  { label: "30分", value: 30 },
+  { label: "1时", value: 60 },
+  { label: "2时", value: 120 },
+  { label: "4时", value: 240 },
+  { label: "8时", value: 480 },
+];
 
 export default function AlertsPane() {
   const [rules, setRules] = useState<AlertRule[]>([]);
@@ -37,10 +39,23 @@ export default function AlertsPane() {
       .catch(console.error);
   }
 
+  function formatIdleMins(mins: number): string {
+    if (mins < 60) return `${mins} 分钟`;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return m > 0 ? `${h} 小时 ${m} 分钟` : `${h} 小时`;
+  }
+
+  function closestPreset(mins: number): number {
+    return IDLE_PRESETS.reduce((prev, curr) =>
+      Math.abs(curr.value - mins) < Math.abs(prev.value - mins) ? curr : prev
+    ).value;
+  }
+
   return (
     <div className="space-y-2.5">
       {rules.map((rule) => {
-        const meta = RULE_LABELS[rule.rule_type] || { label: rule.rule_type, desc: "" };
+        const isIdle = rule.rule_type === "idle_account";
         return (
           <div
             key={rule.rule_type}
@@ -50,29 +65,76 @@ export default function AlertsPane() {
           >
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-xs font-medium text-[var(--color-text-primary)]">{meta.label}</div>
+                <div className="text-xs font-medium text-[var(--color-text-primary)]">
+                  {rule.rule_type === "token_5h"
+                    ? "5h 额度预警"
+                    : rule.rule_type === "mcp_monthly"
+                      ? "月度 MCP 额度预警"
+                      : "空闲账号提醒"}
+                </div>
                 <div className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5">
-                  超过 <span className="font-semibold text-[var(--color-accent)] tabular-nums">{rule.threshold}%</span>{" "}
-                  时通知
+                  {rule.rule_type === "token_5h"
+                    ? "5 小时窗口 Token 使用率告警"
+                    : rule.rule_type === "mcp_monthly"
+                      ? "月度 MCP 调用额度告警"
+                      : "账号长时间未使用时提醒"}
                 </div>
               </div>
               <Toggle checked={rule.enabled} onChange={() => toggleRule(rule.rule_type)} />
             </div>
-            <div className="space-y-1.5">
-              <input
-                type="range"
-                min={50}
-                max={100}
-                value={rule.threshold}
-                onChange={(e) => setThreshold(rule.rule_type, Number(e.target.value))}
-                disabled={!rule.enabled}
-                className="w-full disabled:opacity-30"
-              />
-              <div className="flex justify-between text-[9px] text-[var(--color-text-tertiary)]">
-                <span>50%</span>
-                <span>100%</span>
+
+            {isIdle ? (
+              /* 空闲时间预设按钮 */
+              <div className="space-y-2">
+                <div className="text-[10px] text-[var(--color-text-tertiary)]">
+                  空闲超过{" "}
+                  <span className="font-semibold text-[var(--color-accent)]">
+                    {formatIdleMins(rule.threshold)}
+                  </span>{" "}
+                  时通知
+                </div>
+                <div className="flex gap-1.5">
+                  {IDLE_PRESETS.map((p) => (
+                    <button
+                      key={p.value}
+                      disabled={!rule.enabled}
+                      onClick={() => setThreshold(rule.rule_type, p.value)}
+                      className={`flex-1 py-1.5 rounded-lg text-[10px] font-medium transition-all duration-200 ${
+                        closestPreset(rule.threshold) === p.value
+                          ? "bg-[var(--color-accent)] text-white shadow-sm"
+                          : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
+                      } disabled:opacity-30`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              /* 百分比滑块 */
+              <div className="space-y-1.5">
+                <div className="text-[10px] text-[var(--color-text-tertiary)]">
+                  超过{" "}
+                  <span className="font-semibold text-[var(--color-accent)] tabular-nums">
+                    {rule.threshold}%
+                  </span>{" "}
+                  时通知
+                </div>
+                <input
+                  type="range"
+                  min={50}
+                  max={100}
+                  value={rule.threshold}
+                  onChange={(e) => setThreshold(rule.rule_type, Number(e.target.value))}
+                  disabled={!rule.enabled}
+                  className="w-full disabled:opacity-30"
+                />
+                <div className="flex justify-between text-[9px] text-[var(--color-text-tertiary)]">
+                  <span>50%</span>
+                  <span>100%</span>
+                </div>
+              </div>
+            )}
           </div>
         );
       })}

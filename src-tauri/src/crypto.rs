@@ -20,14 +20,14 @@ pub fn store_api_key(account_id: &str, api_key: &str) -> Result<(), CryptoError>
     entry
         .set_password(api_key)
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
-    if let Ok(mut cache) = CACHE.lock() {
-        cache.insert(account_id.to_string(), api_key.to_string());
-    }
+    CACHE.lock().unwrap_or_else(|e| e.into_inner())
+        .insert(account_id.to_string(), api_key.to_string());
     Ok(())
 }
 
 pub fn get_api_key(account_id: &str) -> Result<String, CryptoError> {
-    if let Ok(cache) = CACHE.lock() {
+    {
+        let cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(key) = cache.get(account_id) {
             return Ok(key.clone());
         }
@@ -37,9 +37,8 @@ pub fn get_api_key(account_id: &str) -> Result<String, CryptoError> {
     let key = entry
         .get_password()
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
-    if let Ok(mut cache) = CACHE.lock() {
-        cache.insert(account_id.to_string(), key.clone());
-    }
+    CACHE.lock().unwrap_or_else(|e| e.into_inner())
+        .insert(account_id.to_string(), key.clone());
     Ok(key)
 }
 
@@ -49,9 +48,8 @@ pub fn delete_api_key(account_id: &str) -> Result<(), CryptoError> {
     entry
         .delete_password()
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
-    if let Ok(mut cache) = CACHE.lock() {
-        cache.remove(account_id);
-    }
+    CACHE.lock().unwrap_or_else(|e| e.into_inner())
+        .remove(account_id);
     Ok(())
 }
 

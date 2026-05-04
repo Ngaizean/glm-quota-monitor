@@ -47,16 +47,15 @@ fn get_account_level(db: &Database, account_id: &str) -> String {
 }
 
 #[tauri::command]
-pub fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> Result<CostEstimate, String> {
-    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-    let (db_key, level): (String, String) = conn
-        .query_row(
+pub async fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> Result<CostEstimate, String> {
+    let (db_key, level) = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        conn.query_row(
             "SELECT api_key, COALESCE(level, '') FROM accounts WHERE id = ?1",
             rusqlite::params![account_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .map_err(|e| format!("账号不存在: {}", e))?;
-    drop(conn);
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ).map_err(|e| format!("账号不存在: {}", e))?
+    };
 
     let api_key = crypto::resolve_api_key(&account_id, &db_key, &|| {
         if let Ok(c) = db.conn.lock() {
@@ -69,22 +68,27 @@ pub fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> Result<
     .ok_or("API key not found".to_string())?;
 
     let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
-    let now = chrono::Utc::now();
-    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+    let now = chrono::Local::now();
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap()
+        .and_local_timezone(chrono::Local).unwrap();
     let seven_days_ago = now - chrono::Duration::days(7);
     let thirty_days_ago = now - chrono::Duration::days(30);
 
-    let fmt = |dt: chrono::DateTime<chrono::Utc>| dt.format("%Y-%m-%d %H:%M:%S").to_string();
+    let fmt = |dt: chrono::DateTime<chrono::Local>| dt.format("%Y-%m-%d %H:%M:%S").to_string();
+    let now_str = fmt(now);
+    let today_str = fmt(today_start);
+    let seven_str = fmt(seven_days_ago);
+    let thirty_str = fmt(thirty_days_ago);
 
-    let fetch_tokens = |start: &str, end: &str| -> Result<f64, String> {
-        let data = tauri::async_runtime::block_on(client.get_model_usage(start, end))
-            .map_err(|e| e.to_string())?;
-        Ok(data.total_usage.total_tokens_usage)
-    };
+    let (today_res, seven_res, thirty_res) = tokio::join!(
+        client.get_model_usage(&today_str, &now_str),
+        client.get_model_usage(&seven_str, &now_str),
+        client.get_model_usage(&thirty_str, &now_str),
+    );
 
-    let today_tokens = fetch_tokens(&fmt(today_start), &fmt(now))?;
-    let tokens_7d = fetch_tokens(&fmt(seven_days_ago), &fmt(now))?;
-    let tokens_30d = fetch_tokens(&fmt(thirty_days_ago), &fmt(now))?;
+    let today_tokens = today_res.map_err(|e| e.to_string())?.total_usage.total_tokens_usage;
+    let tokens_7d = seven_res.map_err(|e| e.to_string())?.total_usage.total_tokens_usage;
+    let tokens_30d = thirty_res.map_err(|e| e.to_string())?.total_usage.total_tokens_usage;
 
     let price_key = format!("unit_price_{}", account_id);
     let unit_price = get_setting_f64(&db, &price_key).unwrap_or(DEFAULT_UNIT_PRICE);

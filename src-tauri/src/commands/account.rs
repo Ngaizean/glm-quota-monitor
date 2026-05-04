@@ -35,9 +35,6 @@ pub fn add_account(
     let now = Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
 
-    crypto::store_api_key(&id, &api_key)
-        .map_err(|e| format!("凭据存储失败: {}", e))?;
-
     let is_primary = {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         conn.execute(
@@ -56,6 +53,11 @@ pub fn add_account(
         }
         primary
     };
+
+    if let Err(e) = crypto::store_api_key(&id, &api_key) {
+        let _ = db.conn.lock().map(|c| c.execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![id]));
+        return Err(format!("凭据存储失败: {}", e));
+    }
 
     let _ = app.emit("accounts-changed", ());
 
@@ -171,8 +173,11 @@ pub fn set_primary_account(
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         conn.execute("UPDATE accounts SET is_primary = 0", [])
             .map_err(|e| e.to_string())?;
-        conn.execute("UPDATE accounts SET is_primary = 1 WHERE id = ?1", rusqlite::params![id])
+        let rows = conn.execute("UPDATE accounts SET is_primary = 1 WHERE id = ?1 AND is_active = 1", rusqlite::params![id])
             .map_err(|e| e.to_string())?;
+        if rows == 0 {
+            return Err("账号不存在或已停用".to_string());
+        }
     }
     let _ = app.emit("accounts-changed", ());
     Ok(())

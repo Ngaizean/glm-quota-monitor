@@ -141,7 +141,7 @@ fn draw_text(rgba: &mut [u8], size: u32, text: &str) {
 
     let chars: Vec<char> = text.chars().collect();
     let char_count = chars.len() as u32;
-    let scale = 3u32;
+    let scale: u32 = if char_count > 3 { 2 } else { 3 };
     let char_w = 3 * scale;
     let spacing = 1u32;
     let total_w = char_count * char_w + (char_count - 1) * spacing;

@@ -21,9 +21,9 @@ const navItems = [
   },
   {
     id: "alerts",
-    label: "预警",
-    title: "预警设置",
-    desc: "配置额度阈值通知",
+    label: "提醒",
+    title: "提醒设置",
+    desc: "额度预警与空闲提醒",
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
@@ -72,7 +72,7 @@ const navItems = [
 
 export default function Settings({ onBack, screenHeight }: { onBack: () => void; screenHeight: number }) {
   const [activeTab, setActiveTab] = useState("accounts");
-  const currentNav = navItems.find((n) => n.id === activeTab)!;
+  const currentNav = navItems.find((n) => n.id === activeTab) ?? navItems[0];
 
   return (
     <div

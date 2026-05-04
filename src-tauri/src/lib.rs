@@ -197,7 +197,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
 
                     if let Some(prev) = prev_pct {
                         if current_pct > prev {
-                            let now_str = chrono::Utc::now().to_rfc3339();
+                            let now_str = chrono::Local::now().to_rfc3339();
                             let key = format!("last_active_{}", account_id);
                             let _ = conn2.execute(
                                 "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",

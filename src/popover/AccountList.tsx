@@ -82,6 +82,15 @@ function Expandable({ open, children }: { open: boolean; children: React.ReactNo
   );
 }
 
+function LastActiveLabel({ lastActive }: { lastActive: string | null }) {
+  if (!lastActive) return null;
+  return (
+    <span className="text-[10px] text-[var(--color-text-tertiary)]">
+      上次活跃 {lastActive}
+    </span>
+  );
+}
+
 function ChevronIcon({ open }: { open: boolean }) {
   return (
     <svg
@@ -155,11 +164,7 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                 <span className="text-[10px] text-[var(--color-text-tertiary)]">
                   {acc.purpose}
                 </span>
-                {formatLastActive(quota?.last_active) && (
-                  <span className="text-[10px] text-[var(--color-text-tertiary)]">
-                    上次活跃 {formatLastActive(quota?.last_active)}
-                  </span>
-                )}
+                <LastActiveLabel lastActive={formatLastActive(quota?.last_active)} />
               </div>
               {quota?.error && (
                 <div className="mx-3 mb-1.5 text-[10px] text-[var(--color-danger)] flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/20">
