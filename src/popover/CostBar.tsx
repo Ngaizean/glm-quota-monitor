@@ -8,7 +8,7 @@ function formatCost(v: number): string {
   return `¥${v.toFixed(0)}`;
 }
 
-export default function CostBar({ accountId }: { accountId: string }) {
+export default function CostBar({ accountId, refreshKey }: { accountId: string; refreshKey: number }) {
   const [data, setData] = useState<CostEstimate | null>(null);
   const [planPrice, setPlanPrice] = useState(0);
   const [unitPrice, setUnitPrice] = useState(0);
@@ -24,7 +24,7 @@ export default function CostBar({ accountId }: { accountId: string }) {
       .then((d) => { setData(d); setPlanPrice(d.plan_price); })
       .catch(() => setData(null));
     invoke<number>("get_unit_price", { accountId }).then(setUnitPrice);
-  }, [accountId]);
+  }, [accountId, refreshKey]);
 
   if (!data) return null;
 

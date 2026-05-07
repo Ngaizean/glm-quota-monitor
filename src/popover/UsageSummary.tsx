@@ -128,7 +128,7 @@ function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
   );
 }
 
-export default function UsageSummary({ accountId, tokenPct }: { accountId: string; tokenPct: number | null }) {
+export default function UsageSummary({ accountId, tokenPct, refreshKey }: { accountId: string; tokenPct: number | null; refreshKey: number }) {
   const [summary, setSummary] = useState<TokenUsageSummary | null>(null);
   const [history, setHistory] = useState<TokenHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,7 +147,7 @@ export default function UsageSummary({ accountId, tokenPct }: { accountId: strin
       setLoading(false);
     });
     return () => { stale = true; };
-  }, [accountId]);
+  }, [accountId, refreshKey]);
 
   if (loading) {
     return (

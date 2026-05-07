@@ -28,6 +28,7 @@ interface Props {
   onSetPrimary: (id: string) => void;
   quotas: Record<string, QuotaData>;
   loading: boolean;
+  refreshKey: number;
 }
 
 function getTokenPct(quota: QuotaData | undefined): number | null {
@@ -109,7 +110,7 @@ function ChevronIcon({ open }: { open: boolean }) {
   );
 }
 
-export default function AccountList({ accounts, expandedIds, onToggle, onSetPrimary, quotas, loading }: Props) {
+export default function AccountList({ accounts, expandedIds, onToggle, onSetPrimary, quotas, loading, refreshKey }: Props) {
   return (
     <div className="p-2 space-y-1.5">
       {accounts.map((acc) => {
@@ -178,10 +179,10 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
               )}
               {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}
               <div className="px-3 py-2.5">
-                <UsageSummary accountId={acc.id} tokenPct={tokenPct} />
+                <UsageSummary accountId={acc.id} tokenPct={tokenPct} refreshKey={refreshKey} />
               </div>
               <div className="px-3 pb-3">
-                <CostBar accountId={acc.id} />
+                <CostBar accountId={acc.id} refreshKey={refreshKey} />
               </div>
             </Expandable>
           </div>

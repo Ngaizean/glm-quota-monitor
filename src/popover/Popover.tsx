@@ -17,6 +17,7 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const refreshAll = useCallback(async () => {
     setLoading(true);
@@ -31,6 +32,7 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
       const result = await refreshPromise;
       setQuotas(result.quotas);
       setInitialized(true);
+      setRefreshKey((k) => k + 1);
     } catch (e) {
       setError(String(e));
       setInitialized(true);
@@ -131,6 +133,7 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
           onSetPrimary={handleSetPrimary}
           quotas={quotas}
           loading={loading}
+          refreshKey={refreshKey}
         />
       </div>
     </div>
