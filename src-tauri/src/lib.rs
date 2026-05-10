@@ -127,6 +127,134 @@ fn resolve_api_key_for_refresh(db: &Database, account_id: &str, db_key: &str) ->
     })
 }
 
+/// 获取单个账号的配额数据
+fn fetch_account_quota(
+    db: &Database,
+    account_id: &str,
+    api_key: &str,
+) -> Result<(QuotaData, i32), crate::api::client::ApiError> {
+    let client = ZhipuClient::with_client(&HTTP_CLIENT, api_key);
+    let quota = tauri::async_runtime::block_on(client.get_quota_limit())?;
+    let pct = quota
+        .limits
+        .iter()
+        .find(|l| l.limit_type == "TOKENS_LIMIT")
+        .map(|l| l.percentage as i32)
+        .unwrap_or(0);
+    Ok((quota, pct))
+}
+
+/// 网络异常时从本地缓存构造离线 QuotaData
+fn build_offline_quota(
+    db: &Database,
+    account_id: &str,
+    error: &crate::api::client::ApiError,
+) -> Option<QuotaData> {
+    let mut offline_quota = QuotaData::default();
+    offline_quota.is_offline = true;
+
+    if let Ok(conn2) = db.conn.lock() {
+        // 读取最近快照
+        let snap_limits: Option<(Option<f64>, Option<i64>, Option<f64>, Option<i64>)> = conn2
+            .query_row(
+                "SELECT time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset \
+                 FROM usage_snapshots WHERE account_id = ?1 ORDER BY timestamp DESC LIMIT 1",
+                rusqlite::params![account_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .ok();
+
+        if let Some((time_pct, time_reset, token_pct, token_reset)) = snap_limits {
+            if let (Some(pct), Some(reset)) = (time_pct, time_reset) {
+                offline_quota.limits.push(crate::api::types::QuotaLimit {
+                    limit_type: "TIME_LIMIT".into(),
+                    percentage: pct,
+                    next_reset_time: reset,
+                    unit: None,
+                    number: None,
+                    usage: None,
+                    current_value: None,
+                    remaining: None,
+                    usage_details: None,
+                });
+            }
+            if let (Some(pct), Some(reset)) = (token_pct, token_reset) {
+                offline_quota.limits.push(crate::api::types::QuotaLimit {
+                    limit_type: "TOKENS_LIMIT".into(),
+                    percentage: pct,
+                    next_reset_time: reset,
+                    unit: None,
+                    number: None,
+                    usage: None,
+                    current_value: None,
+                    remaining: None,
+                    usage_details: None,
+                });
+            }
+        }
+
+        // 读取 level
+        offline_quota.level = conn2
+            .query_row(
+                "SELECT COALESCE(level, '') FROM accounts WHERE id = ?1",
+                rusqlite::params![account_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+
+        // 读取 last_active
+        let key = format!("last_active_{}", account_id);
+        offline_quota.last_active = conn2
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                rusqlite::params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .ok();
+    }
+
+    // 401 特殊标记
+    if matches!(error, crate::api::client::ApiError::Unauthorized) {
+        offline_quota.error = Some("API Key 无效或已过期".into());
+    } else if offline_quota.limits.is_empty() {
+        // 完全无缓存时不展示
+        return None;
+    }
+
+    Some(offline_quota)
+}
+
+/// 检测账号活跃度：对比快照中 token 百分比变化
+fn detect_account_activity(conn: &rusqlite::Connection, account_id: &str, quota: &QuotaData) {
+    let current_pct = quota
+        .limits
+        .iter()
+        .find(|l| l.limit_type == "TOKENS_LIMIT")
+        .map(|l| l.percentage)
+        .unwrap_or(0.0);
+    let prev_pct = conn
+        .query_row(
+            "SELECT token_limit_pct FROM usage_snapshots \
+             WHERE account_id = ?1 AND token_limit_pct IS NOT NULL \
+             ORDER BY timestamp DESC LIMIT 1 OFFSET 1",
+            rusqlite::params![account_id],
+            |row| row.get::<_, Option<f64>>(0),
+        )
+        .ok()
+        .flatten();
+
+    if let Some(prev) = prev_pct {
+        if current_pct > prev {
+            let now_str = chrono::Local::now().to_rfc3339();
+            let key = format!("last_active_{}", account_id);
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![key, now_str],
+            );
+        }
+    }
+}
+
 fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
     let db = match app.try_state::<Database>() {
         Some(db) => db,
@@ -153,6 +281,20 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
         }
     };
 
+    // 读取 webhook URL
+    let webhook_url: Option<String> = db
+        .conn
+        .lock()
+        .ok()
+        .and_then(|conn| {
+            conn.query_row(
+                "SELECT value FROM app_settings WHERE key = 'webhook_url'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        });
+
     let mut max_pct = 0i32;
     let mut primary_pct: Option<i32> = None;
     let mut quotas = HashMap::new();
@@ -163,15 +305,8 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
             None => continue,
         };
 
-        let client = ZhipuClient::with_client(&HTTP_CLIENT, &api_key);
-        let result = tauri::async_runtime::block_on(client.get_quota_limit());
-
-        match result {
-            Ok(mut quota) => {
-                let pct = quota.limits.iter()
-                    .find(|l| l.limit_type == "TOKENS_LIMIT")
-                    .map(|l| l.percentage as i32)
-                    .unwrap_or(0);
+        match fetch_account_quota(&db, account_id, &api_key) {
+            Ok((mut quota, pct)) => {
                 if pct > max_pct {
                     max_pct = pct;
                 }
@@ -181,30 +316,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
 
                 if let Ok(conn2) = db.conn.lock() {
                     let _ = db::record_quota_snapshot(&conn2, account_id, &quota);
-
-                    // 快照对比检测活跃：当前 token_pct > 上一次 → 有使用
-                    let current_pct = quota.limits.iter()
-                        .find(|l| l.limit_type == "TOKENS_LIMIT")
-                        .map(|l| l.percentage)
-                        .unwrap_or(0.0);
-                    let prev_pct = conn2.query_row(
-                        "SELECT token_limit_pct FROM usage_snapshots \
-                         WHERE account_id = ?1 AND token_limit_pct IS NOT NULL \
-                         ORDER BY timestamp DESC LIMIT 1 OFFSET 1",
-                        rusqlite::params![account_id],
-                        |row| row.get::<_, Option<f64>>(0),
-                    ).ok().flatten();
-
-                    if let Some(prev) = prev_pct {
-                        if current_pct > prev {
-                            let now_str = chrono::Local::now().to_rfc3339();
-                            let key = format!("last_active_{}", account_id);
-                            let _ = conn2.execute(
-                                "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
-                                rusqlite::params![key, now_str],
-                            );
-                        }
-                    }
+                    detect_account_activity(&conn2, account_id, &quota);
 
                     // 读取持久化的 last_active
                     let key = format!("last_active_{}", account_id);
@@ -221,12 +333,13 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                 let app_clone = app.clone();
                 let aid = account_id.clone();
                 let alias = account_alias.clone();
-                alert::check_and_notify(
+                let wh = webhook_url.clone();
+                alert::check_and_notify_with_webhook(
                     &db,
                     &aid,
                     &alias,
                     &quota_clone,
-                    &|msg: &str| {
+                    |msg: &str| {
                         use tauri_plugin_notification::NotificationExt;
                         let _ = app_clone
                             .notification()
@@ -235,70 +348,15 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                             .body(msg.to_string())
                             .show();
                     },
+                    wh.as_deref(),
                 );
             }
             Err(e) => {
                 eprintln!("Failed to refresh account {}: {}", account_id, e);
 
-                // 网络异常降级：从本地缓存构造 QuotaData
-                let mut offline_quota = QuotaData::default();
-                offline_quota.is_offline = true;
-
-                if let Ok(conn2) = db.conn.lock() {
-                    // 读取最近快照
-                    let snap_limits: Option<(Option<f64>, Option<i64>, Option<f64>, Option<i64>)> = conn2.query_row(
-                        "SELECT time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset \
-                         FROM usage_snapshots WHERE account_id = ?1 ORDER BY timestamp DESC LIMIT 1",
-                        rusqlite::params![account_id],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                    ).ok();
-
-                    if let Some((time_pct, time_reset, token_pct, token_reset)) = snap_limits {
-                        if let (Some(pct), Some(reset)) = (time_pct, time_reset) {
-                            offline_quota.limits.push(crate::api::types::QuotaLimit {
-                                limit_type: "TIME_LIMIT".into(),
-                                percentage: pct,
-                                next_reset_time: reset,
-                                unit: None, number: None, usage: None, current_value: None,
-                                remaining: None, usage_details: None,
-                            });
-                        }
-                        if let (Some(pct), Some(reset)) = (token_pct, token_reset) {
-                            offline_quota.limits.push(crate::api::types::QuotaLimit {
-                                limit_type: "TOKENS_LIMIT".into(),
-                                percentage: pct,
-                                next_reset_time: reset,
-                                unit: None, number: None, usage: None, current_value: None,
-                                remaining: None, usage_details: None,
-                            });
-                        }
-                    }
-
-                    // 读取 level
-                    offline_quota.level = conn2.query_row(
-                        "SELECT COALESCE(level, '') FROM accounts WHERE id = ?1",
-                        rusqlite::params![account_id],
-                        |row| row.get(0),
-                    ).unwrap_or_default();
-
-                    // 读取 last_active
-                    let key = format!("last_active_{}", account_id);
-                    offline_quota.last_active = conn2.query_row(
-                        "SELECT value FROM app_settings WHERE key = ?1",
-                        rusqlite::params![key],
-                        |row| row.get::<_, String>(0),
-                    ).ok();
+                if let Some(offline_quota) = build_offline_quota(&db, account_id, &e) {
+                    quotas.insert(account_id.clone(), offline_quota);
                 }
-
-                // 401 特殊标记
-                if matches!(e, crate::api::client::ApiError::Unauthorized) {
-                    offline_quota.error = Some("API Key 无效或已过期".into());
-                } else if offline_quota.limits.is_empty() {
-                    // 完全无缓存时不展示
-                    continue;
-                }
-
-                quotas.insert(account_id.clone(), offline_quota);
             }
         }
     }
@@ -476,6 +534,8 @@ pub fn run() {
             commands::account::delete_account,
             commands::account::update_account_alias,
             commands::account::set_primary_account,
+            commands::account::validate_api_key,
+            commands::account::mask_api_key,
             commands::agent::bind_agent,
             commands::agent::get_agent_bindings,
             commands::agent::unbind_agent,
@@ -485,8 +545,12 @@ pub fn run() {
             commands::spin::spin_now,
             commands::spin::set_spin_config,
             commands::spin::get_spin_status,
+            commands::spin::spin_status_detail,
+            commands::spin::get_spin_history,
             commands::alerts::get_alert_rules,
             commands::alerts::update_alert_rule,
+            commands::alerts::set_webhook_url,
+            commands::alerts::get_webhook_url,
             commands::cost::get_cost_estimate,
             commands::cost::set_plan_price,
             commands::cost::get_plan_price,
@@ -498,6 +562,9 @@ pub fn run() {
             commands::summary::get_usage_summary,
             commands::settings::get_setting,
             commands::settings::set_setting,
+            commands::tool_usage::get_tool_usage,
+            commands::export::export_usage_csv,
+            commands::export::export_usage_json,
             close_popover,
             start_window_drag,
             fit_window_size,

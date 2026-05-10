@@ -56,3 +56,12 @@ export interface CostEstimate {
   daily_avg: number;
   ratio: number;
 }
+
+export interface ToolUsageItem {
+  tool: string;
+  count: number;
+}
+
+export interface ToolUsageData {
+  toolUsage: ToolUsageItem[];
+}

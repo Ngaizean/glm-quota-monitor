@@ -1,10 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { TokenUsageSummary, TokenUsagePeriod, TokenHistoryPoint } from "../types";
 
-function formatTokens(n: number): string {
-  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}亿`;
-  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}万`;
+function formatTokens(n: number, t: (key: string) => string): string {
+  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}${t('usage.hundredMillion')}`;
+  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}${t('usage.tenThousand')}`;
   if (n >= 1) return `${n.toFixed(0)}`;
   return "0";
 }
@@ -37,6 +38,7 @@ function RingGauge({ pct, size = 44, stroke = 4 }: { pct: number; size?: number;
 
 /** 今日卡片 — 水位 + 环形进度 */
 function TodayCard({ data, tokenPct }: { data: TokenUsagePeriod; tokenPct: number | null }) {
+  const { t } = useTranslation();
   const pct = tokenPct ?? 0;
   const color = getStatusColor(pct);
 
@@ -44,12 +46,12 @@ function TodayCard({ data, tokenPct }: { data: TokenUsagePeriod; tokenPct: numbe
     <div className="flex items-center gap-3 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] px-3 py-3 flex-1 min-w-0">
       <RingGauge pct={pct} />
       <div className="min-w-0">
-        <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] tracking-wider">今日</div>
+        <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] tracking-wider">{t('usage.today')}</div>
         <div className="text-[18px] font-bold tabular-nums leading-tight" style={{ color }}>
           {pct > 0 ? `${Math.round(pct)}%` : "—"}
         </div>
         <div className="text-[9px] text-[var(--color-text-tertiary)]">
-          {data.total_tokens > 0 ? `${formatTokens(data.total_tokens)} token` : "无数据"}
+          {data.total_tokens > 0 ? `${formatTokens(data.total_tokens, t)} ${t('usage.token')}` : t('usage.noData')}
         </div>
       </div>
     </div>
@@ -58,6 +60,7 @@ function TodayCard({ data, tokenPct }: { data: TokenUsagePeriod; tokenPct: numbe
 
 /** 时段卡片 — 总量 + 日均 */
 function PeriodCard({ data, label, days }: { data: TokenUsagePeriod; label: string; days: number }) {
+  const { t } = useTranslation();
   const avg = data.total_tokens / days;
 
   return (
@@ -65,11 +68,11 @@ function PeriodCard({ data, label, days }: { data: TokenUsagePeriod; label: stri
       <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] tracking-wider">{label}</div>
       <div className="flex items-baseline gap-1.5 mt-0.5">
         <span className="text-[13px] font-bold tabular-nums text-[var(--color-text-primary)] leading-none">
-          {formatTokens(data.total_tokens)}
+          {formatTokens(data.total_tokens, t)}
         </span>
       </div>
       <div className="text-[9px] text-[var(--color-text-tertiary)] mt-0.5">
-        均值 {formatTokens(avg)}/天
+        {t('usage.dailyAvg', { value: formatTokens(avg, t) })}
       </div>
     </div>
   );
@@ -77,6 +80,7 @@ function PeriodCard({ data, label, days }: { data: TokenUsagePeriod; label: stri
 
 /** 纯 CSS 柱状趋势图 — 按天聚合 token 消耗量 */
 function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
+  const { t } = useTranslation();
   if (data.length < 2) return null;
 
   // 按天聚合：最近的在前，只取最近 7 天
@@ -95,7 +99,7 @@ function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
   return (
     <div>
       <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] tracking-wider px-0.5 mb-2">
-        每日消耗
+        {t('usage.dailyConsumption')}
       </div>
       <div className="rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] px-3 py-3">
         <div className="flex items-end gap-1.5 h-[60px]">
@@ -113,7 +117,7 @@ function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
                   <div
                     className={`w-full rounded-t-sm ${barColor} transition-all duration-500 animate-progress`}
                     style={{ height: `${h}%` }}
-                    title={`${formatTokens(val)} token`}
+                    title={`${formatTokens(val, t)} ${t('usage.token')}`}
                   />
                 </div>
                 <span className="text-[7px] text-[var(--color-text-tertiary)] tabular-nums">
@@ -129,6 +133,7 @@ function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
 }
 
 export default function UsageSummary({ accountId, tokenPct, refreshKey }: { accountId: string; tokenPct: number | null; refreshKey: number }) {
+  const { t } = useTranslation();
   const [summary, setSummary] = useState<TokenUsageSummary | null>(null);
   const [history, setHistory] = useState<TokenHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -169,8 +174,8 @@ export default function UsageSummary({ accountId, tokenPct, refreshKey }: { acco
       <div className="flex gap-2">
         <TodayCard data={summary.today} tokenPct={tokenPct} />
         <div className="flex flex-col gap-2 flex-1">
-          <PeriodCard data={summary.last_7d} label="近 7 天" days={7} />
-          <PeriodCard data={summary.last_30d} label="近 30 天" days={30} />
+          <PeriodCard data={summary.last_7d} label={t('usage.last7d')} days={7} />
+          <PeriodCard data={summary.last_30d} label={t('usage.last30d')} days={30} />
         </div>
       </div>
       <TrendBars data={history} />

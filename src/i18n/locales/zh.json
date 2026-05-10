@@ -1,0 +1,202 @@
+{
+  "header": {
+    "title": "GLM Quota",
+    "refresh": "刷新",
+    "settings": "设置",
+    "close": "关闭"
+  },
+  "popover": {
+    "getStarted": "开始使用",
+    "getStartedDesc": "添加智谱 API Key，<br />即可实时监控额度用量",
+    "addKey": "添加 API Key"
+  },
+  "account": {
+    "setPrimary": "设为主账号",
+    "lastActive": "上次活跃",
+    "justNow": "刚刚",
+    "minutesAgo": "{{count}} 分钟前",
+    "hoursAgo": "{{count}} 小时前",
+    "daysAgo": "{{count}} 天前",
+    "offlineData": "离线数据"
+  },
+  "quota": {
+    "tokenTitle": "Token 额度",
+    "mcpTitle": "MCP 调用额度",
+    "resetSoon": "即将重置",
+    "resetDays": "{{count}}天",
+    "resetHours": "{{hours}}时{{minutes}}分"
+  },
+  "usage": {
+    "today": "今日",
+    "last7d": "近 7 天",
+    "last30d": "近 30 天",
+    "noData": "无数据",
+    "token": "token",
+    "dailyAvg": "均值 {{value}}/天",
+    "dailyConsumption": "每日消耗",
+    "hundredMillion": "亿",
+    "tenThousand": "万"
+  },
+  "cost": {
+    "costEstimate": "费用估算",
+    "perMonth": "/月",
+    "monthly": "包月",
+    "unitPrice": "单价"
+  },
+  "toolUsage": {
+    "title": "MCP 工具用量",
+    "calls": "{{count}} 次调用",
+    "noData": "暂无工具用量数据",
+    "loading": "加载中..."
+  },
+  "export": {
+    "exportCsv": "导出 CSV",
+    "exportJson": "导出 JSON",
+    "title": "数据导出",
+    "desc": "导出用量数据"
+  },
+  "settings": {
+    "accounts": "账号管理",
+    "accountsLabel": "账号",
+    "accountsDesc": "添加、管理 API Key",
+    "alerts": "提醒设置",
+    "alertsLabel": "提醒",
+    "alertsDesc": "额度预警与空闲提醒",
+    "spin": "空转设置",
+    "spinLabel": "空转",
+    "spinDesc": "自动触发额度计时器",
+    "general": "通用设置",
+    "generalLabel": "通用",
+    "generalDesc": "刷新间隔、启动偏好",
+    "about": "关于",
+    "aboutLabel": "关于",
+    "aboutDesc": "版本信息",
+    "theme": "主题外观",
+    "themeLabel": "主题",
+    "themeDesc": "配色与外观设置",
+    "exportLabel": "导出",
+    "exportDesc": "导出用量数据",
+    "back": "返回"
+  },
+  "accountsPane": {
+    "keyCount": "{{count}} 个 Key",
+    "add": "+ 添加",
+    "cancel": "取消",
+    "aliasPlaceholder": "账号名称",
+    "purposePlaceholder": "Key 用途（如：开发、日常）",
+    "apiKeyPlaceholder": "API Key（id.secret）",
+    "verifying": "验证中...",
+    "addAccount": "添加账号",
+    "delete": "删除",
+    "noAccounts": "暂无账号，点击上方添加",
+    "ccBound": "Claude Code 已绑定（默认模型：{{model}}）",
+    "ccBind": "绑定到 Claude Code（默认模型：{{model}}）",
+    "ocBound": "OpenClaw 已绑定（默认模型：{{model}}）",
+    "ocBind": "绑定到 OpenClaw（默认模型：{{model}}）",
+    "selectOverrideModel": "{{agent}} 覆盖模型",
+    "collapse": "收起",
+    "useDefaultModel": "使用默认模型",
+    "loadingModels": "加载模型中...",
+    "noModels": "暂无可用模型"
+  },
+  "alertsPane": {
+    "token5h": "5h 额度预警",
+    "token5hDesc": "5 小时窗口 Token 使用率告警",
+    "mcpMonthly": "月度 MCP 额度预警",
+    "mcpMonthlyDesc": "月度 MCP 调用额度告警",
+    "idleAccount": "空闲账号提醒",
+    "idleAccountDesc": "账号长时间未使用时提醒",
+    "notifyAbove": "超过 {{threshold}}% 时通知",
+    "idleNotifyAfter": "空闲超过 {{time}} 时通知",
+    "minutes": "分钟",
+    "hours": "小时"
+  },
+  "spinPane": {
+    "autoSpin": "自动空转",
+    "notConfigured": "未配置",
+    "nextSpin": "下次空转：今日 {{time}}",
+    "allPeakDone": "今日高峰时段已全部完成",
+    "todaySpun": "今日已空转",
+    "noAccount": "未选择账号",
+    "peakMode": "高峰时段",
+    "fixedMode": "固定时间",
+    "leadTime": "提前空转时间",
+    "peakPeriods": "高峰时段",
+    "add": "+ 添加",
+    "dailySpinTime": "每天空转时间",
+    "selectAccount": "选择空转账号",
+    "lastSpin": "上次空转",
+    "never": "从未",
+    "spinNow": "立即空转",
+    "spinning": "空转中...",
+    "loading": "加载中...",
+    "presets": {
+      "30min": "30分",
+      "1h": "1时",
+      "2h": "2时",
+      "4h": "4时",
+      "8h": "8时",
+      "lead30min": "30分",
+      "lead1h": "1小时",
+      "lead2h": "2小时",
+      "lead3h": "3小时",
+      "lead5h": "5小时"
+    },
+    "formatIdleMins": {
+      "minutes": "{{count}} 分钟",
+      "hours": "{{count}} 小时",
+      "hoursMinutes": "{{hours}} 小时 {{minutes}} 分钟"
+    }
+  },
+  "generalPane": {
+    "refreshInterval": "刷新间隔",
+    "refreshIntervalDesc": "自动更新额度数据",
+    "minutes": "{{count}} 分钟",
+    "rangeMin": "1 分钟",
+    "rangeMax": "30 分钟",
+    "autoStart": "开机自启",
+    "autoStartDesc": "登录时自动启动应用",
+    "defaultModel": "默认模型",
+    "defaultModelDesc": "快速绑定时使用的模型",
+    "selectDefaultModel": "选择默认模型",
+    "collapseModelList": "收起模型列表",
+    "loadingModels": "加载模型列表...",
+    "language": "界面语言",
+    "languageDesc": "切换显示语言",
+    "zh": "中文",
+    "en": "English"
+  },
+  "aboutPane": {
+    "appName": "GLM Quota Monitor",
+    "appDesc": "智谱 GLM Coding Plan<br />额度监控工具",
+    "checkUpdate": "检查更新",
+    "checking": "检查中...",
+    "foundNew": "发现新版本 {{version}}",
+    "upToDate": "已是最新版本",
+    "checkFailed": "检查失败，请稍后重试"
+  },
+  "theme": {
+    "title": "主题外观",
+    "accentColor": "强调色",
+    "default": "默认紫",
+    "ocean": "海洋蓝",
+    "forest": "森林绿",
+    "sunset": "日落橙",
+    "preview": "预览"
+  },
+  "trendChart": {
+    "title": "Token 趋势",
+    "tokenUsage": "Token 用量"
+  },
+  "common": {
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "close": "关闭",
+    "confirm": "确认",
+    "loading": "加载中...",
+    "error": "错误",
+    "success": "成功",
+    "back": "返回"
+  }
+}

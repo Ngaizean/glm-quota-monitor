@@ -1,23 +1,26 @@
 import { useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { getAvatarGradient, getLevelStyle } from "../lib/ui";
 import CostBar from "./CostBar";
 import QuotaSection from "./QuotaSection";
 import UsageSummary from "./UsageSummary";
+import ToolUsageSection from "./ToolUsageSection";
+import TrendChart from "./TrendChart";
 import type { Account, QuotaData } from "../types";
 
-function formatLastActive(iso: string | null | undefined): string | null {
+function formatLastActive(iso: string | null | undefined, t: (key: string, options?: Record<string, unknown>) => string): string | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (isNaN(date.getTime())) return null;
   const diff = Date.now() - date.getTime();
   if (diff < 0) return null;
   const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "刚刚";
-  if (mins < 60) return `${mins} 分钟前`;
+  if (mins < 1) return t('account.justNow');
+  if (mins < 60) return t('account.minutesAgo', { count: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} 小时前`;
+  if (hours < 24) return t('account.hoursAgo', { count: hours });
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days} 天前`;
+  if (days < 7) return t('account.daysAgo', { count: days });
   return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
@@ -49,6 +52,7 @@ function PctBadge({ pct }: { pct: number | null }) {
 }
 
 function StarButton({ isPrimary, onClick }: { isPrimary: boolean; onClick: () => void }) {
+  const { t } = useTranslation();
   if (isPrimary) {
     return (
       <svg className="w-3.5 h-3.5 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="currentColor">
@@ -60,7 +64,7 @@ function StarButton({ isPrimary, onClick }: { isPrimary: boolean; onClick: () =>
     <button
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       className="p-0.5 rounded hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)] hover:text-amber-400 transition-[var(--transition-fast)] shrink-0"
-      title="设为主账号"
+      title={t('account.setPrimary')}
     >
       <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -84,10 +88,11 @@ function Expandable({ open, children }: { open: boolean; children: React.ReactNo
 }
 
 function LastActiveLabel({ lastActive }: { lastActive: string | null }) {
+  const { t } = useTranslation();
   if (!lastActive) return null;
   return (
     <span className="text-[10px] text-[var(--color-text-tertiary)]">
-      上次活跃 {lastActive}
+      {t('account.lastActive')} {lastActive}
     </span>
   );
 }
@@ -111,6 +116,7 @@ function ChevronIcon({ open }: { open: boolean }) {
 }
 
 export default function AccountList({ accounts, expandedIds, onToggle, onSetPrimary, quotas, loading, refreshKey }: Props) {
+  const { t } = useTranslation();
   return (
     <div className="p-2 space-y-1.5">
       {accounts.map((acc) => {
@@ -165,7 +171,7 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                 <span className="text-[10px] text-[var(--color-text-tertiary)]">
                   {acc.purpose}
                 </span>
-                <LastActiveLabel lastActive={formatLastActive(quota?.last_active)} />
+                <LastActiveLabel lastActive={formatLastActive(quota?.last_active, t)} />
               </div>
               {quota?.error && (
                 <div className="mx-3 mb-1.5 text-[10px] text-[var(--color-danger)] flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/20">
@@ -183,6 +189,12 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
               </div>
               <div className="px-3 pb-3">
                 <CostBar accountId={acc.id} refreshKey={refreshKey} />
+              </div>
+              <div className="px-3 pb-3">
+                <ToolUsageSection accountId={acc.id} refreshKey={refreshKey} />
+              </div>
+              <div className="px-3 pb-3">
+                <TrendChart accountId={acc.id} refreshKey={refreshKey} />
               </div>
             </Expandable>
           </div>

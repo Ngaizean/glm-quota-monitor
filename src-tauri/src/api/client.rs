@@ -111,6 +111,25 @@ impl ZhipuClient {
         })
     }
 
+    /// 查询工具用量
+    pub async fn get_tool_usage(
+        &self,
+        start_time: &str,
+        end_time: &str,
+    ) -> Result<crate::api::types::ToolUsageData, ApiError> {
+        let url = reqwest::Url::parse_with_params(
+            &format!("{}{}", BASE_URL, "/api/monitor/usage/tool-usage"),
+            &[("startTime", start_time), ("endTime", end_time)],
+        )
+        .map_err(|e| ApiError::Api {
+            code: -1,
+            msg: e.to_string(),
+        })?;
+        let path = url.path();
+        let query = url.query().unwrap_or("");
+        self.get(&format!("{}?{}", path, query)).await
+    }
+
     /// 空转：使用 Coding Plan 的 Anthropic 兼容接口触发额度计时器
     pub async fn spin_with_model(&self, model: &str) -> Result<(), ApiError> {
         let url = format!("{}/api/anthropic/v1/messages", BASE_URL);

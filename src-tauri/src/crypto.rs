@@ -65,3 +65,12 @@ pub fn resolve_api_key(account_id: &str, db_key: &str, clear_db_fn: &dyn Fn()) -
     }
     None
 }
+
+/// 返回遮蔽后的 API Key：只保留末 4 位，其余用 **** 替代
+pub fn mask_key(key: &str) -> String {
+    if key.len() <= 4 {
+        "****".to_string()
+    } else {
+        format!("****{}", &key[key.len() - 4..])
+    }
+}

@@ -1,4 +1,4 @@
 pub mod notifier;
 pub mod rules;
 
-pub use notifier::check_and_notify;
+pub use notifier::check_and_notify_with_webhook;

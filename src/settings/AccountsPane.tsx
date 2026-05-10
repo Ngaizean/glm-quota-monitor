@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getAvatarGradient, getLevelStyle } from "../lib/ui";
 import type { Account, AgentBinding } from "../types";
 
@@ -9,6 +10,7 @@ const inputClass =
 type AgentType = "claude_code" | "openclaw";
 
 export default function AccountsPane() {
+  const { t } = useTranslation();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bindings, setBindings] = useState<Record<string, string | null>>({});
   const [defaultModel, setDefaultModel] = useState("glm-5.1");
@@ -119,13 +121,13 @@ export default function AccountsPane() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-medium text-[var(--color-text-tertiary)] uppercase tracking-wider">
-          {accounts.length > 0 ? `${accounts.length} 个 Key` : ""}
+          {accounts.length > 0 ? t('accountsPane.keyCount', { count: accounts.length }) : ""}
         </span>
         <button
           onClick={() => setShowAdd(!showAdd)}
           className="text-[11px] font-medium px-3 py-1.5 bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] rounded-lg transition-[var(--transition-fast)] shadow-sm"
         >
-          {showAdd ? "取消" : "+ 添加"}
+          {showAdd ? t('accountsPane.cancel') : t('accountsPane.add')}
         </button>
       </div>
 
@@ -137,15 +139,15 @@ export default function AccountsPane() {
 
       {showAdd && (
         <div className="bg-[var(--color-bg-secondary)] rounded-xl p-3.5 space-y-2.5 border border-[var(--color-border-subtle)] animate-slide-down">
-          <input type="text" placeholder="账号名称" value={alias} onChange={(e) => setAlias(e.target.value)} className={inputClass} />
-          <input type="text" placeholder="Key 用途（如：开发、日常）" value={purpose} onChange={(e) => setPurpose(e.target.value)} className={inputClass} />
-          <input type="password" placeholder="API Key（id.secret）" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className={`${inputClass} font-mono`} />
+          <input type="text" placeholder={t('accountsPane.aliasPlaceholder')} value={alias} onChange={(e) => setAlias(e.target.value)} className={inputClass} />
+          <input type="text" placeholder={t('accountsPane.purposePlaceholder')} value={purpose} onChange={(e) => setPurpose(e.target.value)} className={inputClass} />
+          <input type="password" placeholder={t('accountsPane.apiKeyPlaceholder')} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className={`${inputClass} font-mono`} />
           <button
             onClick={handleAdd}
             disabled={loading || !alias.trim() || !purpose.trim() || !apiKey.trim()}
             className="w-full py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:bg-[var(--color-bg-tertiary)] disabled:text-[var(--color-text-tertiary)] text-white rounded-lg text-xs font-medium transition-[var(--transition-fast)] shadow-sm"
           >
-            {loading ? "验证中..." : "添加账号"}
+            {loading ? t('accountsPane.verifying') : t('accountsPane.addAccount')}
           </button>
         </div>
       )}
@@ -180,7 +182,7 @@ export default function AccountsPane() {
                         <div className="flex">
                           <button
                             onClick={() => handleBind("claude_code", acc.id)}
-                            title={bindings["claude_code"] === acc.id ? `Claude Code 已绑定（默认模型：${defaultModel}）` : `绑定到 Claude Code（默认模型：${defaultModel}）`}
+                            title={bindings["claude_code"] === acc.id ? t('accountsPane.ccBound', { model: defaultModel }) : t('accountsPane.ccBind', { model: defaultModel })}
                             className={`text-[9px] font-bold px-2.5 py-0.5 rounded-l-md border transition-[var(--transition-fast)] ${
                               bindings["claude_code"] === acc.id
                                 ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
@@ -198,7 +200,7 @@ export default function AccountsPane() {
                                   ? "border-[var(--color-accent)] text-white/80 bg-[var(--color-accent)] hover:text-white"
                                   : "border-[var(--color-border)] text-[var(--color-text-tertiary)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                             }`}
-                            title="选择 Claude Code 覆盖模型"
+                            title={t('accountsPane.selectOverrideModel', { agent: picker?.agent === "claude_code" ? "Claude Code" : "OpenClaw" })}
                           >
                             ▾
                           </button>
@@ -209,7 +211,7 @@ export default function AccountsPane() {
                         <div className="flex">
                           <button
                             onClick={() => handleBind("openclaw", acc.id)}
-                            title={bindings["openclaw"] === acc.id ? `OpenClaw 已绑定（默认模型：${defaultModel}）` : `绑定到 OpenClaw（默认模型：${defaultModel}）`}
+                            title={bindings["openclaw"] === acc.id ? t('accountsPane.ocBound', { model: defaultModel }) : t('accountsPane.ocBind', { model: defaultModel })}
                             className={`text-[9px] font-bold px-2.5 py-0.5 rounded-l-md border transition-[var(--transition-fast)] ${
                               bindings["openclaw"] === acc.id
                                 ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
@@ -235,7 +237,7 @@ export default function AccountsPane() {
                       </div>
 
                       <button onClick={() => handleDelete(acc.id)} className="text-[10px] font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-danger)] transition-[var(--transition-fast)] p-1 rounded-md hover:bg-[var(--color-danger)]/5">
-                        删除
+                        {t('common.delete')}
                       </button>
                     </div>
                   </div>
@@ -245,13 +247,13 @@ export default function AccountsPane() {
                       <div className="rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-primary)] p-2.5 space-y-2 animate-slide-down">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] text-[var(--color-text-tertiary)]">
-                            {picker?.agent === "claude_code" ? "Claude Code" : "OpenClaw"} 覆盖模型
+                            {t('accountsPane.selectOverrideModel', { agent: picker?.agent === "claude_code" ? "Claude Code" : "OpenClaw" })}
                           </span>
                           <button
                             onClick={() => setPicker(null)}
                             className="text-[10px] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
                           >
-                            收起
+                            {t('accountsPane.collapse')}
                           </button>
                         </div>
 
@@ -259,13 +261,13 @@ export default function AccountsPane() {
                           onClick={() => handleBind(picker!.agent, acc.id)}
                           className="w-full text-left px-3 py-2 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] transition-[var(--transition-fast)]"
                         >
-                          <div className="text-[11px] font-medium text-[var(--color-text-primary)]">使用默认模型</div>
+                          <div className="text-[11px] font-medium text-[var(--color-text-primary)]">{t('accountsPane.useDefaultModel')}</div>
                           <div className="text-[10px] text-[var(--color-text-tertiary)] font-mono mt-0.5">{defaultModel}</div>
                         </button>
 
                         <div className="max-h-40 overflow-y-auto scroll-area overscroll-contain rounded-lg border border-[var(--color-border-subtle)]">
                           {pickerLoading ? (
-                            <div className="px-3 py-2 text-[10px] text-[var(--color-text-tertiary)]">加载模型中...</div>
+                            <div className="px-3 py-2 text-[10px] text-[var(--color-text-tertiary)]">{t('accountsPane.loadingModels')}</div>
                           ) : models.length ? (
                             models.map((model) => (
                               <button
@@ -277,7 +279,7 @@ export default function AccountsPane() {
                               </button>
                             ))
                           ) : (
-                            <div className="px-3 py-2 text-[10px] text-[var(--color-text-tertiary)]">暂无可用模型</div>
+                            <div className="px-3 py-2 text-[10px] text-[var(--color-text-tertiary)]">{t('accountsPane.noModels')}</div>
                           )}
                         </div>
                       </div>
@@ -297,7 +299,7 @@ export default function AccountsPane() {
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
             </div>
-            <p className="text-[11px] text-[var(--color-text-tertiary)]">暂无账号，点击上方添加</p>
+            <p className="text-[11px] text-[var(--color-text-tertiary)]">{t('accountsPane.noAccounts')}</p>
           </div>
         )}
       </div>

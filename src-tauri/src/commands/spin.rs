@@ -417,3 +417,92 @@ pub fn get_spin_status(db: State<'_, Database>) -> Result<SpinStatus, String> {
         next_spin,
     })
 }
+
+#[derive(Debug, Serialize)]
+pub struct SpinStatusDetail {
+    pub config: SpinConfig,
+    pub last_spin: Option<String>,
+    pub next_spin: Option<String>,
+    pub spin_reason: String,
+    pub token_window_active: bool,
+    pub token_window_pct: f64,
+    pub token_window_reset: i64,
+    pub next_window_time: Option<String>,
+}
+
+#[tauri::command]
+pub fn spin_status_detail(db: State<'_, Database>) -> Result<SpinStatusDetail, String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+    let config = read_config(&conn);
+    let history = read_history(&conn);
+    let last_spin = history.last().map(|s| format_history_entry(s));
+    let next_spin = calc_next_spin(&config, &history, &conn, chrono::Local::now());
+
+    // Determine spin reason
+    let spin_reason = if !config.enabled {
+        "空转未启用".to_string()
+    } else if config.account_id.is_none() {
+        "未配置账号".to_string()
+    } else {
+        let account_id = config.account_id.as_ref().unwrap();
+        if token_window_active(&conn, account_id) {
+            "TOKENS_LIMIT 计时器已在运行，无需空转".to_string()
+        } else if should_spin(&config, &history, &conn).is_some() {
+            "当前处于空转窗口，应该触发".to_string()
+        } else if next_spin.is_some() {
+            format!("下一窗口: {}", next_spin.as_ref().unwrap())
+        } else {
+            "今日空转已完成或无可用窗口".to_string()
+        }
+    };
+
+    // Token window state
+    let (token_window_pct, token_window_reset) = config
+        .account_id
+        .as_ref()
+        .map(|aid| get_token_limit_state(&conn, aid))
+        .unwrap_or((0.0, 0));
+
+    let token_window_active_flag = config
+        .account_id
+        .as_ref()
+        .map(|aid| token_window_active(&conn, aid))
+        .unwrap_or(false);
+
+    // Next window time (from reset timestamp)
+    let next_window_time = if token_window_reset > 0 {
+        chrono::DateTime::from_timestamp(token_window_reset, 0)
+            .map(|dt| dt.with_timezone(&chrono::Local).to_rfc3339())
+    } else {
+        None
+    };
+
+    Ok(SpinStatusDetail {
+        config,
+        last_spin,
+        next_spin,
+        spin_reason,
+        token_window_active: token_window_active_flag,
+        token_window_pct,
+        token_window_reset,
+        next_window_time,
+    })
+}
+
+#[tauri::command]
+pub fn get_spin_history(
+    db: State<'_, Database>,
+    account_id: Option<String>,
+    limit: Option<i32>,
+) -> Result<Vec<String>, String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+    let history = read_history(&conn);
+    let limit = limit.unwrap_or(30) as usize;
+    let _ = account_id; // history is global per config, not per account
+    let start = history.len().saturating_sub(limit);
+    let result: Vec<String> = history[start..]
+        .iter()
+        .map(|h| format_history_entry(h))
+        .collect();
+    Ok(result)
+}

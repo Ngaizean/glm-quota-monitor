@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 
 interface HeaderProps {
   loading: boolean;
@@ -7,6 +8,7 @@ interface HeaderProps {
 }
 
 export default function Header({ loading, onRefresh, onSettings }: HeaderProps) {
+  const { t } = useTranslation();
   const handleDrag = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
@@ -26,7 +28,7 @@ export default function Header({ loading, onRefresh, onSettings }: HeaderProps) 
             <span className="text-white text-[9px] font-bold tracking-tight">G</span>
           </div>
           <span className="text-[13px] font-semibold tracking-tight text-[var(--color-text-primary)]">
-            GLM Quota
+            {t('header.title')}
           </span>
           {loading && (
             <div className="flex gap-0.5">
@@ -41,7 +43,7 @@ export default function Header({ loading, onRefresh, onSettings }: HeaderProps) 
             onClick={onRefresh}
             disabled={loading}
             className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] disabled:opacity-40"
-            title="刷新"
+            title={t('header.refresh')}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="23 4 23 10 17 10" />
@@ -51,7 +53,7 @@ export default function Header({ loading, onRefresh, onSettings }: HeaderProps) 
           <button
             onClick={onSettings}
             className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
-            title="设置"
+            title={t('header.settings')}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3" />
@@ -61,7 +63,7 @@ export default function Header({ loading, onRefresh, onSettings }: HeaderProps) 
           <button
             onClick={() => invoke("close_popover")}
             className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
-            title="关闭"
+            title={t('header.close')}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />

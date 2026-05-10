@@ -1,13 +1,14 @@
+import { useTranslation } from "react-i18next";
 import type { QuotaLimit } from "../types";
 
-function formatResetTime(ts: number): string {
+function formatResetTime(ts: number, t: (key: string, options?: Record<string, unknown>) => string): string {
   if (!ts) return "--";
   const diff = ts - Date.now();
-  if (diff <= 0) return "即将重置";
+  if (diff <= 0) return t('quota.resetSoon');
   const hours = Math.floor(diff / 3600000);
   const mins = Math.floor((diff % 3600000) / 60000);
-  if (hours > 24) return `${Math.floor(hours / 24)}天`;
-  return `${hours}时${mins}分`;
+  if (hours > 24) return t('quota.resetDays', { count: Math.floor(hours / 24) });
+  return t('quota.resetHours', { hours, minutes: mins });
 }
 
 function getStatusColors(pct: number) {
@@ -31,6 +32,7 @@ function getStatusColors(pct: number) {
 function QuotaBar({ title, percentage, resetTime }: {
   title: string; percentage: number; resetTime: number;
 }) {
+  const { t } = useTranslation();
   const colors = getStatusColors(percentage);
 
   return (
@@ -42,7 +44,7 @@ function QuotaBar({ title, percentage, resetTime }: {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-[var(--color-text-tertiary)] tabular-nums">
-            {formatResetTime(resetTime)}
+            {formatResetTime(resetTime, t)}
           </span>
           <span className={`text-[13px] font-bold tabular-nums w-12 text-right ${colors.text}`}>
             {Math.round(percentage)}%
@@ -65,6 +67,7 @@ interface Props {
 }
 
 export default function QuotaSection({ limits, isOffline }: Props) {
+  const { t } = useTranslation();
   const tokensLimit = limits.find((l) => l.type === "TOKENS_LIMIT");
   const mcpLimit =
     limits.find((l) => l.type === "TIME_LIMIT") ??
@@ -74,14 +77,14 @@ export default function QuotaSection({ limits, isOffline }: Props) {
     <div className="px-4 py-3 space-y-4 relative">
       {isOffline && (
         <div className="absolute top-2 right-3 text-[8px] font-medium text-[var(--color-text-tertiary)] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 rounded">
-          离线数据
+          {t('account.offlineData')}
         </div>
       )}
       {tokensLimit && (
-        <QuotaBar title="Token 额度" percentage={tokensLimit.percentage} resetTime={tokensLimit.nextResetTime} />
+        <QuotaBar title={t('quota.tokenTitle')} percentage={tokensLimit.percentage} resetTime={tokensLimit.nextResetTime} />
       )}
       {mcpLimit && (
-        <QuotaBar title="MCP 调用额度" percentage={mcpLimit.percentage} resetTime={mcpLimit.nextResetTime} />
+        <QuotaBar title={t('quota.mcpTitle')} percentage={mcpLimit.percentage} resetTime={mcpLimit.nextResetTime} />
       )}
     </div>
   );

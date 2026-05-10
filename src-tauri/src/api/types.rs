@@ -116,6 +116,20 @@ pub struct TotalModelUsage {
     pub total_tokens_usage: f64,
 }
 
+// ========== 工具用量 ==========
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ToolUsageData {
+    #[serde(rename = "toolUsage", default)]
+    pub tool_usage: Vec<ToolUsageItem>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ToolUsageItem {
+    pub tool: String,
+    pub count: f64,
+}
+
 // ========== 模型列表 ==========
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

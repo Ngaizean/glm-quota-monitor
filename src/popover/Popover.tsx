@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import Header from "./Header";
 import AccountList from "./AccountList";
 import type { Account, QuotaData } from "../types";
@@ -11,6 +12,7 @@ interface RefreshResult {
 }
 
 function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void; screenHeight: number }) {
+  const { t } = useTranslation();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [quotas, setQuotas] = useState<Record<string, QuotaData>>({});
@@ -111,14 +113,14 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
               <div className="absolute -inset-1 rounded-2xl border-2 border-[var(--color-accent)]/20 animate-ping-slow" />
             </div>
             <div className="text-center space-y-1.5">
-              <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">开始使用</p>
-              <p className="text-[10px] text-[var(--color-text-tertiary)] leading-relaxed max-w-[200px]">添加智谱 API Key，<br />即可实时监控额度用量</p>
+              <p className="text-[13px] font-semibold text-[var(--color-text-primary)]">{t('popover.getStarted')}</p>
+              <p className="text-[10px] text-[var(--color-text-tertiary)] leading-relaxed max-w-[200px]" dangerouslySetInnerHTML={{ __html: t('popover.getStartedDesc') }} />
             </div>
             <button
               onClick={onOpenSettings}
               className="text-[11px] font-semibold px-5 py-2 bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] rounded-xl transition-[var(--transition-fast)] shadow-sm flex items-center gap-1.5"
             >
-              添加 API Key
+              {t('popover.addKey')}
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="9 18 15 12 9 6" />
               </svg>

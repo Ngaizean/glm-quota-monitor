@@ -182,3 +182,38 @@ pub fn set_primary_account(
     let _ = app.emit("accounts-changed", ());
     Ok(())
 }
+
+#[tauri::command]
+pub async fn validate_api_key(api_key: String) -> Result<String, String> {
+    let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
+    client
+        .get_quota_limit()
+        .await
+        .map(|quota| quota.level)
+        .map_err(|e| format!("API Key 验证失败: {}", e))
+}
+
+#[tauri::command]
+pub fn mask_api_key(db: State<'_, Database>, account_id: String) -> Result<String, String> {
+    let db_key = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        conn.query_row(
+            "SELECT api_key FROM accounts WHERE id = ?1",
+            rusqlite::params![account_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|e| format!("账号不存在: {}", e))?
+    };
+
+    let api_key = crypto::resolve_api_key(&account_id, &db_key, &|| {
+        if let Ok(c) = db.conn.lock() {
+            let _ = c.execute(
+                "UPDATE accounts SET api_key = '' WHERE id = ?1",
+                rusqlite::params![account_id],
+            );
+        }
+    })
+    .ok_or("API Key 未找到".to_string())?;
+
+    Ok(crypto::mask_key(&api_key))
+}
