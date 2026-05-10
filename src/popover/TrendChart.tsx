@@ -98,6 +98,7 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
             />
             <YAxis
               domain={[0, 100]}
+              ticks={[0, 25, 50, 75, 100]}
               tick={{ fontSize: 8, fill: "var(--color-text-tertiary)" }}
               axisLine={{ stroke: "var(--color-border-subtle)" }}
               tickLine={false}
@@ -115,11 +116,11 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
             <Line
               type="monotone"
               dataKey="time_pct"
-              stroke="var(--color-success)"
+              stroke="#E8915A"
               strokeWidth={1}
               dot={false}
               strokeDasharray="4 2"
-              activeDot={{ r: 2, fill: "var(--color-success)" }}
+              activeDot={{ r: 2, fill: "#E8915A" }}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -130,7 +131,7 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
           <span className="text-[8px] text-[var(--color-text-tertiary)]">{t("trendChart.tokenUsage")}</span>
         </div>
         <div className="flex items-center gap-1">
-          <div className="w-2.5 h-0.5 rounded bg-[var(--color-success)] opacity-60" style={{ borderStyle: "dashed" }} />
+          <div className="w-2.5 h-0.5 rounded opacity-60" style={{ backgroundColor: "#E8915A", borderStyle: "dashed" }} />
           <span className="text-[8px] text-[var(--color-text-tertiary)]">Time</span>
         </div>
       </div>

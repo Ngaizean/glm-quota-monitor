@@ -58,21 +58,42 @@ function TodayCard({ data, tokenPct }: { data: TokenUsagePeriod; tokenPct: numbe
   );
 }
 
-/** 时段卡片 — 总量 + 日均 */
-function PeriodCard({ data, label, days }: { data: TokenUsagePeriod; label: string; days: number }) {
+/** 趋势箭头 — 今日日均 vs 时段日均 */
+function TrendArrow({ todayDaily, periodDaily }: { todayDaily: number; periodDaily: number }) {
+  if (periodDaily === 0 || todayDaily === 0) return null;
+  const ratio = todayDaily / periodDaily;
+  const pct = Math.abs(ratio - 1) * 100;
+  if (pct < 1) return null; // 差异 < 1% 不显示
+
+  const up = ratio > 1;
+  const color = up ? "var(--color-danger)" : "var(--color-success)";
+  const arrow = up ? "↑" : "↓";
+
+  return (
+    <span className="text-[9px] font-bold tabular-nums ml-1" style={{ color }}>
+      {arrow}{pct >= 100 ? `${ratio.toFixed(1)}x` : `${Math.round(pct)}%`}
+    </span>
+  );
+}
+
+/** 时段卡片 — 总量 + 日均 + 趋势箭头 */
+function PeriodCard({ data, label, days, todayDaily }: { data: TokenUsagePeriod; label: string; days: number; todayDaily: number }) {
   const { t } = useTranslation();
   const avg = data.total_tokens / days;
 
   return (
     <div className="flex-1 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] px-3 py-2.5 min-w-0">
-      <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] tracking-wider">{label}</div>
+      <div className="flex items-center gap-1">
+        <span className="text-[9px] font-bold text-[var(--color-text-tertiary)] tracking-wider">{label}</span>
+      </div>
       <div className="flex items-baseline gap-1.5 mt-0.5">
         <span className="text-[13px] font-bold tabular-nums text-[var(--color-text-primary)] leading-none">
           {formatTokens(data.total_tokens, t)}
         </span>
       </div>
-      <div className="text-[9px] text-[var(--color-text-tertiary)] mt-0.5">
-        {t('usage.dailyAvg', { value: formatTokens(avg, t) })}
+      <div className="flex items-center text-[9px] text-[var(--color-text-tertiary)] mt-0.5">
+        <span>{t('usage.dailyAvg', { value: formatTokens(avg, t) })}</span>
+        <TrendArrow todayDaily={todayDaily} periodDaily={avg} />
       </div>
     </div>
   );
@@ -169,13 +190,15 @@ export default function UsageSummary({ accountId, tokenPct, refreshKey }: { acco
 
   if (!summary) return null;
 
+  const todayDaily = summary.today.total_tokens; // 今日总量即今日日均
+
   return (
     <div className="space-y-2.5">
       <div className="flex gap-2">
         <TodayCard data={summary.today} tokenPct={tokenPct} />
         <div className="flex flex-col gap-2 flex-1">
-          <PeriodCard data={summary.last_7d} label={t('usage.last7d')} days={7} />
-          <PeriodCard data={summary.last_30d} label={t('usage.last30d')} days={30} />
+          <PeriodCard data={summary.last_7d} label={t('usage.last7d')} days={7} todayDaily={todayDaily} />
+          <PeriodCard data={summary.last_30d} label={t('usage.last30d')} days={30} todayDaily={todayDaily} />
         </div>
       </div>
       <TrendBars data={history} />
