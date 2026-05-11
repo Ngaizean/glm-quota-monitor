@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const CURRENT_VERSION = "v4.4.0";
+const CURRENT_VERSION = "v5.0.0";
 
 function isNewer(remote: string, local: string): boolean {
   const parse = (v: string) => v.replace(/^v/, "").split(".").map(Number);

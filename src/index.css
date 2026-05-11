@@ -163,3 +163,43 @@ input[type="range"]::-webkit-slider-thumb:hover {
     --shadow-popover: 0 8px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255,  255, 0.06);
   }
 }
+
+/* Theme variants */
+[data-theme="ocean"] {
+  --color-accent: #0EA5E9;
+  --color-accent-hover: #0284C7;
+  --color-accent-subtle: #E0F2FE;
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="ocean"] {
+    --color-accent: #38BDF8;
+    --color-accent-hover: #7DD3FC;
+    --color-accent-subtle: #1E3A5F;
+  }
+}
+
+[data-theme="forest"] {
+  --color-accent: #10B981;
+  --color-accent-hover: #059669;
+  --color-accent-subtle: #D1FAE5;
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="forest"] {
+    --color-accent: #34D399;
+    --color-accent-hover: #6EE7B7;
+    --color-accent-subtle: #1A3A2A;
+  }
+}
+
+[data-theme="sunset"] {
+  --color-accent: #F97316;
+  --color-accent-hover: #EA580C;
+  --color-accent-subtle: #FFF7ED;
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="sunset"] {
+    --color-accent: #FB923C;
+    --color-accent-hover: #FDBA74;
+    --color-accent-subtle: #3A2A1A;
+  }
+}

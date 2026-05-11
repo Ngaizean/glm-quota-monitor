@@ -1,6 +1,7 @@
 use crate::api::types::QuotaData;
 use crate::alert::rules::{has_fired_this_period, record_alert};
 use crate::db::Database;
+use serde_json::json;
 
 /// 检查额度数据是否触发提醒，如果触发则发送系统通知
 pub fn check_and_notify(
@@ -8,7 +9,19 @@ pub fn check_and_notify(
     account_id: &str,
     account_alias: &str,
     quota: &QuotaData,
-    notify_fn: &dyn Fn(&str),
+    notify_fn: impl Fn(&str),
+) {
+    check_and_notify_with_webhook(db, account_id, account_alias, quota, notify_fn, None)
+}
+
+/// 检查额度数据是否触发提醒，支持可选 webhook 回调
+pub fn check_and_notify_with_webhook(
+    db: &Database,
+    account_id: &str,
+    account_alias: &str,
+    quota: &QuotaData,
+    notify_fn: impl Fn(&str),
+    webhook_url: Option<&str>,
 ) {
     let pending: Vec<String> = {
         let conn = match db.conn.lock() {
@@ -123,5 +136,23 @@ pub fn check_and_notify(
 
     for msg in &pending {
         notify_fn(msg);
+    }
+
+    // Webhook 回调
+    if let Some(url) = webhook_url {
+        if !pending.is_empty() {
+            let payload = json!({
+                "account_id": account_id,
+                "account_alias": account_alias,
+                "alerts": pending,
+            });
+            let client = crate::HTTP_CLIENT.clone();
+            let url = url.to_string();
+            std::thread::spawn(move || {
+                let _ = tauri::async_runtime::block_on(async {
+                    client.post(&url).json(&payload).send().await
+                });
+            });
+        }
     }
 }

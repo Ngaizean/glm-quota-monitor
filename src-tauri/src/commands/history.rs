@@ -35,8 +35,8 @@ pub fn get_snapshots(
                 token_limit_reset: row.get(6)?,
                 mcp_limit_pct: row.get(7)?,
                 mcp_limit_reset: row.get(8)?,
-                total_tokens_24h: row.get(9)?,
-                total_calls_24h: row.get(10)?,
+                total_tokens_24h: row.get::<_, Option<f64>>(9)?,
+                total_calls_24h: row.get::<_, Option<f64>>(10)?,
             })
         })
         .map_err(|e| e.to_string())?

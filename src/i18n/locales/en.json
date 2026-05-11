@@ -1,0 +1,202 @@
+{
+  "header": {
+    "title": "GLM Quota",
+    "refresh": "Refresh",
+    "settings": "Settings",
+    "close": "Close"
+  },
+  "popover": {
+    "getStarted": "Get Started",
+    "getStartedDesc": "Add a Zhipu API Key to<br />start monitoring quota usage",
+    "addKey": "Add API Key"
+  },
+  "account": {
+    "setPrimary": "Set as primary",
+    "lastActive": "Last active",
+    "justNow": "just now",
+    "minutesAgo": "{{count}} min ago",
+    "hoursAgo": "{{count}} hr ago",
+    "daysAgo": "{{count}} days ago",
+    "offlineData": "Offline data"
+  },
+  "quota": {
+    "tokenTitle": "Token Quota",
+    "mcpTitle": "MCP Call Quota",
+    "resetSoon": "Resetting soon",
+    "resetDays": "{{count}}d",
+    "resetHours": "{{hours}}h{{minutes}}m"
+  },
+  "usage": {
+    "today": "Today",
+    "last7d": "Last 7 days",
+    "last30d": "Last 30 days",
+    "noData": "No data",
+    "token": "tokens",
+    "dailyAvg": "avg {{value}}/day",
+    "dailyConsumption": "Daily Consumption",
+    "hundredMillion": "B",
+    "tenThousand": "W"
+  },
+  "cost": {
+    "costEstimate": "Cost Estimate",
+    "perMonth": "/mo",
+    "monthly": "Plan",
+    "unitPrice": "Unit"
+  },
+  "toolUsage": {
+    "title": "MCP Tool Usage",
+    "calls": "{{count}} calls",
+    "noData": "No tool usage data",
+    "loading": "Loading..."
+  },
+    "export": {
+    "exportCsv": "Export CSV",
+    "exportJson": "Export JSON",
+    "title": "Data Export",
+    "desc": "Export usage data",
+    "exportLabel": "Export",
+    "exportDesc": "Export usage data"
+  },
+  "settings": {
+    "accounts": "Account Management",
+    "accountsLabel": "Accounts",
+    "accountsDesc": "Add and manage API Keys",
+    "alerts": "Alert Settings",
+    "alertsLabel": "Alerts",
+    "alertsDesc": "Quota warnings & idle alerts",
+    "spin": "Spin Settings",
+    "spinLabel": "Spin",
+    "spinDesc": "Auto-trigger quota timers",
+    "general": "General Settings",
+    "generalLabel": "General",
+    "generalDesc": "Refresh interval, startup prefs",
+    "about": "About",
+    "aboutLabel": "About",
+    "aboutDesc": "Version info",
+    "theme": "Theme & Appearance",
+    "themeLabel": "Theme",
+    "themeDesc": "Colors & appearance",
+    "back": "Back"
+  },
+  "accountsPane": {
+    "keyCount": "{{count}} Keys",
+    "add": "+ Add",
+    "cancel": "Cancel",
+    "aliasPlaceholder": "Account name",
+    "purposePlaceholder": "Key purpose (e.g. dev, daily)",
+    "apiKeyPlaceholder": "API Key (id.secret)",
+    "verifying": "Verifying...",
+    "addAccount": "Add Account",
+    "delete": "Delete",
+    "noAccounts": "No accounts yet, click above to add",
+    "ccBound": "Claude Code bound (default model: {{model}})",
+    "ccBind": "Bind to Claude Code (default model: {{model}})",
+    "ocBound": "OpenClaw bound (default model: {{model}})",
+    "ocBind": "Bind to OpenClaw (default model: {{model}})",
+    "selectOverrideModel": "{{agent}} override model",
+    "collapse": "Collapse",
+    "useDefaultModel": "Use default model",
+    "loadingModels": "Loading models...",
+    "noModels": "No models available"
+  },
+  "alertsPane": {
+    "token5h": "5h Quota Alert",
+    "token5hDesc": "Token usage rate alert for 5-hour window",
+    "mcpMonthly": "Monthly MCP Quota Alert",
+    "mcpMonthlyDesc": "Monthly MCP call quota alert",
+    "idleAccount": "Idle Account Alert",
+    "idleAccountDesc": "Alert when account is unused for a long time",
+    "notifyAbove": "Notify when above {{threshold}}%",
+    "idleNotifyAfter": "Notify when idle for {{time}}",
+    "minutes": "minutes",
+    "hours": "hours"
+  },
+  "spinPane": {
+    "autoSpin": "Auto Spin",
+    "notConfigured": "Not configured",
+    "nextSpin": "Next spin: today {{time}}",
+    "allPeakDone": "All peak periods completed today",
+    "todaySpun": "Already spun today",
+    "noAccount": "No account selected",
+    "peakMode": "Peak Hours",
+    "fixedMode": "Fixed Time",
+    "leadTime": "Lead spin time",
+    "peakPeriods": "Peak Periods",
+    "add": "+ Add",
+    "dailySpinTime": "Daily spin time",
+    "selectAccount": "Select spin account",
+    "lastSpin": "Last spin",
+    "never": "Never",
+    "spinNow": "Spin Now",
+    "spinning": "Spinning...",
+    "loading": "Loading...",
+    "presets": {
+      "30min": "30m",
+      "1h": "1h",
+      "2h": "2h",
+      "4h": "4h",
+      "8h": "8h",
+      "lead30min": "30m",
+      "lead1h": "1h",
+      "lead2h": "2h",
+      "lead3h": "3h",
+      "lead5h": "5h"
+    },
+    "formatIdleMins": {
+      "minutes": "{{count}} min",
+      "hours": "{{count}} hr",
+      "hoursMinutes": "{{hours}} hr {{minutes}} min"
+    }
+  },
+  "generalPane": {
+    "refreshInterval": "Refresh Interval",
+    "refreshIntervalDesc": "Auto-update quota data",
+    "minutes": "{{count}} min",
+    "rangeMin": "1 min",
+    "rangeMax": "30 min",
+    "autoStart": "Auto Start",
+    "autoStartDesc": "Launch app on login",
+    "defaultModel": "Default Model",
+    "defaultModelDesc": "Model used for quick binding",
+    "selectDefaultModel": "Select default model",
+    "collapseModelList": "Collapse model list",
+    "loadingModels": "Loading models...",
+    "language": "Language",
+    "languageDesc": "Change display language",
+    "zh": "中文",
+    "en": "English"
+  },
+  "aboutPane": {
+    "appName": "GLM Quota Monitor",
+    "appDesc": "Zhipu GLM Coding Plan<br />Quota Monitor Tool",
+    "checkUpdate": "Check for Updates",
+    "checking": "Checking...",
+    "foundNew": "New version available: {{version}}",
+    "upToDate": "Already up to date",
+    "checkFailed": "Check failed, please try again later"
+  },
+  "theme": {
+    "title": "Theme & Appearance",
+    "accentColor": "Accent Color",
+    "default": "Default Purple",
+    "ocean": "Ocean Blue",
+    "forest": "Forest Green",
+    "sunset": "Sunset Orange",
+    "preview": "Preview"
+  },
+  "trendChart": {
+    "title": "Token Trend",
+    "tokenUsage": "Token Usage"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "close": "Close",
+    "confirm": "Confirm",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "back": "Back"
+  }
+}

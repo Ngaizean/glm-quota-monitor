@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { CostEstimate } from "../types";
 
 function formatCost(v: number): string {
@@ -9,6 +10,7 @@ function formatCost(v: number): string {
 }
 
 export default function CostBar({ accountId, refreshKey }: { accountId: string; refreshKey: number }) {
+  const { t } = useTranslation();
   const [data, setData] = useState<CostEstimate | null>(null);
   const [planPrice, setPlanPrice] = useState(0);
   const [unitPrice, setUnitPrice] = useState(0);
@@ -35,7 +37,7 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
     <div className="space-y-2.5">
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-medium text-[var(--color-text-secondary)]">
-          费用估算
+          {t('cost.costEstimate')}
         </span>
         <span className="text-[10px] font-bold tabular-nums text-[var(--color-text-tertiary)]">
           {formatCost(data.cost_30d)} / {formatCost(data.plan_price)}
@@ -47,9 +49,9 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
 
       <div className="grid grid-cols-3 gap-1.5">
         {[
-          { label: "今日", value: data.today_cost },
-          { label: "7 天", value: data.cost_7d },
-          { label: "30 天", value: data.cost_30d },
+          { label: t('usage.today'), value: data.today_cost },
+          { label: t('usage.last7d').replace(/\s+/g, ' '), value: data.cost_7d },
+          { label: t('usage.last30d').replace(/\s+/g, ' '), value: data.cost_30d },
         ].map((item) => (
           <div
             key={item.label}
@@ -75,14 +77,14 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
         </div>
         <div className="flex justify-between text-[8px] text-[var(--color-text-tertiary)]">
           <span>¥0</span>
-          <span>{formatCost(data.plan_price)}/月</span>
+          <span>{formatCost(data.plan_price)}{t('cost.perMonth')}</span>
         </div>
       </div>
 
       {/* 内联价格设置 */}
       <div className="grid grid-cols-2 gap-1.5">
         <div className="flex items-center justify-between px-2 py-1 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border-subtle)]">
-          <span className="text-[8px] text-[var(--color-text-tertiary)]">包月</span>
+          <span className="text-[8px] text-[var(--color-text-tertiary)]">{t('cost.monthly')}</span>
           <input
             type="number"
             value={planPrice || ""}
@@ -98,7 +100,7 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
           />
         </div>
         <div className="flex items-center justify-between px-2 py-1 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border-subtle)]">
-          <span className="text-[8px] text-[var(--color-text-tertiary)]">单价</span>
+          <span className="text-[8px] text-[var(--color-text-tertiary)]">{t('cost.unitPrice')}</span>
           <input
             type="number"
             step="0.1"

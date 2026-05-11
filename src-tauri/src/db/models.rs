@@ -25,8 +25,8 @@ pub struct UsageSnapshot {
     pub token_limit_reset: Option<i64>,
     pub mcp_limit_pct: Option<f64>,
     pub mcp_limit_reset: Option<i64>,
-    pub total_tokens_24h: Option<i64>,
-    pub total_calls_24h: Option<i32>,
+    pub total_tokens_24h: Option<f64>,
+    pub total_calls_24h: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

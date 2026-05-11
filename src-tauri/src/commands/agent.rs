@@ -85,20 +85,40 @@ fn write_openclaw_key(api_key: &str, model: &str) -> Result<(), String> {
     if config["auth"]["profiles"].is_null() {
         config["auth"] = serde_json::json!({ "profiles": {} });
     }
-    let profile = &mut config["auth"]["profiles"]["zai:default"];
-    if profile.is_null() {
-        *profile = serde_json::json!({ "provider": "zai", "mode": "api_key" });
+
+    // 尝试匹配已有的 profile key（支持 zai:default 和 zhipu:default）
+    let profiles = config["auth"]["profiles"].as_object_mut()
+        .ok_or("auth.profiles 格式异常")?;
+    let profile_key = profiles.keys()
+        .find(|k| k.starts_with("zai:") || k.starts_with("zhipu:"))
+        .cloned()
+        .unwrap_or_else(|| "zai:default".to_string());
+
+    let profile = profiles.get_mut(&profile_key).unwrap();
+    if profile["provider"].is_null() {
+        profile["provider"] = serde_json::Value::String("zai".into());
+    }
+    if profile["mode"].is_null() {
+        profile["mode"] = serde_json::Value::String("api_key".into());
     }
     profile["apiKey"] = serde_json::Value::String(api_key.into());
+    // 确保 baseUrl 指向智谱 Anthropic 兼容接口
+    profile["baseUrl"] = serde_json::Value::String("https://open.bigmodel.cn/api/anthropic".into());
 
     // 更新模型：只修改 model.primary，保留 fallbacks 和其他字段
     let model_obj = &mut config["agents"]["defaults"]["model"];
-    if model_obj.is_object() {
-        model_obj["primary"] = serde_json::Value::String(format!("zai/{}", model));
+    // 提取 provider 前缀（从 profile key 中获取）
+    let provider_prefix = if profile_key.starts_with("zhipu:") {
+        "zhipu"
     } else {
-        // 旧格式（纯字符串），升级为对象
+        "zai"
+    };
+    let model_full = format!("{}/{}", provider_prefix, model);
+    if model_obj.is_object() {
+        model_obj["primary"] = serde_json::Value::String(model_full);
+    } else {
         *model_obj = serde_json::json!({
-            "primary": format!("zai/{}", model),
+            "primary": model_full,
             "fallbacks": []
         });
     }

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import Toggle from "../lib/Toggle";
 
 interface AlertRule {
@@ -10,14 +11,15 @@ interface AlertRule {
 }
 
 const IDLE_PRESETS = [
-  { label: "30分", value: 30 },
-  { label: "1时", value: 60 },
-  { label: "2时", value: 120 },
-  { label: "4时", value: 240 },
-  { label: "8时", value: 480 },
+  { labelKey: "spinPane.presets.30min", value: 30 },
+  { labelKey: "spinPane.presets.1h", value: 60 },
+  { labelKey: "spinPane.presets.2h", value: 120 },
+  { labelKey: "spinPane.presets.4h", value: 240 },
+  { labelKey: "spinPane.presets.8h", value: 480 },
 ];
 
 export default function AlertsPane() {
+  const { t } = useTranslation();
   const [rules, setRules] = useState<AlertRule[]>([]);
 
   useEffect(() => {
@@ -40,10 +42,10 @@ export default function AlertsPane() {
   }
 
   function formatIdleMins(mins: number): string {
-    if (mins < 60) return `${mins} 分钟`;
+    if (mins < 60) return `${mins} ${t('alertsPane.minutes')}`;
     const h = Math.floor(mins / 60);
     const m = mins % 60;
-    return m > 0 ? `${h} 小时 ${m} 分钟` : `${h} 小时`;
+    return m > 0 ? `${h} ${t('alertsPane.hours')} ${m} ${t('alertsPane.minutes')}` : `${h} ${t('alertsPane.hours')}`;
   }
 
   function closestPreset(mins: number): number {
@@ -67,17 +69,17 @@ export default function AlertsPane() {
               <div>
                 <div className="text-xs font-medium text-[var(--color-text-primary)]">
                   {rule.rule_type === "token_5h"
-                    ? "5h 额度预警"
+                    ? t('alertsPane.token5h')
                     : rule.rule_type === "mcp_monthly"
-                      ? "月度 MCP 额度预警"
-                      : "空闲账号提醒"}
+                      ? t('alertsPane.mcpMonthly')
+                      : t('alertsPane.idleAccount')}
                 </div>
                 <div className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5">
                   {rule.rule_type === "token_5h"
-                    ? "5 小时窗口 Token 使用率告警"
+                    ? t('alertsPane.token5hDesc')
                     : rule.rule_type === "mcp_monthly"
-                      ? "月度 MCP 调用额度告警"
-                      : "账号长时间未使用时提醒"}
+                      ? t('alertsPane.mcpMonthlyDesc')
+                      : t('alertsPane.idleAccountDesc')}
                 </div>
               </div>
               <Toggle checked={rule.enabled} onChange={() => toggleRule(rule.rule_type)} />
@@ -87,11 +89,7 @@ export default function AlertsPane() {
               /* 空闲时间预设按钮 */
               <div className="space-y-2">
                 <div className="text-[10px] text-[var(--color-text-tertiary)]">
-                  空闲超过{" "}
-                  <span className="font-semibold text-[var(--color-accent)]">
-                    {formatIdleMins(rule.threshold)}
-                  </span>{" "}
-                  时通知
+                  {t('alertsPane.idleNotifyAfter', { time: formatIdleMins(rule.threshold) })}
                 </div>
                 <div className="flex gap-1.5">
                   {IDLE_PRESETS.map((p) => (
@@ -105,7 +103,7 @@ export default function AlertsPane() {
                           : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
                       } disabled:opacity-30`}
                     >
-                      {p.label}
+                      {t(p.labelKey)}
                     </button>
                   ))}
                 </div>
@@ -114,11 +112,7 @@ export default function AlertsPane() {
               /* 百分比滑块 */
               <div className="space-y-1.5">
                 <div className="text-[10px] text-[var(--color-text-tertiary)]">
-                  超过{" "}
-                  <span className="font-semibold text-[var(--color-accent)] tabular-nums">
-                    {rule.threshold}%
-                  </span>{" "}
-                  时通知
+                  {t('alertsPane.notifyAbove', { threshold: rule.threshold })}
                 </div>
                 <input
                   type="range"

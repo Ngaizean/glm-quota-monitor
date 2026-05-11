@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import Toggle from "../lib/Toggle";
 import type { Account } from "../types";
 
@@ -28,17 +29,18 @@ interface SpinNowResult {
 }
 
 const LEAD_PRESETS = [
-  { label: "30分", value: 30 },
-  { label: "1小时", value: 60 },
-  { label: "2小时", value: 120 },
-  { label: "3小时", value: 180 },
-  { label: "5小时", value: 300 },
+  { labelKey: "spinPane.presets.lead30min", value: 30 },
+  { labelKey: "spinPane.presets.lead1h", value: 60 },
+  { labelKey: "spinPane.presets.lead2h", value: 120 },
+  { labelKey: "spinPane.presets.lead3h", value: 180 },
+  { labelKey: "spinPane.presets.lead5h", value: 300 },
 ];
 
 const timeClass =
   "w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-[var(--color-accent)]/20 focus:border-[var(--color-accent)] transition-[var(--transition-fast)] font-mono";
 
 export default function SpinPane() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<SpinStatus | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [spinning, setSpinning] = useState(false);
@@ -132,7 +134,7 @@ export default function SpinPane() {
           </div>
         ) : (
           <div className="text-[11px] text-[var(--color-text-tertiary)] rounded-xl p-3 border border-[var(--color-border-subtle)] bg-[var(--color-bg-secondary)]">
-            加载中...
+            {t('common.loading')}
           </div>
         )}
       </div>
@@ -142,17 +144,17 @@ export default function SpinPane() {
   const { config, last_spin, next_spin } = status;
 
   // 状态摘要
-  let statusText = "未配置";
+  let statusText = t('spinPane.notConfigured');
   if (config.enabled && config.account_id) {
     if (next_spin) {
-      statusText = `下次空转：今日 ${next_spin}`;
+      statusText = t('spinPane.nextSpin', { time: next_spin });
     } else if (config.mode === "peak") {
-      statusText = "今日高峰时段已全部完成";
+      statusText = t('spinPane.allPeakDone');
     } else {
-      statusText = "今日已空转";
+      statusText = t('spinPane.todaySpun');
     }
   } else if (!config.account_id) {
-    statusText = "未选择账号";
+    statusText = t('spinPane.noAccount');
   }
 
   return (
@@ -174,7 +176,7 @@ export default function SpinPane() {
         <div className="flex items-center justify-between">
           <div>
             <span className="text-xs font-medium text-[var(--color-text-primary)] block">
-              自动空转
+              {t('spinPane.autoSpin')}
             </span>
             <span className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5 block">
               {statusText}
@@ -199,7 +201,7 @@ export default function SpinPane() {
                 : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
             }`}
           >
-            高峰时段
+            {t('spinPane.peakMode')}
           </button>
           <button
             onClick={() => updateConfig({ mode: "fixed" })}
@@ -209,7 +211,7 @@ export default function SpinPane() {
                 : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
             }`}
           >
-            固定时间
+            {t('spinPane.fixedMode')}
           </button>
         </div>
 
@@ -218,7 +220,7 @@ export default function SpinPane() {
             {/* 提前时间预设 */}
             <div>
               <span className="text-[10px] text-[var(--color-text-tertiary)] mb-1.5 block">
-                提前空转时间
+                {t('spinPane.leadTime')}
               </span>
               <div className="flex gap-1.5">
                 {LEAD_PRESETS.map((preset) => (
@@ -231,7 +233,7 @@ export default function SpinPane() {
                         : "bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-tertiary)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                     }`}
                   >
-                    {preset.label}
+                    {t(preset.labelKey)}
                   </button>
                 ))}
               </div>
@@ -241,13 +243,13 @@ export default function SpinPane() {
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[10px] text-[var(--color-text-tertiary)]">
-                  高峰时段
+                  {t('spinPane.peakPeriods')}
                 </span>
                 <button
                   onClick={addPeakPeriod}
                   className="text-[10px] font-medium text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-[var(--transition-fast)]"
                 >
-                  + 添加
+                  {t('spinPane.add')}
                 </button>
               </div>
               <div className="space-y-1.5">
@@ -280,7 +282,7 @@ export default function SpinPane() {
         ) : (
           <div>
             <span className="text-[10px] text-[var(--color-text-tertiary)] mb-1.5 block">
-              每天空转时间
+              {t('spinPane.dailySpinTime')}
             </span>
             <input
               type="time"

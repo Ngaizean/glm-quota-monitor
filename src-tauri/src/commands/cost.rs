@@ -2,6 +2,7 @@ use crate::api::client::ZhipuClient;
 use crate::crypto;
 use crate::db::Database;
 use crate::pricing::{plan_price_for_level, DEFAULT_UNIT_PRICE};
+use chrono::Timelike;
 use serde::Serialize;
 use tauri::State;
 
@@ -69,8 +70,10 @@ pub async fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> R
 
     let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
     let now = chrono::Local::now();
-    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap()
-        .and_local_timezone(chrono::Local).unwrap();
+    let today_start = now
+        .with_hour(0).unwrap()
+        .with_minute(0).unwrap()
+        .with_second(0).unwrap();
     let seven_days_ago = now - chrono::Duration::days(7);
     let thirty_days_ago = now - chrono::Duration::days(30);
 

@@ -49,3 +49,27 @@ pub fn update_alert_rule(
     }
     Ok(())
 }
+
+#[tauri::command]
+pub fn set_webhook_url(db: State<'_, Database>, url: String) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('webhook_url', ?1)",
+        rusqlite::params![url],
+    )
+    .map_err(|e| format!("保存 Webhook URL 失败: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_webhook_url(db: State<'_, Database>) -> Result<Option<String>, String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+    let url = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'webhook_url'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok();
+    Ok(url)
+}
