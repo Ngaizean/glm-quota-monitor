@@ -129,8 +129,8 @@ fn resolve_api_key_for_refresh(db: &Database, account_id: &str, db_key: &str) ->
 
 /// 获取单个账号的配额数据
 fn fetch_account_quota(
-    db: &Database,
-    account_id: &str,
+    _db: &Database,
+    _account_id: &str,
     api_key: &str,
 ) -> Result<(QuotaData, i32), crate::api::client::ApiError> {
     let client = ZhipuClient::with_client(&HTTP_CLIENT, api_key);

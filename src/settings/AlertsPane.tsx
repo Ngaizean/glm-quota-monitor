@@ -89,7 +89,7 @@ export default function AlertsPane() {
               /* 空闲时间预设按钮 */
               <div className="space-y-2">
                 <div className="text-[10px] text-[var(--color-text-tertiary)]">
-                  {t('alertsPane.idleNotifyAfter', { time: <span className="font-semibold text-[var(--color-accent)]">{formatIdleMins(rule.threshold)}</span> })}
+                  {t('alertsPane.idleNotifyAfter', { time: formatIdleMins(rule.threshold) })}
                 </div>
                 <div className="flex gap-1.5">
                   {IDLE_PRESETS.map((p) => (

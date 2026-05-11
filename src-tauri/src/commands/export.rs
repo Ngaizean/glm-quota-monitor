@@ -1,6 +1,19 @@
 use crate::db::Database;
 use tauri::State;
 
+/// 转义 CSV 字段：含逗号/引号/换行时用双引号包裹，内部引号双写
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn fmt_opt<T: std::fmt::Display>(v: Option<T>) -> String {
+    v.map(|v| v.to_string()).unwrap_or_default()
+}
+
 #[tauri::command]
 pub fn export_usage_csv(
     db: State<'_, Database>,
@@ -30,7 +43,7 @@ pub fn export_usage_csv(
             let m_pct: Option<f64> = row.get(5)?;
             let m_reset: Option<i64> = row.get(6)?;
             let tokens: Option<f64> = row.get(7)?;
-            let calls: Option<i32> = row.get(8)?;
+            let calls: Option<f64> = row.get(8)?;
             Ok((ts, t_pct, t_reset, k_pct, k_reset, m_pct, m_reset, tokens, calls))
         })
         .map_err(|e| e.to_string())?;
@@ -38,15 +51,15 @@ pub fn export_usage_csv(
     for row in rows.filter_map(|r| r.ok()) {
         csv.push_str(&format!(
             "{},{},{},{},{},{},{},{},{}\n",
-            row.0,
-            row.1.map(|v| v.to_string()).unwrap_or_default(),
-            row.2.map(|v| v.to_string()).unwrap_or_default(),
-            row.3.map(|v| v.to_string()).unwrap_or_default(),
-            row.4.map(|v| v.to_string()).unwrap_or_default(),
-            row.5.map(|v| v.to_string()).unwrap_or_default(),
-            row.6.map(|v| v.to_string()).unwrap_or_default(),
-            row.7.map(|v| v.to_string()).unwrap_or_default(),
-            row.8.map(|v| v.to_string()).unwrap_or_default(),
+            csv_escape(&row.0),
+            fmt_opt(row.1),
+            fmt_opt(row.2),
+            fmt_opt(row.3),
+            fmt_opt(row.4),
+            fmt_opt(row.5),
+            fmt_opt(row.6),
+            fmt_opt(row.7),
+            fmt_opt(row.8),
         ));
     }
 
@@ -80,7 +93,7 @@ pub fn export_usage_json(
             let m_pct: Option<f64> = row.get(5)?;
             let m_reset: Option<i64> = row.get(6)?;
             let tokens: Option<f64> = row.get(7)?;
-            let calls: Option<i32> = row.get(8)?;
+            let calls: Option<f64> = row.get(8)?;
             Ok(serde_json::json!({
                 "timestamp": ts,
                 "time_limit_pct": t_pct,

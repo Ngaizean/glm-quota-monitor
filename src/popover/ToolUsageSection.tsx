@@ -1,15 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-
-interface ToolUsageItem {
-  tool: string;
-  count: number;
-}
-
-interface ToolUsageData {
-  toolUsage: ToolUsageItem[];
-}
+import type { ToolUsageData, ToolUsageItem } from "../types";
 
 function formatToolName(tool: string): string {
   const names: Record<string, string> = {

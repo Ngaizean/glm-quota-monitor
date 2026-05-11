@@ -10,13 +10,13 @@ pub async fn get_tool_usage(
     account_id: String,
 ) -> Result<ToolUsageData, String> {
     let db_key = {
-        let conn = db.conn.lock().map_err(|e| format!("DB locked: {}", e))?;
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         conn.query_row(
             "SELECT api_key FROM accounts WHERE id = ?1",
             rusqlite::params![account_id],
             |row| row.get::<_, String>(0),
         )
-        .map_err(|e| format!("Account not found: {}", e))?
+        .map_err(|e| format!("账号不存在: {}", e))?
     };
 
     let api_key = crypto::resolve_api_key(&account_id, &db_key, &|| {
@@ -27,7 +27,7 @@ pub async fn get_tool_usage(
             );
         }
     })
-    .ok_or("API key not found".to_string())?;
+    .ok_or("API Key 未找到".to_string())?;
 
     let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
     let now = chrono::Local::now();
