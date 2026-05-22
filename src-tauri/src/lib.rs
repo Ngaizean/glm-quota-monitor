@@ -8,6 +8,7 @@ mod pricing;
 
 use api::client::ZhipuClient;
 use api::types::QuotaData;
+use chrono::Timelike;
 use db::Database;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -127,12 +128,12 @@ fn resolve_api_key_for_refresh(db: &Database, account_id: &str, db_key: &str) ->
     })
 }
 
-/// 获取单个账号的配额数据
+/// 获取单个账号的配额数据 + 今日 token 用量
 fn fetch_account_quota(
     _db: &Database,
     _account_id: &str,
     api_key: &str,
-) -> Result<(QuotaData, i32), crate::api::client::ApiError> {
+) -> Result<(QuotaData, i32, f64), crate::api::client::ApiError> {
     let client = ZhipuClient::with_client(&HTTP_CLIENT, api_key);
     let quota = tauri::async_runtime::block_on(client.get_quota_limit())?;
     let pct = quota
@@ -141,7 +142,22 @@ fn fetch_account_quota(
         .find(|l| l.limit_type == "TOKENS_LIMIT")
         .map(|l| l.percentage as i32)
         .unwrap_or(0);
-    Ok((quota, pct))
+
+    // 获取今日 token 用量（用于趋势图）
+    let now = chrono::Local::now();
+    let today_start = now
+        .with_hour(0).unwrap()
+        .with_minute(0).unwrap()
+        .with_second(0).unwrap();
+    let fmt = |dt: chrono::DateTime<chrono::Local>| dt.format("%Y-%m-%d %H:%M:%S").to_string();
+    let today_tokens = match tauri::async_runtime::block_on(
+        client.get_model_usage(&fmt(today_start), &fmt(now))
+    ) {
+        Ok(data) => data.total_usage.total_tokens_usage,
+        Err(_) => 0.0,
+    };
+
+    Ok((quota, pct, today_tokens))
 }
 
 /// 网络异常时从本地缓存构造离线 QuotaData
@@ -306,7 +322,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
         };
 
         match fetch_account_quota(&db, account_id, &api_key) {
-            Ok((mut quota, pct)) => {
+            Ok((mut quota, pct, today_tokens)) => {
                 if pct > max_pct {
                     max_pct = pct;
                 }
@@ -315,7 +331,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                 }
 
                 if let Ok(conn2) = db.conn.lock() {
-                    let _ = db::record_quota_snapshot(&conn2, account_id, &quota);
+                    let _ = db::record_quota_snapshot(&conn2, account_id, &quota, today_tokens);
                     detect_account_activity(&conn2, account_id, &quota);
 
                     // 读取持久化的 last_active

@@ -27,7 +27,7 @@ pub fn get_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaDat
         .map_err(|e| e.to_string())?;
 
     let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-    db::record_quota_snapshot(&conn, &account_id, &quota)
+    db::record_quota_snapshot(&conn, &account_id, &quota, 0.0)
         .map_err(|e| e.to_string())?;
 
     Ok(quota)

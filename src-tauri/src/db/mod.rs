@@ -39,17 +39,16 @@ impl Database {
 }
 
 /// 记录额度快照 + 更新账号等级（共享逻辑，避免重复代码）
+/// today_tokens: 从 get_model_usage 获取的今日 token 用量，用于趋势图
 pub fn record_quota_snapshot(
     conn: &Connection,
     account_id: &str,
     quota: &QuotaData,
+    today_tokens: f64,
 ) -> SqlResult<()> {
     let now = chrono::Local::now().to_rfc3339();
     let time_limit = quota.limits.iter().find(|l| l.limit_type == "TIME_LIMIT");
     let token_limit = quota.limits.iter().find(|l| l.limit_type == "TOKENS_LIMIT");
-
-    // Token 已用量（万为单位）
-    let token_usage = token_limit.and_then(|l| l.usage).unwrap_or(0.0);
 
     conn.execute(
         "INSERT INTO usage_snapshots (account_id, timestamp, time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset, total_tokens_24h)
@@ -61,7 +60,7 @@ pub fn record_quota_snapshot(
             time_limit.map(|l| l.next_reset_time),
             token_limit.map(|l| l.percentage as f64),
             token_limit.map(|l| l.next_reset_time),
-            token_usage,
+            today_tokens,
         ],
     )?;
 
