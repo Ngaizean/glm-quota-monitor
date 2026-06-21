@@ -22,9 +22,14 @@
   "quota": {
     "tokenTitle": "Token Quota",
     "mcpTitle": "MCP Call Quota",
+    "token5hTitle": "5-Hour Window",
+    "weeklyTitle": "Weekly Quota",
+    "mcpMonthlyTitle": "MCP Monthly",
     "resetSoon": "Resetting soon",
     "resetDays": "{{count}}d",
-    "resetHours": "{{hours}}h{{minutes}}m"
+    "resetHours": "{{hours}}h{{minutes}}m",
+    "used": "Used {{used}} / {{total}}",
+    "usedShort": "{{used}} / {{total}}"
   },
   "usage": {
     "today": "Today",
@@ -41,21 +46,27 @@
     "costEstimate": "Cost Estimate",
     "perMonth": "/mo",
     "monthly": "Plan",
-    "unitPrice": "Unit"
+    "unitPrice": "Unit",
+    "currency": "$",
+    "ratio": "Cost/Plan"
   },
   "toolUsage": {
     "title": "MCP Tool Usage",
     "calls": "{{count}} calls",
     "noData": "No tool usage data",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "tools": {
+      "web_search": "🔍 Web Search",
+      "web_reader": "🌐 Web Reader",
+      "zread": "📖 ZRead",
+      "code_exec": "⚙️ Code Exec"
+    }
   },
     "export": {
     "exportCsv": "Export CSV",
     "exportJson": "Export JSON",
     "title": "Data Export",
-    "desc": "Export usage data",
-    "exportLabel": "Export",
-    "exportDesc": "Export usage data"
+    "desc": "Export usage data"
   },
   "settings": {
     "accounts": "Account Management",
@@ -76,6 +87,8 @@
     "theme": "Theme & Appearance",
     "themeLabel": "Theme",
     "themeDesc": "Colors & appearance",
+    "exportLabel": "Export",
+    "exportDesc": "Export usage data",
     "back": "Back"
   },
   "accountsPane": {
@@ -182,11 +195,23 @@
     "ocean": "Ocean Blue",
     "forest": "Forest Green",
     "sunset": "Sunset Orange",
-    "preview": "Preview"
+    "preview": "Preview",
+    "previewPrimary": "Primary",
+    "previewAccentText": "Accent Text",
+    "mode": "Appearance Mode",
+    "modeSystem": "System",
+    "modeLight": "Light",
+    "modeDark": "Dark"
   },
   "trendChart": {
     "title": "Token Trend",
-    "tokenUsage": "Token Usage"
+    "tokenUsage": "Token Usage",
+    "timeUsage": "Time Usage",
+    "tokenLabel": "Token",
+    "timeLabel": "Time"
+  },
+  "weekdays": {
+    "short": ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
   },
   "common": {
     "save": "Save",

@@ -7,10 +7,22 @@ export interface Account {
   is_primary: boolean;
 }
 
+export type QuotaLimitType = "TIME_LIMIT" | "TOKENS_LIMIT" | "MCP_MONTHLY" | (string & {});
+
 export interface QuotaLimit {
-  type: string;
+  type: QuotaLimitType;
   percentage: number;
   nextResetTime: number;
+  /** 已用量（绝对值） */
+  usage?: number;
+  /** 总量（绝对值） */
+  number?: number;
+  /** 剩余量 */
+  remaining?: number;
+  /** 单位（如次数/token） */
+  unit?: number;
+  /** 当前值（部分额度返回） */
+  currentValue?: number;
 }
 
 export interface QuotaData {

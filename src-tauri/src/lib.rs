@@ -143,21 +143,28 @@ fn fetch_account_quota(
         .map(|l| l.percentage as i32)
         .unwrap_or(0);
 
-    // 获取今日 token 用量（用于趋势图）
-    let now = chrono::Local::now();
-    let today_start = now
-        .with_hour(0).unwrap()
-        .with_minute(0).unwrap()
-        .with_second(0).unwrap();
-    let fmt = |dt: chrono::DateTime<chrono::Local>| dt.format("%Y-%m-%d %H:%M:%S").to_string();
-    let today_tokens = match tauri::async_runtime::block_on(
-        client.get_model_usage(&fmt(today_start), &fmt(now))
-    ) {
-        Ok(data) => data.total_usage.total_tokens_usage,
-        Err(_) => 0.0,
-    };
+    // 获取今日 token 用量（用于趋势图）— 复用共享函数，避免手动刷新清零
+    let today_tokens = fetch_today_tokens(&client);
 
     Ok((quota, pct, today_tokens))
+}
+
+/// 获取今日（本地 00:00 至现在）的 token 总用量。
+/// API 失败时返回 0.0 而非报错，避免阻塞快照写入。
+/// 提取为 pub 以便 quota.rs 的手动刷新路径复用，修复趋势图清零 bug。
+pub fn fetch_today_tokens(client: &ZhipuClient) -> f64 {
+    let now = chrono::Local::now();
+    // with_hour(0) 在夏令时前跳的 00:00 极少数情况返回 None，安全回退到 now
+    let today_start = now
+        .with_hour(0)
+        .and_then(|dt| dt.with_minute(0))
+        .and_then(|dt| dt.with_second(0))
+        .unwrap_or(now);
+    let fmt = |dt: chrono::DateTime<chrono::Local>| dt.format("%Y-%m-%d %H:%M:%S").to_string();
+    match tauri::async_runtime::block_on(client.get_model_usage(&fmt(today_start), &fmt(now))) {
+        Ok(data) => data.total_usage.total_tokens_usage,
+        Err(_) => 0.0,
+    }
 }
 
 /// 网络异常时从本地缓存构造离线 QuotaData

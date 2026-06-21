@@ -39,13 +39,16 @@ interface CustomTooltipProps {
 }
 
 function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
+  const { t } = useTranslation();
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 shadow-md text-[10px]">
       <div className="text-[var(--color-text-tertiary)] mb-1">{label}</div>
       {payload.map((entry, i) => (
         <div key={i} className="text-[var(--color-text-primary)] font-medium">
-          {entry.dataKey === "token_pct" ? `Token: ${entry.value.toFixed(1)}%` : `Time: ${entry.value.toFixed(1)}%`}
+          {entry.dataKey === "token_pct"
+            ? `${t("trendChart.tokenLabel")}: ${entry.value.toFixed(1)}%`
+            : `${t("trendChart.timeLabel")}: ${entry.value.toFixed(1)}%`}
         </div>
       ))}
     </div>
@@ -116,11 +119,11 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
             <Line
               type="monotone"
               dataKey="time_pct"
-              stroke="#E8915A"
+              stroke="var(--color-chart-secondary)"
               strokeWidth={1}
               dot={false}
               strokeDasharray="4 2"
-              activeDot={{ r: 2, fill: "#E8915A" }}
+              activeDot={{ r: 2, fill: "var(--color-chart-secondary)" }}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -128,11 +131,11 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
       <div className="flex items-center gap-3 mt-1">
         <div className="flex items-center gap-1">
           <div className="w-2.5 h-0.5 rounded bg-[var(--color-accent)]" />
-          <span className="text-[8px] text-[var(--color-text-tertiary)]">{t("trendChart.tokenUsage")}</span>
+          <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.tokenUsage")}</span>
         </div>
         <div className="flex items-center gap-1">
-          <div className="w-2.5 h-0.5 rounded opacity-60" style={{ backgroundColor: "#E8915A", borderStyle: "dashed" }} />
-          <span className="text-[8px] text-[var(--color-text-tertiary)]">Time</span>
+          <div className="w-2.5 h-0.5 rounded opacity-60" style={{ backgroundColor: "var(--color-chart-secondary)", borderStyle: "dashed" }} />
+          <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.timeUsage")}</span>
         </div>
       </div>
     </div>

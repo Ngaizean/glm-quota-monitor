@@ -55,10 +55,13 @@ fn write_claude_code_key(api_key: &str, model: &str) -> Result<(), String> {
     };
 
     // 合并 GLM 配置到现有 env，保留用户其他环境变量
-    if settings["env"].is_null() {
+    // 若 env 字段缺失或非对象（用户手动改坏），重建为空对象，避免 unwrap panic
+    if !settings["env"].is_object() {
         settings["env"] = serde_json::json!({});
     }
-    let env = settings["env"].as_object_mut().unwrap();
+    let env = settings["env"]
+        .as_object_mut()
+        .ok_or("settings.json 的 env 字段格式异常，无法写入")?;
     env.insert("ANTHROPIC_BASE_URL".into(), serde_json::Value::String("https://open.bigmodel.cn/api/anthropic".into()));
     env.insert("ANTHROPIC_AUTH_TOKEN".into(), serde_json::Value::String(api_key.into()));
     env.insert("ANTHROPIC_MODEL".into(), serde_json::Value::String(model.into()));
@@ -69,61 +72,109 @@ fn write_claude_code_key(api_key: &str, model: &str) -> Result<(), String> {
     write_json(&path, &settings)
 }
 
+const ANTHROPIC_BASE_URL: &str = "https://open.bigmodel.cn/api/anthropic";
+
+/// 查找 openclaw CLI 路径 — 覆盖 Homebrew / Cargo / npm / 用户本地 / Windows
+fn find_openclaw_cli() -> Result<String, String> {
+    // 已知常见安装路径
+    let mut candidates: Vec<String> = vec![
+        "/opt/homebrew/bin/openclaw".into(),
+        "/usr/local/bin/openclaw".into(),
+    ];
+    // 用户本地路径
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".local/bin/openclaw").to_string_lossy().into_owned());
+        candidates.push(home.join(".cargo/bin/openclaw").to_string_lossy().into_owned());
+        candidates.push(home.join(".npm-global/bin/openclaw").to_string_lossy().into_owned());
+    }
+    for path in &candidates {
+        if Path::new(path).exists() {
+            return Ok(path.clone());
+        }
+    }
+    // PATH 查找（跨平台：Unix 用 which，Windows 用 where）
+    let lookup = if cfg!(windows) { "where" } else { "which" };
+    if let Ok(output) = std::process::Command::new(lookup).arg("openclaw").output() {
+        if output.status.success() {
+            let p = String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or("").trim().to_string();
+            if !p.is_empty() && Path::new(&p).exists() {
+                return Ok(p);
+            }
+        }
+    }
+    Err("未找到 openclaw CLI，请确保已安装 OpenClaw".to_string())
+}
+
+/// 决定 OpenClaw 的 provider 标识。
+/// 本工具专用于绑定智谱 GLM，故优先 zhipu；若配置中仅有 zai 则用 zai。
+/// 不再依赖"已存在 zhipu profile"（那是循环依赖——绑定动作正是要创建它）。
+fn resolve_oc_provider(config: &serde_json::Value) -> String {
+    let has_zhipu = config["auth"]["profiles"]
+        .as_object()
+        .map(|p| p.keys().any(|k| k.starts_with("zhipu:")))
+        .unwrap_or(false);
+    if has_zhipu { "zhipu" } else { "zai" }.to_string()
+}
+
+fn oc_config_set(cli: &str, path: &str, value: &str) -> Result<(), String> {
+    let output = std::process::Command::new(cli)
+        .args(["config", "set", path, value])
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("执行 openclaw config set 失败: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("openclaw config set {} 失败: {}", path, stderr));
+    }
+    Ok(())
+}
+
+/// 备份 openclaw.json 内容，用于多次 config set 失败时回滚，保证原子性。
+fn backup_config(path: &std::path::Path) -> Option<Vec<u8>> {
+    std::fs::read(path).ok()
+}
+
+/// 执行多次 oc_config_set，任一失败则回滚到备份。保证原子性。
+fn oc_config_set_all(
+    cli: &str,
+    config_path: &std::path::Path,
+    ops: &[(&str, &str)],
+) -> Result<(), String> {
+    let backup = backup_config(config_path);
+    for (path, value) in ops {
+        if let Err(e) = oc_config_set(cli, path, value) {
+            if let Some(data) = &backup {
+                let _ = std::fs::write(config_path, data);
+            }
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
 fn write_openclaw_key(api_key: &str, model: &str) -> Result<(), String> {
+    let cli = find_openclaw_cli()?;
     let oc_dir = dirs::home_dir()
         .ok_or("无法获取 home 目录")?
         .join(".openclaw");
-    let path = oc_dir.join("openclaw.json");
-
-    if !path.exists() {
+    let config_path = oc_dir.join("openclaw.json");
+    if !config_path.exists() {
         return Err("OpenClaw 配置文件不存在，请先安装并初始化 OpenClaw".to_string());
     }
+    let config = read_json(&config_path)?;
+    let provider = resolve_oc_provider(&config);
+    let model_full = format!("{}/{}", provider, model);
 
-    let mut config = read_json(&path)?;
+    // 三次 config set：apiKey、baseUrl（恢复此前删除的写入）、默认模型
+    let api_key_path = format!("models.providers.{}.apiKey", provider);
+    let base_url_path = format!("models.providers.{}.baseUrl", provider);
+    oc_config_set_all(&cli, &config_path, &[
+        (&api_key_path, api_key),
+        (&base_url_path, ANTHROPIC_BASE_URL),
+        ("agents.defaults.model.primary", &model_full),
+    ])?;
 
-    // 写入 API Key：保留已有的 provider/mode 字段，只更新 apiKey
-    if config["auth"]["profiles"].is_null() {
-        config["auth"] = serde_json::json!({ "profiles": {} });
-    }
-
-    // 尝试匹配已有的 profile key（支持 zai:default 和 zhipu:default）
-    let profiles = config["auth"]["profiles"].as_object_mut()
-        .ok_or("auth.profiles 格式异常")?;
-    let profile_key = profiles.keys()
-        .find(|k| k.starts_with("zai:") || k.starts_with("zhipu:"))
-        .cloned()
-        .unwrap_or_else(|| "zai:default".to_string());
-
-    let profile = profiles.get_mut(&profile_key).unwrap();
-    if profile["provider"].is_null() {
-        profile["provider"] = serde_json::Value::String("zai".into());
-    }
-    if profile["mode"].is_null() {
-        profile["mode"] = serde_json::Value::String("api_key".into());
-    }
-    profile["apiKey"] = serde_json::Value::String(api_key.into());
-    // 确保 baseUrl 指向智谱 Anthropic 兼容接口
-    profile["baseUrl"] = serde_json::Value::String("https://open.bigmodel.cn/api/anthropic".into());
-
-    // 更新模型：只修改 model.primary，保留 fallbacks 和其他字段
-    let model_obj = &mut config["agents"]["defaults"]["model"];
-    // 提取 provider 前缀（从 profile key 中获取）
-    let provider_prefix = if profile_key.starts_with("zhipu:") {
-        "zhipu"
-    } else {
-        "zai"
-    };
-    let model_full = format!("{}/{}", provider_prefix, model);
-    if model_obj.is_object() {
-        model_obj["primary"] = serde_json::Value::String(model_full);
-    } else {
-        *model_obj = serde_json::json!({
-            "primary": model_full,
-            "fallbacks": []
-        });
-    }
-
-    write_json(&path, &config)
+    Ok(())
 }
 
 #[tauri::command]

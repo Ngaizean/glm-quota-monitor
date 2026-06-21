@@ -1,6 +1,6 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { getAvatarGradient, getLevelStyle } from "../lib/ui";
+import { getAvatarGradient, getLevelStyle, getStatusLevel, statusColorVar } from "../lib/ui";
 import CostBar from "./CostBar";
 import QuotaSection from "./QuotaSection";
 import UsageSummary from "./UsageSummary";
@@ -8,7 +8,11 @@ import ToolUsageSection from "./ToolUsageSection";
 import TrendChart from "./TrendChart";
 import type { Account, QuotaData } from "../types";
 
-function formatLastActive(iso: string | null | undefined, t: (key: string, options?: Record<string, unknown>) => string): string | null {
+function formatLastActive(
+  iso: string | null | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string,
+  lng: string
+): string | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (isNaN(date.getTime())) return null;
@@ -21,7 +25,9 @@ function formatLastActive(iso: string | null | undefined, t: (key: string, optio
   if (hours < 24) return t('account.hoursAgo', { count: hours });
   const days = Math.floor(hours / 24);
   if (days < 7) return t('account.daysAgo', { count: days });
-  return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  // 按当前语言本地化日期
+  const locale = lng.startsWith("en") ? "en-US" : "zh-CN";
+  return date.toLocaleDateString(locale, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 interface Props {
@@ -42,10 +48,9 @@ function getTokenPct(quota: QuotaData | undefined): number | null {
 
 function PctBadge({ pct }: { pct: number | null }) {
   if (pct === null) return null;
-  const color =
-    pct > 85 ? "text-red-500" : pct > 60 ? "text-amber-500" : "text-emerald-500";
+  const color = statusColorVar(getStatusLevel(pct));
   return (
-    <span className={`text-[12px] font-bold tabular-nums ${color}`}>
+    <span className="text-[12px] font-bold tabular-nums" style={{ color }}>
       {Math.round(pct)}%
     </span>
   );
@@ -75,12 +80,28 @@ function StarButton({ isPrimary, onClick }: { isPrimary: boolean; onClick: () =>
 
 function Expandable({ open, children }: { open: boolean; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
-  const height = ref.current?.scrollHeight ?? 800;
+  const [maxHeight, setMaxHeight] = useState(open ? "none" : "0px");
+
+  // 用 ResizeObserver 测量内容真实高度，替代 render 时读 scrollHeight 的脆弱方案
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      if (open) {
+        setMaxHeight(`${el.scrollHeight}px`);
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open]);
+
   return (
     <div
       ref={ref}
-      className="transition-all duration-200 ease-in-out overflow-hidden"
-      style={{ maxHeight: open ? `${height}px` : "0px", opacity: open ? 1 : 0 }}
+      className="transition-all duration-300 ease-in-out overflow-hidden"
+      style={{ maxHeight: open ? maxHeight : "0px", opacity: open ? 1 : 0 }}
     >
       {children}
     </div>
@@ -116,7 +137,7 @@ function ChevronIcon({ open }: { open: boolean }) {
 }
 
 export default function AccountList({ accounts, expandedIds, onToggle, onSetPrimary, quotas, loading, refreshKey }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   return (
     <div className="p-2 space-y-1.5">
       {accounts.map((acc) => {
@@ -150,7 +171,7 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                 </span>
                 {quota?.level && (
                   <span
-                    className={`text-[8px] font-bold px-1 py-0.5 rounded uppercase tracking-wider shrink-0 ${getLevelStyle(
+                    className={`text-[9px] font-bold px-1 py-0.5 rounded uppercase tracking-wider shrink-0 ${getLevelStyle(
                       quota.level
                     )}`}
                   >
@@ -171,7 +192,7 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                 <span className="text-[10px] text-[var(--color-text-tertiary)]">
                   {acc.purpose}
                 </span>
-                <LastActiveLabel lastActive={formatLastActive(quota?.last_active, t)} />
+                <LastActiveLabel lastActive={formatLastActive(quota?.last_active, t, i18n.language)} />
               </div>
               {quota?.error && (
                 <div className="mx-3 mb-1.5 text-[10px] text-[var(--color-danger)] flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/20">

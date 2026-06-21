@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TokenUsageSummary, TokenUsagePeriod, TokenHistoryPoint } from "../types";
+import { getStatusLevel, statusColorVar } from "../lib/ui";
 
 function formatTokens(n: number, t: (key: string) => string): string {
   if (n >= 1e8) return `${(n / 1e8).toFixed(1)}${t('usage.hundredMillion')}`;
@@ -11,9 +12,7 @@ function formatTokens(n: number, t: (key: string) => string): string {
 }
 
 function getStatusColor(pct: number): string {
-  if (pct > 85) return "var(--color-danger)";
-  if (pct > 60) return "var(--color-warning)";
-  return "var(--color-success)";
+  return statusColorVar(getStatusLevel(pct));
 }
 
 /** 环形进度条 SVG */
@@ -115,7 +114,7 @@ function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
   if (days.length < 2) return null;
 
   const maxVal = Math.max(...days.map(([, v]) => v), 1);
-  const dayLabels = ["日", "一", "二", "三", "四", "五", "六"];
+  const dayLabels = t("weekdays.short", { returnObjects: true }) as string[];
 
   return (
     <div>
@@ -141,7 +140,7 @@ function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
                     title={`${formatTokens(val, t)} ${t('usage.token')}`}
                   />
                 </div>
-                <span className="text-[7px] text-[var(--color-text-tertiary)] tabular-nums">
+                <span className="text-[9px] text-[var(--color-text-tertiary)] tabular-nums">
                   {dayLabels[d.getDay()]}
                 </span>
               </div>

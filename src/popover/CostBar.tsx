@@ -3,10 +3,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { CostEstimate } from "../types";
 
-function formatCost(v: number): string {
-  if (v < 0.01) return "¥0";
-  if (v < 100) return `¥${v.toFixed(1)}`;
-  return `¥${v.toFixed(0)}`;
+function formatCost(currency: string, value: number): string {
+  if (value < 0.01) return `${currency}0`;
+  if (value < 100) return `${currency}${value.toFixed(1)}`;
+  return `${currency}${value.toFixed(0)}`;
 }
 
 export default function CostBar({ accountId, refreshKey }: { accountId: string; refreshKey: number }) {
@@ -30,6 +30,8 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
 
   if (!data) return null;
 
+  const currency = t("cost.currency");
+  const fmt = (v: number) => formatCost(currency, v);
   const pct = data.plan_price > 0 ? Math.min((data.cost_30d / data.plan_price) * 100, 100) : 0;
   const overBudget = data.ratio > 1.0;
 
@@ -40,8 +42,11 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
           {t('cost.costEstimate')}
         </span>
         <span className="text-[10px] font-bold tabular-nums text-[var(--color-text-tertiary)]">
-          {formatCost(data.cost_30d)} / {formatCost(data.plan_price)}
-          <span className={`ml-1 ${overBudget ? "text-[var(--color-danger)]" : "text-emerald-500"}`}>
+          {fmt(data.cost_30d)} / {fmt(data.plan_price)}
+          <span
+            className="ml-1"
+            style={{ color: overBudget ? "var(--color-danger)" : "var(--color-success)" }}
+          >
             {data.ratio > 0 ? `${(data.ratio * 100).toFixed(0)}%` : ""}
           </span>
         </span>
@@ -50,8 +55,8 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
       <div className="grid grid-cols-3 gap-1.5">
         {[
           { label: t('usage.today'), value: data.today_cost },
-          { label: t('usage.last7d').replace(/\s+/g, ' '), value: data.cost_7d },
-          { label: t('usage.last30d').replace(/\s+/g, ' '), value: data.cost_30d },
+          { label: t('usage.last7d'), value: data.cost_7d },
+          { label: t('usage.last30d'), value: data.cost_30d },
         ].map((item) => (
           <div
             key={item.label}
@@ -59,7 +64,7 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
           >
             <div className="text-[9px] text-[var(--color-text-tertiary)]">{item.label}</div>
             <div className="text-[11px] font-bold tabular-nums text-[var(--color-text-primary)]">
-              {formatCost(item.value)}
+              {fmt(item.value)}
             </div>
           </div>
         ))}
@@ -69,22 +74,23 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
       <div className="space-y-1">
         <div className="relative h-1.5 rounded-full bg-[var(--color-bg-primary)] overflow-hidden">
           <div
-            className={`absolute inset-y-0 left-0 rounded-full transition-all duration-500 ${
-              overBudget ? "bg-[var(--color-danger)]" : "bg-emerald-500"
-            }`}
-            style={{ width: `${pct}%` }}
+            className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
+            style={{
+              width: `${pct}%`,
+              background: overBudget ? "var(--color-danger)" : "var(--color-success)",
+            }}
           />
         </div>
-        <div className="flex justify-between text-[8px] text-[var(--color-text-tertiary)]">
-          <span>¥0</span>
-          <span>{formatCost(data.plan_price)}{t('cost.perMonth')}</span>
+        <div className="flex justify-between text-[9px] text-[var(--color-text-tertiary)]">
+          <span>{currency}0</span>
+          <span>{fmt(data.plan_price)}{t('cost.perMonth')}</span>
         </div>
       </div>
 
       {/* 内联价格设置 */}
       <div className="grid grid-cols-2 gap-1.5">
         <div className="flex items-center justify-between px-2 py-1 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border-subtle)]">
-          <span className="text-[8px] text-[var(--color-text-tertiary)]">{t('cost.monthly')}</span>
+          <span className="text-[9px] text-[var(--color-text-tertiary)]">{t('cost.monthly')}</span>
           <input
             type="number"
             value={planPrice || ""}
@@ -100,7 +106,7 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
           />
         </div>
         <div className="flex items-center justify-between px-2 py-1 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border-subtle)]">
-          <span className="text-[8px] text-[var(--color-text-tertiary)]">{t('cost.unitPrice')}</span>
+          <span className="text-[9px] text-[var(--color-text-tertiary)]">{t('cost.unitPrice')}</span>
           <input
             type="number"
             step="0.1"

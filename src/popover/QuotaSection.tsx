@@ -1,8 +1,9 @@
 import { useTranslation } from "react-i18next";
-import type { QuotaLimit } from "../types";
+import type { QuotaLimit, QuotaLimitType } from "../types";
+import { getStatusLevel, statusBgClass, statusColorVar, statusGradientVar } from "../lib/ui";
 
 function formatResetTime(ts: number, t: (key: string, options?: Record<string, unknown>) => string): string {
-  if (!ts) return "--";
+  if (!ts) return t('quota.resetSoon');
   const diff = ts - Date.now();
   if (diff <= 0) return t('quota.resetSoon');
   const hours = Math.floor(diff / 3600000);
@@ -11,52 +12,62 @@ function formatResetTime(ts: number, t: (key: string, options?: Record<string, u
   return t('quota.resetHours', { hours, minutes: mins });
 }
 
-function getStatusColors(pct: number) {
-  if (pct > 85) return {
-    bar: "bg-gradient-to-r from-red-400 to-rose-500",
-    dot: "bg-red-500",
-    text: "text-[var(--color-danger)]",
-  };
-  if (pct > 60) return {
-    bar: "bg-gradient-to-r from-amber-400 to-orange-400",
-    dot: "bg-amber-500",
-    text: "text-[var(--color-warning)]",
-  };
-  return {
-    bar: "bg-gradient-to-r from-emerald-400 to-teal-500",
-    dot: "bg-emerald-500",
-    text: "text-[var(--color-success)]",
-  };
+/** 紧凑格式化绝对值：大数用万/亿，小数保留适当精度 */
+function formatAbsolute(n: number | undefined): string {
+  if (n === undefined || n === null || Number.isNaN(n)) return "—";
+  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}亿`;
+  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}万`;
+  if (n >= 100) return Math.round(n).toString();
+  if (n >= 1) return n.toFixed(n < 10 ? 1 : 0);
+  return n.toFixed(2);
 }
 
-function QuotaBar({ title, percentage, resetTime }: {
-  title: string; percentage: number; resetTime: number;
-}) {
+interface QuotaBarProps {
+  title: string;
+  percentage: number;
+  resetTime: number;
+  used?: number;
+  total?: number;
+}
+
+function QuotaBar({ title, percentage, resetTime, used, total }: QuotaBarProps) {
   const { t } = useTranslation();
-  const colors = getStatusColors(percentage);
+  const level = getStatusLevel(percentage);
+  const colorVar = statusColorVar(level);
+  const gradientVar = statusGradientVar(level);
+  const hasAbsolute = used !== undefined || total !== undefined;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`inline-block w-[5px] h-[5px] rounded-full ${colors.dot}`} />
-          <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">{title}</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`inline-block w-[5px] h-[5px] rounded-full shrink-0 ${statusBgClass(level)}`} />
+          <span className="text-[11px] font-medium text-[var(--color-text-secondary)] truncate">{title}</span>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] text-[var(--color-text-tertiary)] tabular-nums">
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[9px] text-[var(--color-text-tertiary)] tabular-nums">
             {formatResetTime(resetTime, t)}
           </span>
-          <span className={`text-[13px] font-bold tabular-nums w-12 text-right ${colors.text}`}>
+          <span className="text-[13px] font-bold tabular-nums w-11 text-right" style={{ color: colorVar }}>
             {Math.round(percentage)}%
           </span>
         </div>
       </div>
       <div className="w-full h-[6px] bg-[var(--color-bg-tertiary)] rounded-full overflow-hidden">
         <div
-          className={`h-full rounded-full ${colors.bar} animate-progress`}
-          style={{ width: `${Math.min(percentage, 100)}%`, transition: "width 0.7s cubic-bezier(0.16, 1, 0.3, 1)" }}
+          className="h-full rounded-full animate-progress"
+          style={{
+            width: `${Math.min(Math.max(percentage, 0), 100)}%`,
+            background: gradientVar,
+            transition: "width 0.7s cubic-bezier(0.16, 1, 0.3, 1)",
+          }}
         />
       </div>
+      {hasAbsolute && (
+        <div className="text-[9px] text-[var(--color-text-tertiary)] tabular-nums">
+          {formatAbsolute(used)} / {formatAbsolute(total)}
+        </div>
+      )}
     </div>
   );
 }
@@ -66,25 +77,47 @@ interface Props {
   isOffline?: boolean;
 }
 
+/** 三种额度类型 → 标题 i18n 键映射 */
+const LIMIT_TITLE_KEY: Record<string, string> = {
+  TIME_LIMIT: "quota.token5hTitle",
+  TOKENS_LIMIT: "quota.weeklyTitle",
+  MCP_MONTHLY: "quota.mcpMonthlyTitle",
+};
+
+/** 渲染顺序：5h 窗口 → 周额度 → MCP 月度 */
+const RENDER_ORDER: QuotaLimitType[] = ["TIME_LIMIT", "TOKENS_LIMIT", "MCP_MONTHLY"];
+
 export default function QuotaSection({ limits, isOffline }: Props) {
   const { t } = useTranslation();
-  const tokensLimit = limits.find((l) => l.type === "TOKENS_LIMIT");
-  const mcpLimit =
-    limits.find((l) => l.type === "TIME_LIMIT") ??
-    limits.find((l) => l.type === "MCP_MONTHLY");
+
+  // 按预定义顺序去重渲染（同类型只取第一条）
+  const seen = new Set<string>();
+  const ordered = RENDER_ORDER
+    .map((type) => limits.find((l) => l.type === type && !seen.has(type) && seen.add(type)))
+    .filter((l): l is QuotaLimit => Boolean(l));
 
   return (
-    <div className="px-4 py-3 space-y-4 relative">
+    <div className="px-4 py-3 space-y-3.5 relative">
       {isOffline && (
-        <div className="absolute top-2 right-3 text-[8px] font-medium text-[var(--color-text-tertiary)] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 rounded">
+        <div className="absolute top-2 right-3 text-[9px] font-medium text-[var(--color-text-tertiary)] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 rounded">
           {t('account.offlineData')}
         </div>
       )}
-      {tokensLimit && (
-        <QuotaBar title={t('quota.tokenTitle')} percentage={tokensLimit.percentage} resetTime={tokensLimit.nextResetTime} />
-      )}
-      {mcpLimit && (
-        <QuotaBar title={t('quota.mcpTitle')} percentage={mcpLimit.percentage} resetTime={mcpLimit.nextResetTime} />
+      {ordered.map((limit) => {
+        const titleKey = LIMIT_TITLE_KEY[limit.type] ?? "quota.tokenTitle";
+        return (
+          <QuotaBar
+            key={limit.type}
+            title={t(titleKey)}
+            percentage={limit.percentage}
+            resetTime={limit.nextResetTime}
+            used={limit.usage}
+            total={limit.number}
+          />
+        );
+      })}
+      {ordered.length === 0 && (
+        <div className="text-[10px] text-[var(--color-text-tertiary)] py-2">{t('usage.noData')}</div>
       )}
     </div>
   );

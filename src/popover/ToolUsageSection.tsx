@@ -3,20 +3,17 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ToolUsageData, ToolUsageItem } from "../types";
 
-function formatToolName(tool: string): string {
-  const names: Record<string, string> = {
-    web_search: "🔍 Web Search",
-    web_reader: "🌐 Web Reader",
-    zread: "📖 ZRead",
-    code_exec: "⚙️ Code Exec",
-  };
-  return names[tool] || `🔧 ${tool}`;
-}
-
 export default function ToolUsageSection({ accountId, refreshKey }: { accountId: string; refreshKey: number }) {
   const { t } = useTranslation();
   const [data, setData] = useState<ToolUsageItem[]>([]);
   const [loading, setLoading] = useState(true);
+
+  function formatToolName(tool: string): string {
+    const key = `toolUsage.tools.${tool}`;
+    const translated = t(key);
+    // 未命中翻译键时回退到通用格式（i18next 在缺失时返回 key 本身）
+    return translated === key ? `🔧 ${tool}` : translated;
+  }
 
   useEffect(() => {
     setLoading(true);

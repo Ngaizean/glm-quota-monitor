@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import Toggle from "../lib/Toggle";
 import type { Account } from "../types";
 
 export default function GeneralPane() {
+  const { t, i18n } = useTranslation();
   const [refreshInterval, setRefreshInterval] = useState(5);
   const [autoStart, setAutoStart] = useState(true);
   const [defaultModel, setDefaultModel] = useState("");
@@ -20,7 +22,12 @@ export default function GeneralPane() {
       if (v !== null) setAutoStart(v === "1");
     });
     invoke<string>("get_default_model").then(setDefaultModel);
-  }, []);
+    // 恢复持久化的语言偏好
+    const savedLang = localStorage.getItem("lang");
+    if (savedLang && savedLang !== i18n.language) {
+      i18n.changeLanguage(savedLang);
+    }
+  }, [i18n]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -87,20 +94,25 @@ export default function GeneralPane() {
     invoke("set_setting", { key: "auto_start", value: val ? "1" : "0" });
   }
 
+  function handleLanguageChange(lang: string) {
+    i18n.changeLanguage(lang);
+    localStorage.setItem("lang", lang);
+  }
+
   return (
     <div className="space-y-3">
       <div className="bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border-subtle)] p-3.5 space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <span className="text-xs font-medium text-[var(--color-text-primary)] block">
-              刷新间隔
+              {t("generalPane.refreshInterval")}
             </span>
             <span className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5 block">
-              自动更新额度数据
+              {t("generalPane.refreshIntervalDesc")}
             </span>
           </div>
           <span className="text-[12px] font-bold tabular-nums text-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-2 py-0.5 rounded-md">
-            {refreshInterval} 分钟
+            {t("generalPane.minutes", { count: refreshInterval })}
           </span>
         </div>
         <input
@@ -112,31 +124,58 @@ export default function GeneralPane() {
           className="w-full"
         />
         <div className="flex justify-between text-[9px] text-[var(--color-text-tertiary)]">
-          <span>1 分钟</span>
-          <span>30 分钟</span>
+          <span>{t("generalPane.rangeMin")}</span>
+          <span>{t("generalPane.rangeMax")}</span>
         </div>
       </div>
 
       <div className="bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border-subtle)] p-3.5 flex items-center justify-between">
         <div>
           <span className="text-xs font-medium text-[var(--color-text-primary)] block">
-            开机自启
+            {t("generalPane.autoStart")}
           </span>
           <span className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5 block">
-            登录时自动启动应用
+            {t("generalPane.autoStartDesc")}
           </span>
         </div>
         <Toggle checked={autoStart} onChange={handleAutoStartToggle} />
+      </div>
+
+      {/* 界面语言 */}
+      <div className="bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border-subtle)] p-3.5 flex items-center justify-between">
+        <div>
+          <span className="text-xs font-medium text-[var(--color-text-primary)] block">
+            {t("generalPane.language")}
+          </span>
+          <span className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5 block">
+            {t("generalPane.languageDesc")}
+          </span>
+        </div>
+        <div className="flex gap-1 bg-[var(--color-bg-primary)] border border-[var(--color-border-subtle)] rounded-lg p-0.5">
+          {(["zh", "en"] as const).map((lang) => (
+            <button
+              key={lang}
+              onClick={() => handleLanguageChange(lang)}
+              className={`px-2.5 py-1 text-[10px] font-medium rounded-md transition-[var(--transition-fast)] ${
+                i18n.language === lang || (i18n.language.startsWith(lang))
+                  ? "bg-[var(--color-accent)] text-white"
+                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
+              }`}
+            >
+              {t(`generalPane.${lang}`)}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border-subtle)] p-3.5">
         <div className="flex items-center justify-between mb-2">
           <div>
             <span className="text-xs font-medium text-[var(--color-text-primary)] block">
-              默认模型
+              {t("generalPane.defaultModel")}
             </span>
             <span className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5 block">
-              快速绑定时使用的模型
+              {t("generalPane.defaultModelDesc")}
             </span>
           </div>
           <span className="text-[11px] font-bold font-mono text-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-2 py-0.5 rounded-md">
@@ -148,7 +187,11 @@ export default function GeneralPane() {
             onClick={handleOpenModelDropdown}
             className="w-full py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg hover:border-[var(--color-accent)] transition-[var(--transition-fast)]"
           >
-            {modelsLoading ? "加载模型列表..." : modelDropdownOpen ? "收起模型列表" : "选择默认模型"}
+            {modelsLoading
+              ? t("generalPane.loadingModels")
+              : modelDropdownOpen
+                ? t("generalPane.collapseModelList")
+                : t("generalPane.selectDefaultModel")}
           </button>
           {modelDropdownOpen && (
             <div className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg shadow-[var(--shadow-popover)] max-h-48 overflow-y-auto scroll-area overscroll-contain animate-slide-down">

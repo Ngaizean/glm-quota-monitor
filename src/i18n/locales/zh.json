@@ -22,9 +22,14 @@
   "quota": {
     "tokenTitle": "Token 额度",
     "mcpTitle": "MCP 调用额度",
+    "token5hTitle": "5 小时窗口",
+    "weeklyTitle": "周额度",
+    "mcpMonthlyTitle": "MCP 月度",
     "resetSoon": "即将重置",
     "resetDays": "{{count}}天",
-    "resetHours": "{{hours}}时{{minutes}}分"
+    "resetHours": "{{hours}}时{{minutes}}分",
+    "used": "已用 {{used}} / {{total}}",
+    "usedShort": "{{used}} / {{total}}"
   },
   "usage": {
     "today": "今日",
@@ -41,13 +46,21 @@
     "costEstimate": "费用估算",
     "perMonth": "/月",
     "monthly": "包月",
-    "unitPrice": "单价"
+    "unitPrice": "单价",
+    "currency": "¥",
+    "ratio": "费用/套餐"
   },
   "toolUsage": {
     "title": "MCP 工具用量",
     "calls": "{{count}} 次调用",
     "noData": "暂无工具用量数据",
-    "loading": "加载中..."
+    "loading": "加载中...",
+    "tools": {
+      "web_search": "🔍 网页搜索",
+      "web_reader": "🌐 网页读取",
+      "zread": "📖 ZRead",
+      "code_exec": "⚙️ 代码执行"
+    }
   },
   "export": {
     "exportCsv": "导出 CSV",
@@ -182,11 +195,23 @@
     "ocean": "海洋蓝",
     "forest": "森林绿",
     "sunset": "日落橙",
-    "preview": "预览"
+    "preview": "预览",
+    "previewPrimary": "主按钮",
+    "previewAccentText": "强调文字",
+    "mode": "外观模式",
+    "modeSystem": "跟随系统",
+    "modeLight": "浅色",
+    "modeDark": "深色"
   },
   "trendChart": {
     "title": "Token 趋势",
-    "tokenUsage": "Token 用量"
+    "tokenUsage": "Token 用量",
+    "timeUsage": "时间用量",
+    "tokenLabel": "Token",
+    "timeLabel": "时间"
+  },
+  "weekdays": {
+    "short": ["日", "一", "二", "三", "四", "五", "六"]
   },
   "common": {
     "save": "保存",

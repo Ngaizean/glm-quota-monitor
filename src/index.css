@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* ============================================================
+   Design Tokens — 单一颜色来源
+   浅色为默认；深色通过 [data-mode="dark"] 或 [data-mode="system"]+media query 覆盖
+   ============================================================ */
 :root {
   --color-bg-primary: #FFFFFF;
   --color-bg-secondary: #F8F9FB;
@@ -16,6 +20,11 @@
   --color-success: #10B981;
   --color-warning: #F59E0B;
   --color-danger: #EF4444;
+  --color-chart-secondary: #E8915A;
+  /* 状态渐变 — 进度条/环形图统一使用 */
+  --gradient-success: linear-gradient(to right, #34D399, #14B8A6);
+  --gradient-warning: linear-gradient(to right, #FBBF24, #FB923C);
+  --gradient-danger: linear-gradient(to right, #F87171, #F43F5E);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.07);
   --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.12);
@@ -27,6 +36,7 @@
   --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Tailwind @theme — 完整映射，使 bg-success / shadow-md / rounded-lg 等可用 */
 @theme {
   --color-bg-primary: var(--color-bg-primary);
   --color-bg-secondary: var(--color-bg-secondary);
@@ -40,6 +50,17 @@
   --color-accent: var(--color-accent);
   --color-accent-hover: var(--color-accent-hover);
   --color-accent-subtle: var(--color-accent-subtle);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-danger: var(--color-danger);
+  --color-chart-secondary: var(--color-chart-secondary);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-popover: var(--shadow-popover);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
 }
 
 html, body, #root {
@@ -90,12 +111,18 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--color-accent);
   cursor: pointer;
   border: 2px solid white;
-  box-shadow: 0 1px 4px rgba(91, 95, 199, 0.3);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--color-accent) 30%, transparent);
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 input[type="range"]::-webkit-slider-thumb:hover {
   transform: scale(1.18);
-  box-shadow: 0 2px 8px rgba(91, 95, 199, 0.4);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+/* 焦点可见性 — 可访问性 */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 /* Animations */
@@ -139,9 +166,37 @@ input[type="range"]::-webkit-slider-thumb:hover {
   animation: shimmer 1.5s ease-in-out infinite;
 }
 
-/* Dark mode */
+/* ============================================================
+   深色模式 — 支持 手动 dark / 手动 light / 跟随系统 三种模式
+   - [data-mode="dark"]: 强制深色
+   - [data-mode="light"]: 强制浅色 (使用 :root 默认)
+   - [data-mode="system"] 或未设置: 跟随 prefers-color-scheme (向后兼容)
+   ============================================================ */
+:root[data-mode="dark"] {
+  --color-bg-primary: #1A1D23;
+  --color-bg-secondary: #22252C;
+  --color-bg-tertiary: #2A2D35;
+  --color-bg-glass: rgba(26, 29, 35, 0.85);
+  --color-border: #363940;
+  --color-border-subtle: #2E3138;
+  --color-text-primary: #E8EAED;
+  --color-text-secondary: #9BA3B0;
+  --color-text-tertiary: #6B7280;
+  --color-success: #34D399;
+  --color-warning: #FBBF24;
+  --color-danger: #F87171;
+  --color-chart-secondary: #F0A570;
+  --gradient-success: linear-gradient(to right, #6EE7B7, #2DD4BF);
+  --gradient-warning: linear-gradient(to right, #FCD34D, #FB923C);
+  --gradient-danger: linear-gradient(to right, #FCA5A5, #FB7185);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.4);
+  --shadow-popover: 0 8px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+/* 跟随系统: 仅在 system 模式或未设置时响应 OS 偏好 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-mode="light"]) {
     --color-bg-primary: #1A1D23;
     --color-bg-secondary: #22252C;
     --color-bg-tertiary: #2A2D35;
@@ -151,27 +206,35 @@ input[type="range"]::-webkit-slider-thumb:hover {
     --color-text-primary: #E8EAED;
     --color-text-secondary: #9BA3B0;
     --color-text-tertiary: #6B7280;
-    --color-accent: #7C7FDD;
-    --color-accent-hover: #9295F0;
-    --color-accent-subtle: #2A2D45;
     --color-success: #34D399;
     --color-warning: #FBBF24;
     --color-danger: #F87171;
+    --color-chart-secondary: #F0A570;
+    --gradient-success: linear-gradient(to right, #6EE7B7, #2DD4BF);
+    --gradient-warning: linear-gradient(to right, #FCD34D, #FB923C);
+    --gradient-danger: linear-gradient(to right, #FCA5A5, #FB7185);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.4);
-    --shadow-popover: 0 8px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255,  255, 0.06);
+    --shadow-popover: 0 8px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
   }
 }
 
-/* Theme variants */
+/* ============================================================
+   主题色变体 (accent) — 适用于 [data-mode] 不为 light 时的深浅
+   ============================================================ */
 [data-theme="ocean"] {
   --color-accent: #0EA5E9;
   --color-accent-hover: #0284C7;
   --color-accent-subtle: #E0F2FE;
 }
+[data-theme="ocean"][data-mode="dark"],
+[data-theme="ocean"]:not([data-mode="light"]) {
+  /* dark 变体仅在系统深色或手动深色时由下方 media query 覆盖 */
+}
 @media (prefers-color-scheme: dark) {
-  [data-theme="ocean"] {
+  :root[data-mode="dark"][data-theme="ocean"],
+  :root:not([data-mode="light"])[data-theme="ocean"] {
     --color-accent: #38BDF8;
     --color-accent-hover: #7DD3FC;
     --color-accent-subtle: #1E3A5F;
@@ -184,7 +247,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
   --color-accent-subtle: #D1FAE5;
 }
 @media (prefers-color-scheme: dark) {
-  [data-theme="forest"] {
+  :root[data-mode="dark"][data-theme="forest"],
+  :root:not([data-mode="light"])[data-theme="forest"] {
     --color-accent: #34D399;
     --color-accent-hover: #6EE7B7;
     --color-accent-subtle: #1A3A2A;
@@ -197,7 +261,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
   --color-accent-subtle: #FFF7ED;
 }
 @media (prefers-color-scheme: dark) {
-  [data-theme="sunset"] {
+  :root[data-mode="dark"][data-theme="sunset"],
+  :root:not([data-mode="light"])[data-theme="sunset"] {
     --color-accent: #FB923C;
     --color-accent-hover: #FDBA74;
     --color-accent-subtle: #3A2A1A;
