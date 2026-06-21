@@ -186,7 +186,14 @@
     "checking": "Checking...",
     "foundNew": "New version available: {{version}}",
     "upToDate": "Already up to date",
-    "checkFailed": "Check failed, please try again later"
+    "checkFailed": "Check failed, please try again later",
+    "downloading": "Downloading... {{progress}}%",
+    "downloadSpeed": "{{speed}}/s",
+    "installing": "Installing update...",
+    "downloadFailed": "Download failed, check your network and retry",
+    "installAndRestart": "Download complete, install and restart",
+    "relaunching": "Relaunching...",
+    "readyToInstall": "Update downloaded, will restart after install"
   },
   "theme": {
     "title": "Theme & Appearance",

@@ -2,11 +2,12 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { type ThemeMode, getStoredMode, setMode, applyMode } from "../lib/theme";
 
-const THEMES = [
-  { id: "default", color: "#5B5FC7", hover: "#4F46E5", subtle: "#ECEFFD" },
-  { id: "ocean", color: "#0EA5E9", hover: "#0284C7", subtle: "#E0F2FE" },
-  { id: "forest", color: "#10B981", hover: "#059669", subtle: "#D1FAE5" },
-  { id: "sunset", color: "#F97316", hover: "#EA580C", subtle: "#FFF7ED" },
+/** accent 色的展示用色值（仅用于 ThemePane 的色块预览，不写入 CSS 变量） */
+const THEME_SWATCHES = [
+  { id: "default", color: "#5B5FC7", labelKey: "theme.default" },
+  { id: "ocean", color: "#0EA5E9", labelKey: "theme.ocean" },
+  { id: "forest", color: "#10B981", labelKey: "theme.forest" },
+  { id: "sunset", color: "#F97316", labelKey: "theme.sunset" },
 ] as const;
 
 const MODES: { id: ThemeMode; icon: string }[] = [
@@ -15,44 +16,23 @@ const MODES: { id: ThemeMode; icon: string }[] = [
   { id: "dark", icon: "☾" },
 ];
 
-function applyAccent(themeId: string) {
-  const theme = THEMES.find((t) => t.id === themeId);
-  const root = document.documentElement;
-  if (theme && theme.id !== "default") {
-    root.setAttribute("data-theme", theme.id);
-    root.style.setProperty("--color-accent", theme.color);
-    root.style.setProperty("--color-accent-hover", theme.hover);
-    root.style.setProperty("--color-accent-subtle", theme.subtle);
-  } else {
-    root.removeAttribute("data-theme");
-    // default 主题重置为 CSS 默认值（由 data-mode/media query 决定深浅）
-    const isDark = root.getAttribute("data-mode") === "dark"
-      || (root.getAttribute("data-mode") !== "light"
-          && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    if (isDark) {
-      root.style.setProperty("--color-accent", "#7C7FDD");
-      root.style.setProperty("--color-accent-hover", "#9295F0");
-      root.style.setProperty("--color-accent-subtle", "#2A2D45");
-    } else {
-      root.style.removeProperty("--color-accent");
-      root.style.removeProperty("--color-accent-hover");
-      root.style.removeProperty("--color-accent-subtle");
-    }
-  }
-}
-
 export default function ThemePane() {
   const { t } = useTranslation();
   const [accent, setAccent] = useState(() => localStorage.getItem("theme") || "default");
   const [mode, setModeState] = useState<ThemeMode>(() => getStoredMode());
 
-  // 初始化时应用持久化的 mode 和 accent
+  // 挂载时同步持久化的 mode/accent 到 DOM
   useEffect(() => {
     applyMode(mode);
   }, [mode]);
 
   useEffect(() => {
-    applyAccent(accent);
+    const root = document.documentElement;
+    if (accent === "default") {
+      root.removeAttribute("data-theme");
+    } else {
+      root.setAttribute("data-theme", accent);
+    }
   }, [accent]);
 
   function selectAccent(id: string) {
@@ -63,8 +43,6 @@ export default function ThemePane() {
   function selectMode(m: ThemeMode) {
     setModeState(m);
     setMode(m);
-    // 重新应用 accent，因为 default 主题依赖当前明暗
-    applyAccent(accent);
   }
 
   return (
@@ -100,7 +78,7 @@ export default function ThemePane() {
           {t("theme.accentColor")}
         </span>
         <div className="grid grid-cols-4 gap-2">
-          {THEMES.map((theme) => (
+          {THEME_SWATCHES.map((theme) => (
             <button
               key={theme.id}
               onClick={() => selectAccent(theme.id)}
@@ -111,11 +89,14 @@ export default function ThemePane() {
               }`}
             >
               <div
-                className={`w-8 h-8 rounded-lg shadow-sm ${accent === theme.id ? "ring-2 ring-offset-1 ring-offset-[var(--color-bg-secondary)]" : ""}`}
-                style={{ backgroundColor: theme.color, ...(accent === theme.id ? { boxShadow: `0 0 0 2px ${theme.color}` } : {}) }}
+                className="w-8 h-8 rounded-lg shadow-sm"
+                style={{
+                  backgroundColor: theme.color,
+                  boxShadow: accent === theme.id ? `0 0 0 2px ${theme.color}` : undefined,
+                }}
               />
               <span className="text-[9px] font-medium text-[var(--color-text-secondary)]">
-                {t(`theme.${theme.id}`)}
+                {t(theme.labelKey)}
               </span>
             </button>
           ))}
@@ -128,12 +109,12 @@ export default function ThemePane() {
           {t("theme.preview")}
         </span>
         <div className="flex items-center gap-2">
-          <button
-            className="text-[10px] font-semibold px-3 py-1.5 bg-[var(--color-accent)] text-white rounded-lg"
-            style={{ cursor: "default" }}
+          <span
+            className="text-[10px] font-semibold px-3 py-1.5 text-white rounded-lg"
+            style={{ background: "var(--color-accent)", cursor: "default" }}
           >
             {t("theme.previewPrimary")}
-          </button>
+          </span>
           <span className="text-[10px] font-medium text-[var(--color-accent)]">
             {t("theme.previewAccentText")}
           </span>

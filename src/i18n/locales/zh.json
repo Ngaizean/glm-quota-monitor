@@ -186,7 +186,14 @@
     "checking": "检查中...",
     "foundNew": "发现新版本 {{version}}",
     "upToDate": "已是最新版本",
-    "checkFailed": "检查失败，请稍后重试"
+    "checkFailed": "检查失败，请稍后重试",
+    "downloading": "下载中... {{progress}}%",
+    "downloadSpeed": "{{speed}}/s",
+    "installing": "正在安装更新...",
+    "downloadFailed": "下载失败，请检查网络后重试",
+    "installAndRestart": "下载完成，点击安装并重启",
+    "relaunching": "重启中...",
+    "readyToInstall": "更新已下载，安装后将重启"
   },
   "theme": {
     "title": "主题外观",

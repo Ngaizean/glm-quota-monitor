@@ -77,15 +77,25 @@ interface Props {
   isOffline?: boolean;
 }
 
-/** 三种额度类型 → 标题 i18n 键映射 */
+/**
+ * 三种额度类型 → 标题 i18n 键映射
+ *
+ * 映射依据：重置周期（数据库证据，而非 API 字段名的字面含义）。
+ *   - TIME_LIMIT:   重置周期约 7 天  → 周额度
+ *   - TOKENS_LIMIT: 重置周期约 5 小时 → 5 小时窗口
+ *   - MCP_MONTHLY:  重置周期约 30 天  → MCP 月度
+ *
+ * 注意：API 的 type 字段名与实际周期不符（TIME_LIMIT 实为周额度），
+ * 此处以重置周期为准。详见 context.md 额度类型纠正章节。
+ */
 const LIMIT_TITLE_KEY: Record<string, string> = {
-  TIME_LIMIT: "quota.token5hTitle",
-  TOKENS_LIMIT: "quota.weeklyTitle",
+  TIME_LIMIT: "quota.weeklyTitle",
+  TOKENS_LIMIT: "quota.token5hTitle",
   MCP_MONTHLY: "quota.mcpMonthlyTitle",
 };
 
-/** 渲染顺序：5h 窗口 → 周额度 → MCP 月度 */
-const RENDER_ORDER: QuotaLimitType[] = ["TIME_LIMIT", "TOKENS_LIMIT", "MCP_MONTHLY"];
+/** 渲染顺序：5h 窗口 → 周额度 → MCP 月度（按紧迫度递减） */
+const RENDER_ORDER: QuotaLimitType[] = ["TOKENS_LIMIT", "TIME_LIMIT", "MCP_MONTHLY"];
 
 export default function QuotaSection({ limits, isOffline }: Props) {
   const { t } = useTranslation();
