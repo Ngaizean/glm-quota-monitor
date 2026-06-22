@@ -1,0 +1,146 @@
+{
+  "name": "glm-quota-monitor",
+  "displayName": "GLM Quota Monitor",
+  "description": "智谱 GLM Coding Plan 额度管理、用量统计、多账号监控和智能预警",
+  "version": "1.0.0",
+  "publisher": "ngaizean",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "zhipu",
+    "glm",
+    "quota",
+    "monitor",
+    "ai"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "glm-quota-monitor",
+          "title": "GLM Quota Monitor",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "glm-quota-monitor": [
+        {
+          "type": "webview",
+          "id": "glm-quota-monitor.sidebar",
+          "name": "额度监控"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "glm-quota-monitor.refresh",
+        "title": "GLM: 刷新额度",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "glm-quota-monitor.addAccount",
+        "title": "GLM: 添加账号"
+      },
+      {
+        "command": "glm-quota-monitor.removeAccount",
+        "title": "GLM: 移除账号"
+      },
+      {
+        "command": "glm-quota-monitor.setPrimaryAccount",
+        "title": "GLM: 设为主账号"
+      },
+      {
+        "command": "glm-quota-monitor.spinNow",
+        "title": "GLM: 立即空转"
+      },
+      {
+        "command": "glm-quota-monitor.toggleSpin",
+        "title": "GLM: 开关自动空转"
+      },
+      {
+        "command": "glm-quota-monitor.exportUsage",
+        "title": "GLM: 导出用量数据 (CSV)"
+      },
+      {
+        "command": "glm-quota-monitor.openSettings",
+        "title": "GLM: 打开设置"
+      }
+    ],
+    "configuration": {
+      "title": "GLM Quota Monitor",
+      "properties": {
+        "glmQuotaMonitor.refreshIntervalMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "额度刷新间隔（分钟）"
+        },
+        "glmQuotaMonitor.alertThresholds": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": [70, 85, 95],
+          "description": "预警阈值百分比列表（如 [70, 85, 95]）"
+        },
+        "glmQuotaMonitor.spinEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "启用自动空转保活"
+        },
+        "glmQuotaMonitor.spinIntervalMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 120,
+          "description": "空转间隔（分钟）"
+        },
+        "glmQuotaMonitor.spinModel": {
+          "type": "string",
+          "default": "glm-4.5-flash",
+          "description": "空转使用的模型"
+        },
+        "glmQuotaMonitor.planPrice": {
+          "type": "number",
+          "default": 0,
+          "description": "套餐月价（元），用于费用估算，0 表示不启用"
+        },
+        "glmQuotaMonitor.desktopAppPort": {
+          "type": "number",
+          "default": 18789,
+          "description": "桌面 App 联动端口（0 表示不联动）"
+        },
+        "glmQuotaMonitor.desktopAppToken": {
+          "type": "string",
+          "default": "",
+          "description": "桌面 App 联动 Token（从 App 设置中获取）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
+    "lint": "tsc --noEmit",
+    "package": "npx @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.8.0"
+  }
+}

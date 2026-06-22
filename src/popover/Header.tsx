@@ -24,7 +24,10 @@ export default function Header({ loading, onRefresh, onSettings }: HeaderProps) 
         onMouseDown={handleDrag}
       >
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-[var(--color-accent)] to-violet-500 flex items-center justify-center shadow-sm">
+          <div
+            className="w-6 h-6 rounded-lg flex items-center justify-center shadow-sm"
+            style={{ background: "linear-gradient(135deg, var(--color-accent), var(--color-accent-hover))" }}
+          >
             <span className="text-white text-[9px] font-bold tracking-tight">G</span>
           </div>
           <span className="text-[13px] font-semibold tracking-tight text-[var(--color-text-primary)]">

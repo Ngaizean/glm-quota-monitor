@@ -8,6 +8,7 @@ import SpinPane from "./SpinPane";
 import ThemePane from "./ThemePane";
 import ExportPane from "./ExportPane";
 import AboutPane from "./AboutPane";
+import { version as APP_VERSION } from "../../package.json";
 
 const navItemIds = ["accounts", "alerts", "spin", "general", "theme", "export", "about"] as const;
 type NavId = (typeof navItemIds)[number];
@@ -139,7 +140,7 @@ export default function Settings({ onBack, screenHeight }: { onBack: () => void;
         </div>
 
         <div className="flex-1" />
-        <div className="text-[8px] text-[var(--color-text-tertiary)] text-center font-medium">v5.0.0</div>
+        <div className="text-[9px] text-[var(--color-text-tertiary)] text-center font-medium tabular-nums">v{APP_VERSION}</div>
       </nav>
 
       {/* Content */}

@@ -30,12 +30,14 @@ function App() {
 
   return (
     <div ref={containerRef}>
-      {page === "quota" && (
-        <Popover onOpenSettings={handleOpenSettings} screenHeight={SCREEN_H} />
-      )}
-      {page === "settings" && (
-        <Settings onBack={handleBack} screenHeight={SCREEN_H} />
-      )}
+      <div key={page} className="animate-fade-in">
+        {page === "quota" && (
+          <Popover onOpenSettings={handleOpenSettings} screenHeight={SCREEN_H} />
+        )}
+        {page === "settings" && (
+          <Settings onBack={handleBack} screenHeight={SCREEN_H} />
+        )}
+      </div>
     </div>
   );
 }

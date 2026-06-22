@@ -95,8 +95,8 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
 
         {!initialized && (
           <div className="px-4 py-4 space-y-3">
-            <div className="skeleton h-18 rounded-2xl" />
-            <div className="skeleton h-18 rounded-2xl" />
+            <div className="skeleton h-[4.5rem] rounded-2xl" />
+            <div className="skeleton h-[4.5rem] rounded-2xl" />
           </div>
         )}
 
