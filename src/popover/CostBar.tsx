@@ -32,7 +32,6 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
 
   const currency = t("cost.currency");
   const fmt = (v: number) => formatCost(currency, v);
-  const pct = data.plan_price > 0 ? Math.min((data.cost_30d / data.plan_price) * 100, 100) : 0;
   const overBudget = data.ratio > 1.0;
 
   return (
@@ -68,23 +67,6 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
             </div>
           </div>
         ))}
-      </div>
-
-      {/* 月费占比进度条 */}
-      <div className="space-y-1">
-        <div className="relative h-1.5 rounded-full bg-[var(--color-bg-primary)] overflow-hidden">
-          <div
-            className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
-            style={{
-              width: `${pct}%`,
-              background: overBudget ? "var(--color-danger)" : "var(--color-success)",
-            }}
-          />
-        </div>
-        <div className="flex justify-between text-[9px] text-[var(--color-text-tertiary)]">
-          <span>{currency}0</span>
-          <span>{fmt(data.plan_price)}{t('cost.perMonth')}</span>
-        </div>
       </div>
 
       {/* 内联价格设置 */}
