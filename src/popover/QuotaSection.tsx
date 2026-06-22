@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import type { QuotaLimit, QuotaLimitType } from "../types";
+import type { QuotaLimit } from "../types";
 import { getStatusLevel, statusBgClass, statusColorVar, statusGradientVar } from "../lib/ui";
 
 function formatResetTime(ts: number, t: (key: string, options?: Record<string, unknown>) => string): string {
@@ -78,32 +78,65 @@ interface Props {
 }
 
 /**
- * 三种额度类型 → 标题 i18n 键映射
+ * 额度类型判定逻辑
  *
- * 映射依据：重置周期（数据库证据，而非 API 字段名的字面含义）。
- *   - TIME_LIMIT:   重置周期约 7 天  → 周额度
- *   - TOKENS_LIMIT: 重置周期约 5 小时 → 5 小时窗口
- *   - MCP_MONTHLY:  重置周期约 30 天  → MCP 月度
+ * GLM API 返回的额度通过 type + unit 字段组合区分（重置周期为真相来源）：
+ *   - TOKENS_LIMIT + unit=3 → 5 小时滚动窗口（重置 ~5h）
+ *   - TOKENS_LIMIT + unit=6 → 周额度（重置 ~7 天，部分账号启用）
+ *   - TIME_LIMIT  + unit=5 → 月度额度（重置 ~30 天，含 MCP/search 工具用量）
+ *   - MCP_MONTHLY         → MCP 月度（历史兼容）
  *
- * 注意：API 的 type 字段名与实际周期不符（TIME_LIMIT 实为周额度），
- * 此处以重置周期为准。详见 context.md 额度类型纠正章节。
+ * 注意：API 可能返回多个同 type 的额度（如两个 TOKENS_LIMIT），
+ * 必须按 (type, unit) 组合查找，不能用 find() 只取第一个。
  */
-const LIMIT_TITLE_KEY: Record<string, string> = {
-  TIME_LIMIT: "quota.weeklyTitle",
-  TOKENS_LIMIT: "quota.token5hTitle",
-  MCP_MONTHLY: "quota.mcpMonthlyTitle",
+type QuotaCategory = "hourly" | "weekly" | "monthly";
+
+/** 根据 type+unit 判定额度类别，无法判定时用重置周期兜底 */
+function classifyLimit(limit: QuotaLimit): QuotaCategory | null {
+  // 优先用 (type, unit) 组合精确匹配
+  if (limit.type === "TOKENS_LIMIT") {
+    if (limit.unit === 3) return "hourly";   // 5h 窗口
+    if (limit.unit === 6) return "weekly";   // 周额度
+  }
+  if (limit.type === "TIME_LIMIT") {
+    return "monthly";                          // 月度
+  }
+  if (limit.type === "MCP_MONTHLY") {
+    return "monthly";
+  }
+  // 兜底：用重置周期判定（nextResetTime 与现在的差值）
+  if (limit.nextResetTime > 0) {
+    const hoursLeft = (limit.nextResetTime - Date.now()) / 3600000;
+    if (hoursLeft < 24) return "hourly";
+    if (hoursLeft < 14 * 24) return "weekly";
+    return "monthly";
+  }
+  return null;
+}
+
+const CATEGORY_TITLE_KEY: Record<QuotaCategory, string> = {
+  hourly: "quota.token5hTitle",
+  weekly: "quota.weeklyTitle",
+  monthly: "quota.mcpMonthlyTitle",
 };
 
-/** 渲染顺序：5h 窗口 → 周额度 → MCP 月度（按紧迫度递减） */
-const RENDER_ORDER: QuotaLimitType[] = ["TOKENS_LIMIT", "TIME_LIMIT", "MCP_MONTHLY"];
+/** 渲染顺序：5h 窗口 → 周额度 → 月度（按紧迫度递减） */
+const RENDER_ORDER: QuotaCategory[] = ["hourly", "weekly", "monthly"];
 
 export default function QuotaSection({ limits, isOffline }: Props) {
   const { t } = useTranslation();
 
-  // 按预定义顺序去重渲染（同类型只取第一条）
-  const seen = new Set<string>();
+  // 分类所有额度，按 category 去重（同一类别只保留第一个）
+  const classified = new Map<QuotaCategory, QuotaLimit>();
+  for (const limit of limits) {
+    const category = classifyLimit(limit);
+    if (category && !classified.has(category)) {
+      classified.set(category, limit);
+    }
+  }
+
   const ordered = RENDER_ORDER
-    .map((type) => limits.find((l) => l.type === type && !seen.has(type) && seen.add(type)))
+    .map((cat) => classified.get(cat))
     .filter((l): l is QuotaLimit => Boolean(l));
 
   return (
@@ -114,10 +147,11 @@ export default function QuotaSection({ limits, isOffline }: Props) {
         </div>
       )}
       {ordered.map((limit) => {
-        const titleKey = LIMIT_TITLE_KEY[limit.type] ?? "quota.tokenTitle";
+        const category = classifyLimit(limit)!;
+        const titleKey = CATEGORY_TITLE_KEY[category];
         return (
           <QuotaBar
-            key={limit.type}
+            key={category}
             title={t(titleKey)}
             percentage={limit.percentage}
             resetTime={limit.nextResetTime}
