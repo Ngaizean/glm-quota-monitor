@@ -83,6 +83,12 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
     label: formatTime(p.timestamp),
   }));
 
+  // 智能隐藏无效虚线: time_pct 全部相同值(恒0或恒100)时，
+  // 虚线是一条贴顶/贴底的直线，无参考价值，隐藏虚线及其图例。
+  const timeValues = data.map((p) => p.time_pct);
+  const allSame = timeValues.every((v) => v === timeValues[0]);
+  const showTimeLine = !allSame;
+
   return (
     <div className="mt-2 px-1">
       <div className="text-[10px] font-medium text-[var(--color-text-secondary)] mb-1.5">
@@ -116,15 +122,17 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
               dot={false}
               activeDot={{ r: 3, fill: "var(--color-accent)" }}
             />
-            <Line
-              type="monotone"
-              dataKey="time_pct"
-              stroke="var(--color-chart-secondary)"
-              strokeWidth={1}
-              dot={false}
-              strokeDasharray="4 2"
-              activeDot={{ r: 2, fill: "var(--color-chart-secondary)" }}
-            />
+            {showTimeLine && (
+              <Line
+                type="monotone"
+                dataKey="time_pct"
+                stroke="var(--color-chart-secondary)"
+                strokeWidth={1}
+                dot={false}
+                strokeDasharray="4 2"
+                activeDot={{ r: 2, fill: "var(--color-chart-secondary)" }}
+              />
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -133,10 +141,12 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
           <div className="w-2.5 h-0.5 rounded bg-[var(--color-accent)]" />
           <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.tokenUsage")}</span>
         </div>
-        <div className="flex items-center gap-1">
-          <div className="w-2.5 h-0.5 rounded opacity-60" style={{ backgroundColor: "var(--color-chart-secondary)", borderStyle: "dashed" }} />
-          <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.timeUsage")}</span>
-        </div>
+        {showTimeLine && (
+          <div className="flex items-center gap-1">
+            <div className="w-2.5 h-0.5 rounded opacity-60" style={{ backgroundColor: "var(--color-chart-secondary)", borderStyle: "dashed" }} />
+            <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.timeUsage")}</span>
+          </div>
+        )}
       </div>
     </div>
   );
