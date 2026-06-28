@@ -27,6 +27,17 @@ pub fn usage_to_quota_data(usage: &UsageResponse) -> QuotaData {
         }
     }
 
+    // 额外模型额度（如 GPT-5.3-Codex-Spark）
+    // 用 SPARK_5H / SPARK_WEEKLY 作为 limit_type，前端据此单独分类展示
+    for additional in &usage.additional_rate_limits {
+        if let Some(ref rl) = additional.rate_limit.primary_window {
+            quota.limits.push(window_to_quota_limit(rl, "SPARK_5H", None));
+        }
+        if let Some(ref rl) = additional.rate_limit.secondary_window {
+            quota.limits.push(window_to_quota_limit(rl, "SPARK_WEEKLY", None));
+        }
+    }
+
     quota
 }
 

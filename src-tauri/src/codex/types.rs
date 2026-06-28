@@ -15,6 +15,21 @@ pub struct UsageResponse {
     pub plan_type: Option<String>,
     #[serde(default)]
     pub rate_limit: Option<RateLimitRoot>,
+    /// 额外模型额度（如 GPT-5.3-Codex-Spark），每个含独立的 primary/secondary 窗口
+    #[serde(default, rename = "additional_rate_limits")]
+    pub additional_rate_limits: Vec<AdditionalRateLimit>,
+}
+
+/// 额外模型的额度限制（如 Spark）
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AdditionalRateLimit {
+    /// 模型名称，如 "GPT-5.3-Codex-Spark"
+    #[serde(default, rename = "limit_name")]
+    pub limit_name: String,
+    #[serde(default, rename = "metered_feature")]
+    pub metered_feature: Option<String>,
+    #[serde(default)]
+    pub rate_limit: RateLimitRoot,
 }
 
 /// rate_limit 根对象

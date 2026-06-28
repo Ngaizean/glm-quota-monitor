@@ -71,10 +71,13 @@ interface Props {
  * 注意：API 可能返回多个同 type 的额度（如两个 TOKENS_LIMIT），
  * 必须按 (type, unit) 组合查找，不能用 find() 只取第一个。
  */
-type QuotaCategory = "hourly" | "weekly" | "monthly";
+type QuotaCategory = "hourly" | "weekly" | "monthly" | "sparkHourly" | "sparkWeekly";
 
 /** 根据 type+unit 判定额度类别，无法判定时用重置周期兜底 */
 function classifyLimit(limit: QuotaLimit): QuotaCategory | null {
+  // Spark 额度（GPT-5.3-Codex-Spark 独立窗口）
+  if (limit.type === "SPARK_5H") return "sparkHourly";
+  if (limit.type === "SPARK_WEEKLY") return "sparkWeekly";
   // 优先用 (type, unit) 组合精确匹配
   if (limit.type === "TOKENS_LIMIT") {
     if (limit.unit === 3) return "hourly";   // 5h 窗口
@@ -100,10 +103,12 @@ const CATEGORY_TITLE_KEY: Record<QuotaCategory, string> = {
   hourly: "quota.token5hTitle",
   weekly: "quota.weeklyTitle",
   monthly: "quota.mcpMonthlyTitle",
+  sparkHourly: "quota.spark5hTitle",
+  sparkWeekly: "quota.sparkWeeklyTitle",
 };
 
-/** 渲染顺序：5h 窗口 → 周额度 → 月度（按紧迫度递减） */
-const RENDER_ORDER: QuotaCategory[] = ["hourly", "weekly", "monthly"];
+/** 渲染顺序：5h 窗口 → 周额度 → Spark 5h → Spark 周 → 月度 */
+const RENDER_ORDER: QuotaCategory[] = ["hourly", "weekly", "sparkHourly", "sparkWeekly", "monthly"];
 
 export default function QuotaSection({ limits, isOffline }: Props) {
   const { t } = useTranslation();
