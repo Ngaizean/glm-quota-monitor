@@ -1,5 +1,6 @@
 pub mod account;
 pub mod agent;
+pub mod codex;
 pub mod alerts;
 pub mod cost;
 pub mod export;

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use thiserror::Error;
 
-const SERVICE_NAME: &str = "glm-quota-monitor";
+pub const SERVICE_NAME: &str = "glm-quota-monitor";
 
 static CACHE: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));

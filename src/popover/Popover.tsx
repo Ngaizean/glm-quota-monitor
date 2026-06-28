@@ -56,12 +56,20 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
   }, [refreshAll]);
 
   useEffect(() => {
+    let justShown = false;
+    const showTimer = setTimeout(() => { justShown = true; }, 300);
+
     const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) {
         debouncedRefresh();
+      } else if (justShown) {
+        // 失焦时自动关闭 popover（菜单栏应用标准行为）
+        // 避免刚 show 的瞬间触发，加 150ms 延迟让点击事件先消化
+        setTimeout(() => invoke("close_popover"), 150);
       }
     });
     return () => {
+      clearTimeout(showTimer);
       unlisten.then((fn) => fn());
     };
   }, [refreshAll]);
@@ -79,6 +87,9 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
     await invoke("set_primary_account", { id });
     refreshAll();
   }
+
+  const glmAccounts = accounts.filter((a) => a.platform !== "codex");
+  const codexAccounts = accounts.filter((a) => a.platform === "codex");
 
   return (
     <div
@@ -128,15 +139,50 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
           </div>
         )}
 
-        <AccountList
-          accounts={accounts}
-          expandedIds={expandedIds}
-          onToggle={toggleExpand}
-          onSetPrimary={handleSetPrimary}
-          quotas={quotas}
-          loading={loading}
-          refreshKey={refreshKey}
-        />
+        {initialized && glmAccounts.length > 0 && (
+          <div className="px-4">
+            <div className="flex items-center gap-1.5 mt-3 mb-1">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              </svg>
+              <span className="text-[9px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
+                {t('popover.sectionGlm')}
+              </span>
+            </div>
+            <AccountList
+              accounts={glmAccounts}
+              expandedIds={expandedIds}
+              onToggle={toggleExpand}
+              onSetPrimary={handleSetPrimary}
+              quotas={quotas}
+              loading={loading}
+              refreshKey={refreshKey}
+            />
+          </div>
+        )}
+
+        {initialized && codexAccounts.length > 0 && (
+          <div className="px-4">
+            <div className="flex items-center gap-1.5 mt-4 mb-1">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="16 18 22 12 16 6" />
+                <polyline points="8 6 2 12 8 18" />
+              </svg>
+              <span className="text-[9px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
+                {t('popover.sectionCodex')}
+              </span>
+            </div>
+            <AccountList
+              accounts={codexAccounts}
+              expandedIds={expandedIds}
+              onToggle={toggleExpand}
+              onSetPrimary={handleSetPrimary}
+              quotas={quotas}
+              loading={loading}
+              refreshKey={refreshKey}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

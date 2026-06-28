@@ -2,6 +2,7 @@ export interface Account {
   id: string;
   alias: string;
   purpose: string;
+  platform?: string;
   level: string | null;
   is_active: boolean;
   is_primary: boolean;
