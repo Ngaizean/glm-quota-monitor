@@ -205,15 +205,19 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                 </div>
               )}
               {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}
-              <div className="px-3 py-2.5">
-                <UsageSummary accountId={acc.id} tokenPct={tokenPct} refreshKey={refreshKey} />
-              </div>
-              <div className="px-3 pb-3">
-                <CostBar accountId={acc.id} refreshKey={refreshKey} />
-              </div>
-              <div className="px-3 pb-3">
-                <ToolUsageSection accountId={acc.id} refreshKey={refreshKey} />
-              </div>
+              {acc.platform !== "codex" && (
+                <>
+                  <div className="px-3 py-2.5">
+                    <UsageSummary accountId={acc.id} tokenPct={tokenPct} refreshKey={refreshKey} />
+                  </div>
+                  <div className="px-3 pb-3">
+                    <CostBar accountId={acc.id} refreshKey={refreshKey} />
+                  </div>
+                  <div className="px-3 pb-3">
+                    <ToolUsageSection accountId={acc.id} refreshKey={refreshKey} />
+                  </div>
+                </>
+              )}
               <div className="px-3 pb-3">
                 <TrendChart accountId={acc.id} refreshKey={refreshKey} />
               </div>

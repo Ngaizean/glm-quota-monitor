@@ -1,5 +1,6 @@
 mod alert;
 mod api;
+mod codex;
 mod commands;
 mod crypto;
 mod db;
@@ -32,6 +33,15 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::n
 struct RefreshResult {
     max_pct: i32,
     quotas: HashMap<String, QuotaData>,
+    /// 所有标记为 primary（收藏）的账号，含平台和百分比
+    primary_items: Vec<PrimaryDisplay>,
+}
+
+/// 状态栏显示项：平台 + 百分比
+#[derive(serde::Serialize, Clone)]
+struct PrimaryDisplay {
+    platform: String,
+    pct: i32,
 }
 
 fn get_db_path(app: &tauri::App) -> PathBuf {
@@ -130,12 +140,41 @@ fn resolve_api_key_for_refresh(db: &Database, account_id: &str, db_key: &str) ->
 
 /// 获取单个账号的配额数据 + 今日 token 用量
 fn fetch_account_quota(
-    _db: &Database,
-    _account_id: &str,
+    db: &Database,
+    account_id: &str,
     api_key: &str,
-) -> Result<(QuotaData, i32, f64), crate::api::client::ApiError> {
+) -> Result<(QuotaData, i32, f64), String> {
+    // 按 platform 分流
+    let platform: String = db
+        .conn
+        .lock()
+        .ok()
+        .and_then(|conn| {
+            conn.query_row(
+                "SELECT platform FROM accounts WHERE id = ?1",
+                rusqlite::params![account_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| "zhipu".to_string());
+
+    if platform == "codex" {
+        return fetch_codex_account_quota(db, account_id);
+    }
+
+    // GLM 默认路径
+    fetch_zhipu_account_quota(account_id, api_key)
+}
+
+/// GLM 账号额度查询（原有逻辑）
+fn fetch_zhipu_account_quota(
+    account_id: &str,
+    api_key: &str,
+) -> Result<(QuotaData, i32, f64), String> {
     let client = ZhipuClient::with_client(&HTTP_CLIENT, api_key);
-    let quota = tauri::async_runtime::block_on(client.get_quota_limit())?;
+    let quota =
+        tauri::async_runtime::block_on(client.get_quota_limit()).map_err(|e| e.to_string())?;
     let pct = quota
         .limits
         .iter()
@@ -143,10 +182,38 @@ fn fetch_account_quota(
         .map(|l| l.percentage as i32)
         .unwrap_or(0);
 
-    // 获取今日 token 用量（用于趋势图）— 复用共享函数，避免手动刷新清零
     let today_tokens = fetch_today_tokens(&client);
 
     Ok((quota, pct, today_tokens))
+}
+
+/// Codex 账号额度查询
+fn fetch_codex_account_quota(
+    db: &Database,
+    account_id: &str,
+) -> Result<(QuotaData, i32, f64), String> {
+    let auth = codex::auth::read_auth_from_keychain(account_id)?;
+    let usage = tauri::async_runtime::block_on(codex::client::CodexClient::get_usage(
+        &HTTP_CLIENT,
+        &auth.tokens.access_token,
+    ))
+    .map_err(|e| e.to_string())?;
+
+    let quota = codex::usage_to_quota_data(&usage);
+    // primary（5h 窗口）对应 TIME_LIMIT，用它作为托盘百分比来源
+    let pct = quota
+        .limits
+        .iter()
+        .find(|l| l.unit == Some(3.0))
+        .map(|l| l.percentage as i32)
+        .unwrap_or(0);
+
+    // 记录快照（Codex 无今日 token 概念，传 0.0）
+    if let Ok(conn) = db.conn.lock() {
+        let _ = db::record_quota_snapshot(&conn, account_id, &quota, 0.0);
+    }
+
+    Ok((quota, pct, 0.0))
 }
 
 /// 获取今日（本地 00:00 至现在）的 token 总用量。
@@ -281,22 +348,28 @@ fn detect_account_activity(conn: &rusqlite::Connection, account_id: &str, quota:
 fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
     let db = match app.try_state::<Database>() {
         Some(db) => db,
-        None => return RefreshResult { max_pct: 0, quotas: HashMap::new() },
+        None => return RefreshResult { max_pct: 0, quotas: HashMap::new(), primary_items: Vec::new() },
     };
 
-    // (id, alias, api_key, is_primary)
-    let accounts: Vec<(String, String, String, bool)> = {
+    // (id, alias, api_key, platform, is_primary)
+    let accounts: Vec<(String, String, String, String, bool)> = {
         let Ok(guard) = db.conn.lock() else {
-            return RefreshResult { max_pct: 0, quotas: HashMap::new() };
+            return RefreshResult { max_pct: 0, quotas: HashMap::new(), primary_items: Vec::new() };
         };
         let result = guard.prepare(
-            "SELECT id, alias, api_key, COALESCE(is_primary, 0) FROM accounts WHERE is_active = 1"
+            "SELECT id, alias, api_key, platform, COALESCE(is_primary, 0) FROM accounts WHERE is_active = 1"
         );
         let Ok(mut stmt) = result else {
-            return RefreshResult { max_pct: 0, quotas: HashMap::new() };
+            return RefreshResult { max_pct: 0, quotas: HashMap::new(), primary_items: Vec::new() };
         };
         let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get::<_, i32>(3)? == 1))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i32>(4)? == 1,
+            ))
         });
         match rows {
             Ok(r) => r.filter_map(|r| r.ok()).collect(),
@@ -319,22 +392,66 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
         });
 
     let mut max_pct = 0i32;
-    let mut primary_pct: Option<i32> = None;
+    let mut primary_items: Vec<PrimaryDisplay> = Vec::new();
     let mut quotas = HashMap::new();
 
-    for (account_id, account_alias, db_key, is_primary) in &accounts {
+    for (account_id, account_alias, db_key, platform, is_primary) in &accounts {
+        // Codex 账号凭证从 Keychain 读取（不走 GLM 的 api_key 解析）
+        if platform == "codex" {
+            match fetch_codex_account_quota(&db, account_id) {
+                Ok((mut quota, pct, _)) => {
+                    if pct > max_pct {
+                        max_pct = pct;
+                    }
+                    if *is_primary {
+                        primary_items.push(PrimaryDisplay { platform: "codex".to_string(), pct });
+                    }
+                    quotas.insert(account_id.clone(), quota.clone());
+                    let quota_clone = quota.clone();
+                    let app_clone = app.clone();
+                    let aid = account_id.clone();
+                    let alias = account_alias.clone();
+                    let wh = webhook_url.clone();
+                    alert::check_and_notify_with_webhook(
+                        &db,
+                        &aid,
+                        &alias,
+                        &quota_clone,
+                        |msg: &str| {
+                            use tauri_plugin_notification::NotificationExt;
+                            let _ = app_clone
+                                .notification()
+                                .builder()
+                                .title("GLM Quota Monitor")
+                                .body(msg.to_string())
+                                .show();
+                        },
+                        wh.as_deref(),
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Failed to refresh codex account {}: {}", account_id, e);
+                    if let Some(offline_quota) = build_offline_quota(&db, account_id, &crate::api::client::ApiError::Api { code: -1, msg: e }) {
+                        quotas.insert(account_id.clone(), offline_quota);
+                    }
+                }
+            }
+            continue;
+        }
+
+        // GLM 账号：从 Keychain 解析 API Key
         let api_key = match resolve_api_key_for_refresh(&db, account_id, db_key) {
             Some(k) => k,
             None => continue,
         };
 
-        match fetch_account_quota(&db, account_id, &api_key) {
+        match fetch_zhipu_account_quota(account_id, &api_key) {
             Ok((mut quota, pct, today_tokens)) => {
                 if pct > max_pct {
                     max_pct = pct;
                 }
                 if *is_primary {
-                    primary_pct = Some(pct);
+                    primary_items.push(PrimaryDisplay { platform: "zhipu".to_string(), pct });
                 }
 
                 if let Ok(conn2) = db.conn.lock() {
@@ -377,25 +494,157 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
             Err(e) => {
                 eprintln!("Failed to refresh account {}: {}", account_id, e);
 
-                if let Some(offline_quota) = build_offline_quota(&db, account_id, &e) {
+                let api_err = crate::api::client::ApiError::Api { code: -1, msg: e.clone() };
+                if let Some(offline_quota) = build_offline_quota(&db, account_id, &api_err) {
                     quotas.insert(account_id.clone(), offline_quota);
                 }
             }
         }
     }
 
-    let display_pct = primary_pct.unwrap_or(max_pct);
-    RefreshResult { max_pct: display_pct, quotas }
+    let display_pct = if primary_items.is_empty() { max_pct } else { primary_items.iter().map(|i| i.pct).max().unwrap_or(0) };
+    RefreshResult { max_pct: display_pct, quotas, primary_items }
 }
 
-fn update_tray_display(app: &tauri::AppHandle, percentage: i32) {
-    platform::update_tray(app, percentage);
+fn update_tray_display(app: &tauri::AppHandle, primary_items: &[PrimaryDisplay]) {
+    platform::update_tray(app, primary_items);
 }
 
 fn do_refresh(app: &tauri::AppHandle) {
     let result = refresh_all_accounts(app);
     MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
-    update_tray_display(app, result.max_pct);
+    update_tray_display(app, &result.primary_items);
+}
+
+/// Codex 鉴权自动上传调度
+/// 每 5 分钟检测一次本机 auth.json 是否变化（通过 last_refresh 字段或文件 mtime）
+/// 仅当角色为 owner 且配置了 Gist URL + Token 时才上传
+fn run_codex_auto_upload(app: &tauri::AppHandle) {
+    std::thread::sleep(Duration::from_secs(60));
+    let mut last_signature: Option<String> = None;
+
+    loop {
+        if let Some(db) = app.try_state::<Database>() {
+            let role = db
+                .conn
+                .lock()
+                .ok()
+                .and_then(|conn| {
+                    conn.query_row(
+                        "SELECT value FROM app_settings WHERE key = 'codex_role'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .ok()
+                })
+                .unwrap_or_else(|| "owner".to_string());
+
+            if role != "owner" {
+                std::thread::sleep(Duration::from_secs(300));
+                continue;
+            }
+
+            // 检查自动上传开关
+            let auto_upload = db
+                .conn
+                .lock()
+                .ok()
+                .and_then(|conn| {
+                    conn.query_row(
+                        "SELECT value FROM app_settings WHERE key = 'codex_auto_upload'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .ok()
+                })
+                .map(|v| v == "true")
+                .unwrap_or(false);
+
+            if !auto_upload {
+                std::thread::sleep(Duration::from_secs(300));
+                continue;
+            }
+
+            // 检测本机 auth.json 变化
+            let current_signature = match codex::auth::read_local_auth_json() {
+                Ok(auth) => {
+                    // 用 last_refresh + access_token 前 16 字符作为变化指纹
+                    let token_fingerprint = if auth.tokens.access_token.len() >= 16 {
+                        &auth.tokens.access_token[..16]
+                    } else {
+                        &auth.tokens.access_token
+                    };
+                    Some(format!(
+                        "{}|{}",
+                        auth.last_refresh.clone().unwrap_or_default(),
+                        token_fingerprint
+                    ))
+                }
+                Err(_) => None,
+            };
+
+            let changed = current_signature.as_deref() != last_signature.as_deref();
+
+            if changed && current_signature.is_some() {
+                // 有变化，触发上传
+                if let Err(e) = try_codex_auto_upload(&db) {
+                    eprintln!("Codex auto-upload failed: {}", e);
+                } else {
+                    eprintln!("Codex auto-upload: auth.json changed, uploaded successfully");
+                    last_signature = current_signature.clone();
+                }
+            } else if last_signature.is_none() && current_signature.is_some() {
+                // 首次检测，记录但不立即上传（等下次变化或手动上传）
+                last_signature = current_signature;
+            }
+        }
+
+        std::thread::sleep(Duration::from_secs(300)); // 5 分钟检测一次
+    }
+}
+
+/// 执行一次 Codex 鉴权上传（owner 自动触发）
+fn try_codex_auto_upload(db: &Database) -> Result<(), String> {
+    let gist_url = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        conn.query_row(
+            "SELECT value FROM app_settings WHERE key = 'codex_gist_url'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|_| "未配置 Gist URL".to_string())?
+    };
+    let github_token = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        conn.query_row(
+            "SELECT value FROM app_settings WHERE key = 'codex_github_token'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|_| "未配置 GitHub Token".to_string())?
+    };
+
+    let auth = codex::auth::read_local_auth_json()?;
+    let json = serde_json::to_string(&auth).map_err(|e| format!("序列化失败: {}", e))?;
+    let encrypted = codex::crypto::encrypt(&json)?;
+
+    tauri::async_runtime::block_on(codex::sync::push_to_gist(
+        &HTTP_CLIENT,
+        &gist_url,
+        &github_token,
+        &encrypted,
+    ))?;
+
+    // 记录上传时间
+    if let Ok(conn) = db.conn.lock() {
+        let now = chrono::Utc::now().to_rfc3339();
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('codex_last_upload', ?1)",
+            rusqlite::params![now],
+        );
+    }
+
+    Ok(())
 }
 
 fn run_spin_scheduler(app: &tauri::AppHandle) {
@@ -459,7 +708,7 @@ fn fit_window_size(app: tauri::AppHandle, height: f64) {
 fn refresh_all(app: tauri::AppHandle) -> Result<RefreshResult, String> {
     let result = refresh_all_accounts(&app);
     MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
-    update_tray_display(&app, result.max_pct);
+    update_tray_display(&app, &result.primary_items);
     Ok(result)
 }
 
@@ -551,6 +800,13 @@ pub fn run() {
                 }
             });
 
+            // Codex 鉴权自动上传线程（仅 owner 角色）
+            // 定时检测本机 auth.json 变化，自动加密上传到 Gist
+            let codex_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                run_codex_auto_upload(&codex_handle);
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -561,6 +817,8 @@ pub fn run() {
             commands::account::set_primary_account,
             commands::account::validate_api_key,
             commands::account::mask_api_key,
+            commands::account::get_api_key_raw,
+            commands::account::update_api_key,
             commands::agent::bind_agent,
             commands::agent::get_agent_bindings,
             commands::agent::unbind_agent,
@@ -590,6 +848,21 @@ pub fn run() {
             commands::tool_usage::get_tool_usage,
             commands::export::export_usage_csv,
             commands::export::export_usage_json,
+            commands::codex::get_codex_quota,
+            commands::codex::read_local_codex_auth,
+            commands::codex::add_codex_account,
+            commands::codex::upload_codex_auth,
+            commands::codex::sync_codex_auth,
+            commands::codex::test_codex_connection,
+            commands::codex::set_codex_gist_url,
+            commands::codex::get_codex_gist_url,
+            commands::codex::set_codex_github_token,
+            commands::codex::get_codex_github_token,
+            commands::codex::set_codex_role,
+            commands::codex::get_codex_role,
+            commands::codex::get_codex_sync_info,
+            commands::codex::set_codex_auto_upload,
+            commands::codex::get_codex_auto_upload,
             close_popover,
             start_window_drag,
             fit_window_size,

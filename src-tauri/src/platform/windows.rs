@@ -65,15 +65,17 @@ pub fn start_drag(window: &tauri::WebviewWindow) {
     }
 }
 
-pub fn update_tray(tray: &tauri::tray::TrayIcon, percentage: i32) {
-    if percentage >= 0 {
-        let icon = generate_tray_icon(percentage);
+pub fn update_tray(tray: &tauri::tray::TrayIcon, primary_items: &[crate::PrimaryDisplay]) {
+    if primary_items.is_empty() {
+        let _ = tray.set_tooltip(Some("GLM Quota Monitor"));
+    } else {
+        let max_pct = primary_items.iter().map(|i| i.pct).max().unwrap_or(0);
+        let icon = generate_tray_icon(max_pct);
         if let Some(img) = icon {
             let _ = tray.set_icon(Some(img));
         }
-        let _ = tray.set_tooltip(Some(&format!("GLM Quota Monitor — {}%", percentage)));
-    } else {
-        let _ = tray.set_tooltip(Some("GLM Quota Monitor"));
+        let tooltip = super::format_tray_items(primary_items);
+        let _ = tray.set_tooltip(Some(&format!("GLM Quota Monitor — {}", tooltip)));
     }
 }
 

@@ -171,13 +171,20 @@ pub fn set_primary_account(
 ) -> Result<(), String> {
     {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-        conn.execute("UPDATE accounts SET is_primary = 0", [])
-            .map_err(|e| e.to_string())?;
-        let rows = conn.execute("UPDATE accounts SET is_primary = 1 WHERE id = ?1 AND is_active = 1", rusqlite::params![id])
-            .map_err(|e| e.to_string())?;
-        if rows == 0 {
-            return Err("账号不存在或已停用".to_string());
-        }
+        // 切换逻辑：读取当前状态并翻转，不影响其他账号（支持多个收藏）
+        let current: i32 = conn
+            .query_row(
+                "SELECT COALESCE(is_primary, 0) FROM accounts WHERE id = ?1 AND is_active = 1",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )
+            .map_err(|_| "账号不存在或已停用".to_string())?;
+        let new_val = if current == 1 { 0 } else { 1 };
+        conn.execute(
+            "UPDATE accounts SET is_primary = ?1 WHERE id = ?2",
+            rusqlite::params![new_val, id],
+        )
+        .map_err(|e| e.to_string())?;
     }
     let _ = app.emit("accounts-changed", ());
     Ok(())
@@ -216,4 +223,62 @@ pub fn mask_api_key(db: State<'_, Database>, account_id: String) -> Result<Strin
     .ok_or("API Key 未找到".to_string())?;
 
     Ok(crypto::mask_key(&api_key))
+}
+
+/// 获取账号的明文 API Key（用于复制到剪贴板）
+/// 走与 mask_api_key 相同的 resolve 回退逻辑，保证从 DB 明文自动迁移到 Keychain
+#[tauri::command]
+pub fn get_api_key_raw(db: State<'_, Database>, account_id: String) -> Result<String, String> {
+    let db_key = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        conn.query_row(
+            "SELECT api_key FROM accounts WHERE id = ?1",
+            rusqlite::params![account_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|e| format!("账号不存在: {}", e))?
+    };
+
+    crypto::resolve_api_key(&account_id, &db_key, &|| {
+        if let Ok(c) = db.conn.lock() {
+            let _ = c.execute(
+                "UPDATE accounts SET api_key = '' WHERE id = ?1",
+                rusqlite::params![account_id],
+            );
+        }
+    })
+    .ok_or("API Key 未找到".to_string())
+}
+
+/// 修改账号的 API Key
+/// 先用新 Key 调智谱接口验证有效性（与 add_account 一致），通过后覆盖 Keychain 记录并刷新套餐等级
+#[tauri::command]
+pub fn update_api_key(
+    app: tauri::AppHandle,
+    db: State<'_, Database>,
+    account_id: String,
+    new_api_key: String,
+) -> Result<(), String> {
+    // 1. 验证新 Key 有效性
+    let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &new_api_key);
+    let quota = tauri::async_runtime::block_on(client.get_quota_limit())
+        .map_err(|e| format!("API Key 验证失败: {}", e))?;
+
+    // 2. 覆盖 Keychain 记录
+    crypto::store_api_key(&account_id, &new_api_key)
+        .map_err(|e| format!("凭据存储失败: {}", e))?;
+
+    // 3. 刷新账号套餐等级 + updated_at，并清除残留的 DB 明文
+    {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE accounts SET level = ?1, api_key = '', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![quota.level, now, account_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    let _ = app.emit("accounts-changed", ());
+    Ok(())
 }

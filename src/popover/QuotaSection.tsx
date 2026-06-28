@@ -12,30 +12,17 @@ function formatResetTime(ts: number, t: (key: string, options?: Record<string, u
   return t('quota.resetHours', { hours, minutes: mins });
 }
 
-/** 紧凑格式化绝对值：大数用万/亿，小数保留适当精度 */
-function formatAbsolute(n: number | undefined): string {
-  if (n === undefined || n === null || Number.isNaN(n)) return "—";
-  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}亿`;
-  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}万`;
-  if (n >= 100) return Math.round(n).toString();
-  if (n >= 1) return n.toFixed(n < 10 ? 1 : 0);
-  return n.toFixed(2);
-}
-
 interface QuotaBarProps {
   title: string;
   percentage: number;
   resetTime: number;
-  used?: number;
-  total?: number;
 }
 
-function QuotaBar({ title, percentage, resetTime, used, total }: QuotaBarProps) {
+function QuotaBar({ title, percentage, resetTime }: QuotaBarProps) {
   const { t } = useTranslation();
   const level = getStatusLevel(percentage);
   const colorVar = statusColorVar(level);
   const gradientVar = statusGradientVar(level);
-  const hasAbsolute = used !== undefined || total !== undefined;
 
   return (
     <div className="space-y-1.5">
@@ -63,11 +50,6 @@ function QuotaBar({ title, percentage, resetTime, used, total }: QuotaBarProps) 
           }}
         />
       </div>
-      {hasAbsolute && (
-        <div className="text-[9px] text-[var(--color-text-tertiary)] tabular-nums">
-          {formatAbsolute(used)} / {formatAbsolute(total)}
-        </div>
-      )}
     </div>
   );
 }
@@ -155,8 +137,6 @@ export default function QuotaSection({ limits, isOffline }: Props) {
             title={t(titleKey)}
             percentage={limit.percentage}
             resetTime={limit.nextResetTime}
-            used={limit.usage}
-            total={limit.number}
           />
         );
       })}

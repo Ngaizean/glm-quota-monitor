@@ -76,12 +76,23 @@ const ANTHROPIC_BASE_URL: &str = "https://open.bigmodel.cn/api/anthropic";
 
 /// 查找 openclaw CLI 路径 — 覆盖 Homebrew / Cargo / npm / 用户本地 / Windows
 fn find_openclaw_cli() -> Result<String, String> {
-    // 已知常见安装路径
+    // 已知常见安装路径（按平台区分）
+    #[cfg(target_os = "windows")]
+    let mut candidates: Vec<String> = {
+        let mut v: Vec<String> = Vec::new();
+        if let Some(home) = dirs::home_dir() {
+            v.push(home.join(r".cargo\bin\openclaw.exe").to_string_lossy().into_owned());
+            v.push(home.join(r"AppData\Roaming\npm\openclaw.cmd").to_string_lossy().into_owned());
+            v.push(home.join(r".local\bin\openclaw.exe").to_string_lossy().into_owned());
+        }
+        v
+    };
+    #[cfg(not(target_os = "windows"))]
     let mut candidates: Vec<String> = vec![
         "/opt/homebrew/bin/openclaw".into(),
         "/usr/local/bin/openclaw".into(),
     ];
-    // 用户本地路径
+    #[cfg(not(target_os = "windows"))]
     if let Some(home) = dirs::home_dir() {
         candidates.push(home.join(".local/bin/openclaw").to_string_lossy().into_owned());
         candidates.push(home.join(".cargo/bin/openclaw").to_string_lossy().into_owned());

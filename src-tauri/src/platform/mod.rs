@@ -52,15 +52,33 @@ pub fn init_app(app: &mut tauri::App) {
 }
 
 /// 更新托盘显示（macOS 用文字，Windows 用图标）
-pub fn update_tray(app: &tauri::AppHandle, percentage: i32) {
+/// primary_items: 所有收藏账号的平台+百分比；为空则只显示图标
+pub fn update_tray(app: &tauri::AppHandle, primary_items: &[crate::PrimaryDisplay]) {
     if let Some(tray) = app.tray_by_id("main") {
         #[cfg(target_os = "macos")]
-        macos::update_tray(&tray, percentage);
+        macos::update_tray(&tray, primary_items);
         #[cfg(target_os = "windows")]
-        windows::update_tray(&tray, percentage);
+        windows::update_tray(&tray, primary_items);
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
-            let _ = tray.set_tooltip(Some(&format!("GLM Quota Monitor — {}%", percentage)));
+            if primary_items.is_empty() {
+                let _ = tray.set_tooltip(Some("GLM Quota Monitor"));
+            } else {
+                let s = format_tray_items(primary_items);
+                let _ = tray.set_tooltip(Some(&format!("GLM Quota Monitor — {}", s)));
+            }
         }
     }
+}
+
+/// 格式化状态栏文本：G42% C0%（G=GLM，C=Codex）
+pub fn format_tray_items(items: &[crate::PrimaryDisplay]) -> String {
+    items
+        .iter()
+        .map(|i| {
+            let prefix = if i.platform == "codex" { "C" } else { "G" };
+            format!("{}{}%", prefix, i.pct)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
