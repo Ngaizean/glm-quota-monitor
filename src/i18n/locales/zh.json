@@ -27,6 +27,8 @@
     "token5hTitle": "5 小时窗口",
     "weeklyTitle": "周额度",
     "mcpMonthlyTitle": "MCP 月度",
+    "spark5hTitle": "Spark 5 小时",
+    "sparkWeeklyTitle": "Spark 周额度",
     "resetSoon": "即将重置",
     "resetDays": "{{count}}天",
     "resetHours": "{{hours}}时{{minutes}}分",
