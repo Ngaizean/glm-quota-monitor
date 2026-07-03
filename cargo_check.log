@@ -1,0 +1,9 @@
+error: failed to select a version for `reqwest`.
+    ... required by package `glm-quota-monitor v6.1.0 (R:\Project\TOYS\glm-quota-monitor\src-tauri)`
+versions that meet the requirements `^0.12` (locked to 0.12.28) are: 0.12.28
+
+package `glm-quota-monitor` depends on `reqwest` with feature `proxy` but `reqwest` does not have that feature.
+help: available features: __rustls, __rustls-ring, __tls, blocking, brotli, charset, cookies, default, default-tls, deflate, gzip, h2, hickory-dns, http2, http3, json, macos-system-configuration, multipart, native-tls, native-tls-alpn, native-tls-vendored, rustls-tls, rustls-tls-manual-roots, rustls-tls-manual-roots-no-provider, rustls-tls-native-roots, rustls-tls-native-roots-no-provider, rustls-tls-no-provider, rustls-tls-webpki-roots, rustls-tls-webpki-roots-no-provider, socks, stream, system-proxy, trust-dns, zstd
+
+
+failed to select a version for `reqwest` which could resolve this conflict
