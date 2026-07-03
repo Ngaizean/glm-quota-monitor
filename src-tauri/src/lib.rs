@@ -772,9 +772,7 @@ pub fn run() {
                 }
             }
 
-            app.manage(db);
-
-            // 初始化 Codex/Gist 代理 client（境外端点走代理，智谱走直连）
+            // 在 manage 前读取代理配置（app.manage 会 move db）
             let proxy_url = db
                 .conn
                 .lock()
@@ -788,6 +786,10 @@ pub fn run() {
                     .ok()
                 })
                 .unwrap_or_default();
+
+            app.manage(db);
+
+            // 初始化 Codex/Gist 代理 client（境外端点走代理，智谱走直连）
             init_proxy_client(&proxy_url);
 
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
