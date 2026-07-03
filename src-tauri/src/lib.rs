@@ -14,7 +14,7 @@ use db::Database;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -28,6 +28,40 @@ const DEFAULT_REFRESH_INTERVAL_SECS: u64 = 300;
 
 static MAX_PERCENTAGE: AtomicI32 = AtomicI32::new(-1);
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+/// Codex/Gist 专用代理 client（chatgpt.com / github.com 等境外端点）
+/// 智谱 API 继续用 HTTP_CLIENT 直连（国内）
+static PROXY_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// 默认代理地址（Clash Verge / Mihomo 常用混合端口）
+const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:7897";
+
+/// 构造代理 client。proxy_url 为空时用默认代理；代理构造失败回退到直连（不崩）。
+fn build_proxy_client(proxy_url: &str) -> reqwest::Client {
+    let url = if proxy_url.trim().is_empty() {
+        DEFAULT_PROXY_URL
+    } else {
+        proxy_url.trim()
+    };
+    match reqwest::Proxy::all(url) {
+        Ok(proxy) => reqwest::Client::builder()
+            .proxy(proxy)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new()),
+        Err(_) => reqwest::Client::new(),
+    }
+}
+
+/// 在 setup 里调用：依据数据库 codex_proxy 配置初始化代理 client。
+/// 后续修改代理地址需重启 app 才生效（OnceLock 限制）。
+pub fn init_proxy_client(proxy_url: &str) {
+    let _ = PROXY_CLIENT.set(build_proxy_client(proxy_url));
+}
+
+/// 取代理 client。setup 已初始化则复用；否则用默认地址懒构造。
+pub fn proxy_http_client() -> &'static reqwest::Client {
+    PROXY_CLIENT.get_or_init(|| build_proxy_client(DEFAULT_PROXY_URL))
+}
 
 #[derive(serde::Serialize)]
 struct RefreshResult {
@@ -194,7 +228,7 @@ fn fetch_codex_account_quota(
 ) -> Result<(QuotaData, i32, f64), String> {
     let auth = codex::auth::read_auth_from_keychain(account_id)?;
     let usage = tauri::async_runtime::block_on(codex::client::CodexClient::get_usage(
-        &HTTP_CLIENT,
+        proxy_http_client(),
         &auth.tokens.access_token,
     ))
     .map_err(|e| e.to_string())?;
@@ -629,7 +663,7 @@ fn try_codex_auto_upload(db: &Database) -> Result<(), String> {
     let encrypted = codex::crypto::encrypt(&json)?;
 
     tauri::async_runtime::block_on(codex::sync::push_to_gist(
-        &HTTP_CLIENT,
+        proxy_http_client(),
         &gist_url,
         &github_token,
         &encrypted,
@@ -739,6 +773,22 @@ pub fn run() {
             }
 
             app.manage(db);
+
+            // 初始化 Codex/Gist 代理 client（境外端点走代理，智谱走直连）
+            let proxy_url = db
+                .conn
+                .lock()
+                .ok()
+                .and_then(|conn| {
+                    conn.query_row(
+                        "SELECT value FROM app_settings WHERE key = 'codex_proxy'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .ok()
+                })
+                .unwrap_or_default();
+            init_proxy_client(&proxy_url);
 
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
             let refresh_item = MenuItemBuilder::with_id("refresh", "立即刷新").build(app)?;
@@ -863,6 +913,8 @@ pub fn run() {
             commands::codex::get_codex_sync_info,
             commands::codex::set_codex_auto_upload,
             commands::codex::get_codex_auto_upload,
+            commands::codex::set_codex_proxy,
+            commands::codex::get_codex_proxy,
             close_popover,
             start_window_drag,
             fit_window_size,
