@@ -180,17 +180,20 @@ pub async fn sync_codex_auth(db: State<'_, Database>) -> Result<(), String> {
     let gist_url = read_setting(&db, GIST_URL_KEY)
         .ok_or("未配置 Gist URL，请在设置中填写")?;
 
-    // 2. 解析 raw URL（优先尝试直接当 raw URL，失败则用 token 解析）
-    let encrypted = match codex::sync::fetch_from_gist(crate::proxy_http_client(), &gist_url).await {
-        Ok(content) => content,
-        Err(_) => {
-            // 如果直接访问失败，尝试用 GitHub Token 解析 gist raw URL
-            let token = read_setting(&db, GITHUB_TOKEN_KEY)
-                .ok_or("无法拉取 Gist 且未配置 GitHub Token")?;
-            let raw_url =
-                codex::sync::resolve_gist_raw_url(crate::proxy_http_client(), &gist_url, &token).await?;
-            codex::sync::fetch_from_gist(crate::proxy_http_client(), &raw_url).await?
-        }
+    // 2. 拉取加密内容（按 URL 类型分流）
+    //    - raw URL (gist.githubusercontent.com)：直接匿名 fetch
+    //    - 网页 URL / API URL：用 GitHub Token 解析出 raw URL 后再 fetch
+    //      （旧实现的“先试 raw、失败再 resolve”无效：网页/API URL 都返回 HTTP 200，
+    //       永远不会触发 fallback，导致 HTML/JSON 被当成 base64 送进 decrypt）
+    let encrypted = if gist_url.contains("gistusercontent.com") {
+        codex::sync::fetch_from_gist(crate::proxy_http_client(), &gist_url).await?
+    } else {
+        let token = read_setting(&db, GITHUB_TOKEN_KEY).ok_or(
+            "Gist 是网页/API 链接，需要 GitHub Token 解析 raw URL。请在设置中配置 Token，或改填 raw URL",
+        )?;
+        let raw_url =
+            codex::sync::resolve_gist_raw_url(crate::proxy_http_client(), &gist_url, &token).await?;
+        codex::sync::fetch_from_gist(crate::proxy_http_client(), &raw_url).await?
     };
 
     // 3. 解密
