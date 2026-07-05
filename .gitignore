@@ -6,3 +6,14 @@ src-tauri/gen/schemas/
 *.dmg
 CLAUDE.md
 /.claude
+
+# 临时测试产物 / 凭据文件(禁止入库)
+gist_meta.json
+*.token
+*.secret
+*.key
+*.pem
+.env*
+.env.local
+secrets/
+
