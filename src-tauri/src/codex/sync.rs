@@ -46,13 +46,17 @@ pub async fn resolve_gist_raw_url(
     let url = format!("https://api.github.com/gists/{}", gist_id);
 
     let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", github_token))
-            .map_err(|_| "无效的 GitHub Token".to_string())?,
-    );
     headers.insert(USER_AGENT, HeaderValue::from_static("glm-quota-monitor"));
     headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
+    // Token 可选：gist 是 unlisted，匿名也能访问单个 gist；
+    // 有 token 时携带（提升 GitHub API 速率限制），为空时匿名请求
+    if !github_token.is_empty() {
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", github_token))
+                .map_err(|_| "无效的 GitHub Token".to_string())?,
+        );
+    }
 
     let resp = http
         .get(&url)

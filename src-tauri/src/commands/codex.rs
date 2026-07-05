@@ -188,9 +188,10 @@ pub async fn sync_codex_auth(db: State<'_, Database>) -> Result<(), String> {
     let encrypted = if gist_url.contains("gistusercontent.com") {
         codex::sync::fetch_from_gist(crate::proxy_http_client(), &gist_url).await?
     } else {
-        let token = read_setting(&db, GITHUB_TOKEN_KEY).ok_or(
-            "Gist 是网页/API 链接，需要 GitHub Token 解析 raw URL。请在设置中配置 Token，或改填 raw URL",
-        )?;
+        // 网页 URL / API URL → resolve 出 raw URL
+        // consumer 角色无 token 字段，但 gist 是 unlisted，匿名 resolve 也能工作；
+        // 有 token 时携带，提升 GitHub API 速率限制
+        let token = read_setting(&db, GITHUB_TOKEN_KEY).unwrap_or_default();
         let raw_url =
             codex::sync::resolve_gist_raw_url(crate::proxy_http_client(), &gist_url, &token).await?;
         codex::sync::fetch_from_gist(crate::proxy_http_client(), &raw_url).await?
