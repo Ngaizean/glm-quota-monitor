@@ -9,6 +9,9 @@ pub enum CodexApiError {
     Request(#[from] reqwest::Error),
     #[error("Codex API 返回错误: HTTP {0}")]
     Http(reqwest::StatusCode),
+    /// Token 被吊销（不是过期），需要重新登录 Codex
+    #[error("Token 已被吊销，请重新登录 Codex")]
+    TokenInvalidated,
     #[error("响应解析失败: {0}")]
     Parse(String),
     #[error("无 access_token，凭证可能已失效")]
@@ -38,6 +41,15 @@ impl CodexClient {
 
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
+            // 检查是否是 token 被吊销（区别于普通过期）
+            let error_code = resp
+                .headers()
+                .get("x-openai-ide-error-code")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if error_code == "token_invalidated" {
+                return Err(CodexApiError::TokenInvalidated);
+            }
             return Err(CodexApiError::Http(status));
         }
         if !status.is_success() {

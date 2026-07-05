@@ -18,25 +18,51 @@ interface SyncInfo {
 const inputClass =
   "w-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-[var(--color-accent)]/20 focus:border-[var(--color-accent)] transition-[var(--transition-fast)] placeholder:text-[var(--color-text-tertiary)]";
 
-function formatTime(iso: string | null, t: (key: string, options?: Record<string, unknown>) => string): string {
+/** 格式化 token 过期时间（未来=倒计时，过去=已过期）
+ *  用于 access_token_exp 这种表示"到期时间"的字段
+ */
+function formatExpiry(iso: string | null, t: (key: string, options?: Record<string, unknown>) => string): string {
   if (!iso) return "—";
   const date = new Date(iso);
   if (isNaN(date.getTime())) return "—";
   const diff = date.getTime() - Date.now();
   const absDiff = Math.abs(diff);
+  const isPast = diff < 0;
   const days = Math.floor(absDiff / 86400000);
   const hours = Math.floor((absDiff % 86400000) / 3600000);
-  const isPast = diff < 0;
+  const mins = Math.floor((absDiff % 3600000) / 60000);
 
   if (days > 0) {
     return isPast
       ? t('codexPane.expiredDaysAgo', { count: days })
       : t('codexPane.expiresInDays', { count: days, hours });
   }
-  const mins = Math.floor((absDiff % 3600000) / 60000);
+  if (hours > 0) {
+    return isPast
+      ? t('codexPane.expiredHoursAgo', { count: hours })
+      : t('codexPane.expiresInHours', { hours, minutes: mins });
+  }
   return isPast
-    ? t('codexPane.expiredHoursAgo', { count: hours })
-    : t('codexPane.expiresInHours', { hours, minutes: mins });
+    ? t('codexPane.expiredMinsAgo', { count: Math.max(mins, 1) })
+    : t('codexPane.expiresInMins', { count: Math.max(mins, 1) });
+}
+
+/** 格式化相对时间（上次操作距今多久）
+ *  用于 last_upload / last_sync 这种表示"操作时间"的字段
+ */
+function formatRelative(iso: string | null, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return "—";
+  const diff = Date.now() - date.getTime();
+  if (diff < 0) return t('account.justNow');
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (days > 0) return t('account.daysAgo', { count: days });
+  if (hours > 0) return t('account.hoursAgo', { count: hours });
+  if (mins > 0) return t('account.minutesAgo', { count: mins });
+  return t('account.justNow');
 }
 
 export default function CodexPane() {
@@ -52,6 +78,7 @@ export default function CodexPane() {
   const [info, setInfo] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [autoUpload, setAutoUpload] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -79,13 +106,20 @@ export default function CodexPane() {
   }
 
   async function refreshAuth() {
+    setRefreshing(true);
+    setError("");
+    setInfo("");
     try {
       const auth = await invoke<AuthSummary>("read_local_codex_auth");
       setAuthSummary(auth);
       const sync = await invoke<SyncInfo>("get_codex_sync_info");
       setSyncInfo(sync);
+      setInfo(t('codexPane.refreshSuccess'));
+      setTimeout(() => setInfo(""), 3000);
     } catch (e) {
       setError(String(e));
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -206,9 +240,21 @@ export default function CodexPane() {
           </span>
           <button
             onClick={refreshAuth}
-            className="text-[10px] text-[var(--color-text-tertiary)] hover:text-[var(--color-accent)] transition-[var(--transition-fast)]"
+            disabled={refreshing}
+            className="flex items-center gap-1 text-[10px] text-[var(--color-text-tertiary)] hover:text-[var(--color-accent)] disabled:opacity-50 transition-[var(--transition-fast)]"
           >
-            {t('codexPane.refresh')}
+            {refreshing ? (
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="23 4 23 10 17 10" />
+                <polyline points="1 20 1 14 7 14" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+            )}
+            {refreshing ? t('codexPane.refreshing') : t('codexPane.refresh')}
           </button>
         </div>
 
@@ -229,7 +275,7 @@ export default function CodexPane() {
                     : "text-[var(--color-success)]"
                 }`}
               >
-                {formatTime(authSummary.access_token_exp, t)}
+                {formatExpiry(authSummary.access_token_exp, t)}
               </span>
             </div>
             {tokenExpired && (
@@ -285,7 +331,7 @@ export default function CodexPane() {
               <span className="text-[var(--color-text-tertiary)]">{t('codexPane.lastUpload')}</span>
               <span className="text-[var(--color-text-secondary)]">
                 {syncInfo?.last_upload
-                  ? formatTime(syncInfo.last_upload, t)
+                  ? formatRelative(syncInfo.last_upload, t)
                   : t('codexPane.never')}
               </span>
             </div>
@@ -318,8 +364,8 @@ export default function CodexPane() {
             <span className="text-[var(--color-text-tertiary)]">{t('codexPane.lastSync')}</span>
             <span className="text-[var(--color-text-secondary)]">
               {syncInfo?.last_sync
-                ? formatTime(syncInfo.last_sync, t)
-                : t('codexPane.never')}
+                  ? formatRelative(syncInfo.last_sync, t)
+                  : t('codexPane.never')}
             </span>
           </div>
           <button

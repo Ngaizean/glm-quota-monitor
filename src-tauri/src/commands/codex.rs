@@ -24,7 +24,7 @@ fn read_setting(db: &Database, key: &str) -> Option<String> {
 }
 
 /// 从 Keychain 读取 codex 凭证并查询额度，返回统一 QuotaData
-fn fetch_codex_usage(db: &Database, account_id: &str) -> Result<QuotaData, String> {
+fn fetch_codex_usage(_db: &Database, account_id: &str) -> Result<QuotaData, String> {
     let auth = codex::auth::read_auth_from_keychain(account_id)?;
     let usage = tauri::async_runtime::block_on(codex::client::CodexClient::get_usage(
         crate::proxy_http_client(),
@@ -239,7 +239,7 @@ pub async fn sync_codex_auth(db: State<'_, Database>) -> Result<(), String> {
 
 /// 测试 Codex 连接（验证 access_token 是否有效）
 #[tauri::command]
-pub async fn test_codex_connection(db: State<'_, Database>, account_id: String) -> Result<codex::types::UsageResponse, String> {
+pub async fn test_codex_connection(_db: State<'_, Database>, account_id: String) -> Result<codex::types::UsageResponse, String> {
     let auth = codex::auth::read_auth_from_keychain(&account_id)?;
     let usage = codex::client::CodexClient::get_usage(crate::proxy_http_client(), &auth.tokens.access_token)
         .await

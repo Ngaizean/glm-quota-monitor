@@ -13,7 +13,8 @@
     "sectionCodex": "Codex"
   },
   "account": {
-    "setPrimary": "设为主账号",
+    "setPrimary": "设为收藏",
+    "unsetPrimary": "取消收藏",
     "lastActive": "上次活跃",
     "justNow": "刚刚",
     "minutesAgo": "{{count}} 分钟前",
@@ -187,10 +188,14 @@
     "syncSuccess": "鉴权文件已同步到本机",
     "syncDesc": "从 Gist 拉取加密文件 → 解密 → 写入 ~/.codex/auth.json",
     "refresh": "刷新",
+    "refreshing": "刷新中...",
+    "refreshSuccess": "已刷新本机鉴权状态",
     "expiresInDays": "{{count}}天{{hours}}小时后过期",
     "expiresInHours": "{{hours}}小时{{minutes}}分后过期",
     "expiredDaysAgo": "{{count}}天前已过期",
-    "expiredHoursAgo": "{{count}}小时前已过期"
+    "expiredHoursAgo": "{{count}}小时前已过期",
+    "expiresInMins": "{{count}}分钟后过期",
+    "expiredMinsAgo": "{{count}}分钟前已过期"
   },
   "spinPane": {
     "autoSpin": "自动空转",

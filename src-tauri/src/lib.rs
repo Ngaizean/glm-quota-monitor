@@ -203,7 +203,7 @@ fn fetch_account_quota(
 
 /// GLM 账号额度查询（原有逻辑）
 fn fetch_zhipu_account_quota(
-    account_id: &str,
+    _account_id: &str,
     api_key: &str,
 ) -> Result<(QuotaData, i32, f64), String> {
     let client = ZhipuClient::with_client(&HTTP_CLIENT, api_key);
@@ -222,19 +222,92 @@ fn fetch_zhipu_account_quota(
 }
 
 /// Codex 账号额度查询
+/// 优先使用本机 auth.json；必要时刷新 token 并同步到 Keychain。
 fn fetch_codex_account_quota(
     db: &Database,
     account_id: &str,
 ) -> Result<(QuotaData, i32, f64), String> {
-    let auth = codex::auth::read_auth_from_keychain(account_id)?;
-    let usage = tauri::async_runtime::block_on(codex::client::CodexClient::get_usage(
+    // 第一步：尝试本机 auth.json（Codex CLI 维护的，总是最新源）
+    let local_auth = codex::auth::read_local_auth_json()
+        .or_else(|_| codex::auth::read_auth_from_keychain(account_id))?;
+
+    if local_auth.tokens.access_token.is_empty() {
+        return Err("无 access_token".to_string());
+    }
+
+    // 检查 token 是否快过期（<2天），如果是则自动刷新
+    let auth = if is_token_expiring_soon(&local_auth.tokens.access_token, 2) {
+        eprintln!("Codex token 即将过期，尝试自动刷新...");
+        match codex::auth::refresh_and_sync(proxy_http_client(), &local_auth, account_id) {
+            Ok(new_auth) => {
+                eprintln!("Codex token 自动刷新成功");
+                new_auth
+            }
+            Err(e) => {
+                eprintln!("Codex token 自动刷新失败: {}，继续用旧 token 尝试", e);
+                local_auth
+            }
+        }
+    } else {
+        // 同步到 Keychain（确保 Keychain 也有最新版本）
+        let _ = codex::auth::store_auth_to_keychain(account_id, &local_auth);
+        local_auth
+    };
+
+    let usage_result = tauri::async_runtime::block_on(codex::client::CodexClient::get_usage(
         proxy_http_client(),
         &auth.tokens.access_token,
-    ))
-    .map_err(|e| e.to_string())?;
+    ));
 
-    let quota = codex::usage_to_quota_data(&usage);
-    // primary（5h 窗口）对应 TIME_LIMIT，用它作为托盘百分比来源
+    let usage = match usage_result {
+        Ok(usage) => usage,
+        Err(codex::client::CodexApiError::Http(reqwest::StatusCode::UNAUTHORIZED)) => {
+            eprintln!("Codex token 返回 401，尝试刷新后重试...");
+            let refreshed = codex::auth::refresh_and_sync(proxy_http_client(), &auth, account_id)
+                .map_err(|e| format!("wham/usage 调用失败，且刷新 token 失败: {}", e))?;
+            tauri::async_runtime::block_on(codex::client::CodexClient::get_usage(
+                proxy_http_client(),
+                &refreshed.tokens.access_token,
+            ))
+            .map_err(|e| format!("wham/usage 重试失败: {}", e))?
+        }
+        Err(e) => return Err(format!("wham/usage 调用失败: {}", e)),
+    };
+
+    Ok(finalize_codex_quota(db, account_id, &usage))
+}
+
+/// 检查 JWT access_token 是否在 N 天内过期
+fn is_token_expiring_soon(access_token: &str, days: i64) -> bool {
+    use base64::Engine;
+    let parts: Vec<&str> = access_token.split('.').collect();
+    if parts.len() < 2 {
+        return true; // 解析失败视为快过期（保守）
+    }
+    let payload = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
+        Ok(p) => p,
+        Err(_) => return true,
+    };
+    let v: serde_json::Value = match serde_json::from_slice(&payload) {
+        Ok(v) => v,
+        Err(_) => return true,
+    };
+    let exp = match v.get("exp").and_then(|e| e.as_i64()) {
+        Some(e) => e,
+        None => return true,
+    };
+    let now = chrono::Utc::now().timestamp();
+    let remaining_days = (exp - now) / 86400;
+    remaining_days < days
+}
+
+/// 统一处理 Codex quota 转换 + 快照记录 + 活跃检测
+fn finalize_codex_quota(
+    db: &Database,
+    account_id: &str,
+    usage: &codex::types::UsageResponse,
+) -> (QuotaData, i32, f64) {
+    let quota = codex::usage_to_quota_data(usage);
     let pct = quota
         .limits
         .iter()
@@ -242,12 +315,44 @@ fn fetch_codex_account_quota(
         .map(|l| l.percentage as i32)
         .unwrap_or(0);
 
-    // 记录快照（Codex 无今日 token 概念，传 0.0）
     if let Ok(conn) = db.conn.lock() {
         let _ = db::record_quota_snapshot(&conn, account_id, &quota, 0.0);
+        detect_codex_activity(&conn, account_id, &quota);
     }
 
-    Ok((quota, pct, 0.0))
+    (quota, pct, 0.0)
+}
+
+/// Codex 活跃检测：对比 5h 窗口百分比变化。
+fn detect_codex_activity(conn: &rusqlite::Connection, account_id: &str, quota: &QuotaData) {
+    let prev_pct = conn
+        .query_row(
+            "SELECT token_limit_pct FROM usage_snapshots \
+             WHERE account_id = ?1 AND token_limit_pct IS NOT NULL \
+             ORDER BY timestamp DESC LIMIT 1 OFFSET 1",
+            rusqlite::params![account_id],
+            |row| row.get::<_, Option<f64>>(0),
+        )
+        .ok()
+        .flatten();
+
+    let current_5h = quota
+        .limits
+        .iter()
+        .find(|l| l.limit_type == "TOKENS_LIMIT" && l.unit == Some(3.0))
+        .map(|l| l.percentage)
+        .unwrap_or(0.0);
+
+    if let Some(prev) = prev_pct {
+        if current_5h > prev {
+            let now_str = chrono::Local::now().to_rfc3339();
+            let key = format!("last_active_{}", account_id);
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![key, now_str],
+            );
+        }
+    }
 }
 
 /// 获取今日（本地 00:00 至现在）的 token 总用量。
@@ -340,9 +445,15 @@ fn build_offline_quota(
     // 401 特殊标记
     if matches!(error, crate::api::client::ApiError::Unauthorized) {
         offline_quota.error = Some("API Key 无效或已过期".into());
+    } else if error.to_string().contains("吊销") || error.to_string().contains("TokenInvalidated") {
+        // Codex token 被吊销（不是过期），特殊提示
+        offline_quota.error = Some("Token 已被吊销，请重新登录 Codex".into());
     } else if offline_quota.limits.is_empty() {
         // 完全无缓存时不展示
         return None;
+    } else {
+        // 有缓存但本次失败，附带错误信息
+        offline_quota.error = Some(format!("{}", error));
     }
 
     Some(offline_quota)
@@ -440,6 +551,17 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                     if *is_primary {
                         primary_items.push(PrimaryDisplay { platform: "codex".to_string(), pct });
                     }
+
+                    // 读取持久化的 last_active（和 GLM 一致）
+                    if let Ok(conn2) = db.conn.lock() {
+                        let key = format!("last_active_{}", account_id);
+                        quota.last_active = conn2.query_row(
+                            "SELECT value FROM app_settings WHERE key = ?1",
+                            rusqlite::params![key],
+                            |row| row.get::<_, String>(0),
+                        ).ok();
+                    }
+
                     quotas.insert(account_id.clone(), quota.clone());
                     let quota_clone = quota.clone();
                     let app_clone = app.clone();

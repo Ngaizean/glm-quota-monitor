@@ -13,7 +13,8 @@
     "sectionCodex": "Codex"
   },
   "account": {
-    "setPrimary": "Set as primary",
+    "setPrimary": "Add to favorites",
+    "unsetPrimary": "Remove from favorites",
     "lastActive": "Last active",
     "justNow": "just now",
     "minutesAgo": "{{count}} min ago",
@@ -187,10 +188,14 @@
     "syncSuccess": "Auth file synced to local machine",
     "syncDesc": "Fetches encrypted file from Gist → decrypt → writes to ~/.codex/auth.json",
     "refresh": "Refresh",
+    "refreshing": "Refreshing...",
+    "refreshSuccess": "Local auth status refreshed",
     "expiresInDays": "Expires in {{count}}d {{hours}}h",
     "expiresInHours": "Expires in {{hours}}h {{minutes}}m",
     "expiredDaysAgo": "Expired {{count}} days ago",
-    "expiredHoursAgo": "Expired {{count}} hours ago"
+    "expiredHoursAgo": "Expired {{count}} hours ago",
+    "expiresInMins": "Expires in {{count}} min",
+    "expiredMinsAgo": "Expired {{count}} min ago"
   },
   "spinPane": {
     "autoSpin": "Auto Spin",
