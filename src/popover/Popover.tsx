@@ -55,22 +55,37 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
     refreshAll();
   }, [refreshAll]);
 
+  const lastMoveRef = useRef(0);
+
   useEffect(() => {
     let justShown = false;
     const showTimer = setTimeout(() => { justShown = true; }, 300);
 
-    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    const win = getCurrentWindow();
+    // 拖动窗口（标题栏 drag-region）在 Windows 上会触发短暂失焦，
+    // 记录最近一次窗口移动时间，失焦关闭前判断是否"刚刚在拖动"以避免误关。
+    const unlistenMove = win.onMoved(() => {
+      lastMoveRef.current = Date.now();
+    });
+
+    const unlisten = win.onFocusChanged(({ payload: focused }) => {
       if (focused) {
         debouncedRefresh();
       } else if (justShown) {
         // 失焦时自动关闭 popover（菜单栏应用标准行为）
-        // 避免刚 show 的瞬间触发，加 150ms 延迟让点击事件先消化
-        setTimeout(() => invoke("close_popover"), 150);
+        // 加 150ms 延迟让点击事件先消化；若 400ms 内窗口移动过（正在拖动），跳过关闭
+        setTimeout(() => {
+          const sinceMove = Date.now() - lastMoveRef.current;
+          if (sinceMove > 400) {
+            invoke("close_popover");
+          }
+        }, 150);
       }
     });
     return () => {
       clearTimeout(showTimer);
       unlisten.then((fn) => fn());
+      unlistenMove.then((fn) => fn());
     };
   }, [refreshAll]);
 

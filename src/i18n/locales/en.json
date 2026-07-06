@@ -27,6 +27,7 @@
     "mcpTitle": "MCP Call Quota",
     "token5hTitle": "5-Hour Window",
     "weeklyTitle": "Weekly Quota",
+    "weeklyShort": "W",
     "mcpMonthlyTitle": "MCP Monthly",
     "spark5hTitle": "Spark 5-Hour",
     "sparkWeeklyTitle": "Spark Weekly",

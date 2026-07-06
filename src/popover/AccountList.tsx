@@ -42,16 +42,37 @@ interface Props {
 
 function getTokenPct(quota: QuotaData | undefined): number | null {
   if (!quota) return null;
-  const tokenLimit = quota.limits.find((l) => l.type === "TOKENS_LIMIT");
-  return tokenLimit ? tokenLimit.percentage : null;
+  const limits = quota.limits.filter((l) => l.type === "TOKENS_LIMIT");
+  // 优先 5h 窗口（unit=3），缺失时回退第一个 TOKENS_LIMIT
+  const hourly = limits.find((l) => l.unit === 3) ?? limits[0];
+  return hourly ? hourly.percentage : null;
 }
 
-function PctBadge({ pct }: { pct: number | null }) {
-  if (pct === null) return null;
-  const color = statusColorVar(getStatusLevel(pct));
+function getWeeklyPct(quota: QuotaData | undefined): number | null {
+  if (!quota) return null;
+  const weekly = quota.limits.find((l) => l.type === "TOKENS_LIMIT" && l.unit === 6);
+  return weekly ? weekly.percentage : null;
+}
+
+function PctBadge({ pct, weeklyPct }: { pct: number | null; weeklyPct: number | null }) {
+  const { t } = useTranslation();
+  if (pct === null && weeklyPct === null) return null;
   return (
-    <span className="text-[12px] font-bold tabular-nums" style={{ color }}>
-      {Math.round(pct)}%
+    <span className="flex items-baseline gap-1 shrink-0 tabular-nums">
+      {pct !== null && (
+        <span className="text-[12px] font-bold" style={{ color: statusColorVar(getStatusLevel(pct)) }}>
+          {Math.round(pct)}%
+        </span>
+      )}
+      {weeklyPct !== null && (
+        <span
+          className="text-[12px] font-bold"
+          style={{ color: statusColorVar(getStatusLevel(weeklyPct)) }}
+          title={t('quota.weeklyTitle')}
+        >
+          {t('quota.weeklyShort')}{Math.round(weeklyPct)}%
+        </span>
+      )}
     </span>
   );
 }
@@ -139,6 +160,7 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
         const expanded = expandedIds.has(acc.id);
         const quota = quotas[acc.id];
         const tokenPct = getTokenPct(quota);
+        const weeklyPct = getWeeklyPct(quota);
 
         return (
           <div
@@ -178,7 +200,7 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                 <div className="w-3 h-3 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin shrink-0" />
               )}
               <StarButton isPrimary={acc.is_primary} onClick={() => onSetPrimary(acc.id)} />
-              <PctBadge pct={tokenPct} />
+              <PctBadge pct={tokenPct} weeklyPct={weeklyPct} />
               <ChevronIcon open={expanded} />
             </button>
 
