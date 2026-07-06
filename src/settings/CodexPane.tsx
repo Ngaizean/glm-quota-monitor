@@ -79,6 +79,7 @@ export default function CodexPane() {
   const [showToken, setShowToken] = useState(false);
   const [autoUpload, setAutoUpload] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [proxyUrl, setProxyUrl] = useState("");
 
   useEffect(() => {
     loadData();
@@ -86,13 +87,14 @@ export default function CodexPane() {
 
   async function loadData() {
     try {
-      const [r, url, token, auth, sync, au] = await Promise.all([
+      const [r, url, token, auth, sync, au, proxy] = await Promise.all([
         invoke<string>("get_codex_role"),
         invoke<string | null>("get_codex_gist_url"),
         invoke<string | null>("get_codex_github_token"),
         invoke<AuthSummary>("read_local_codex_auth"),
         invoke<SyncInfo>("get_codex_sync_info"),
         invoke<boolean>("get_codex_auto_upload"),
+        invoke<string | null>("get_codex_proxy"),
       ]);
       setRole(r || "owner");
       setGistUrl(url || "");
@@ -100,6 +102,7 @@ export default function CodexPane() {
       setAuthSummary(auth);
       setSyncInfo(sync);
       setAutoUpload(au);
+      setProxyUrl(proxy || "");
     } catch (e) {
       setError(String(e));
     }
@@ -140,6 +143,11 @@ export default function CodexPane() {
   async function handleTokenChange(value: string) {
     setGithubToken(value);
     await invoke("set_codex_github_token", { token: value });
+  }
+
+  async function handleProxyChange(value: string) {
+    setProxyUrl(value);
+    await invoke("set_codex_proxy", { url: value });
   }
 
   async function handleUpload() {
@@ -321,6 +329,17 @@ export default function CodexPane() {
             </button>
           </div>
         )}
+        {/* 代理地址：境外 GitHub/ChatGPT 端点走代理；留空用默认 7890，修改后需重启生效 */}
+        <input
+          type="text"
+          placeholder={t('codexPane.proxyPlaceholder')}
+          value={proxyUrl}
+          onChange={(e) => handleProxyChange(e.target.value)}
+          className={inputClass}
+        />
+        <p className="text-[9px] text-[var(--color-text-tertiary)] leading-relaxed">
+          {t('codexPane.proxyDesc')}
+        </p>
       </div>
 
       {/* 操作区 */}

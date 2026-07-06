@@ -172,6 +172,8 @@
     "gistConfig": "Gist Configuration",
     "gistUrlPlaceholder": "Gist URL or ID (raw URL of a secret Gist)",
     "githubTokenPlaceholder": "GitHub Token (gist scope, owner only)",
+    "proxyPlaceholder": "Proxy, e.g. http://127.0.0.1:7890 (empty = default)",
+    "proxyDesc": "HTTP proxy for overseas endpoints (GitHub / ChatGPT). Restart the app after changing.",
     "show": "Show",
     "hide": "Hide",
     "lastUpload": "Last upload",
