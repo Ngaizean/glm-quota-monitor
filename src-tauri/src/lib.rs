@@ -33,23 +33,46 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::n
 /// 智谱 API 继续用 HTTP_CLIENT 直连（国内）
 static PROXY_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
-/// 默认代理地址（Clash / Mihomo 常用 HTTP 混合端口）
-const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:7890";
+/// 常见本地 HTTP 代理端口，按优先级探测：
+///   - 7890  Clash 经典 HTTP 混合端口 / Clash for Windows
+///   - 7897  Clash Verge / Mihomo 默认混合端口
+///   - 10809 v2rayN 默认 HTTP 端口
+const PROXY_PROBE_PORTS: &[u16] = &[7890, 7897, 10809];
 
-/// 构造代理 client。proxy_url 为空时用默认代理；代理构造失败回退到直连（不崩）。
+/// 探测本机哪个代理端口在监听（TCP 连通即视为代理）。
+/// 返回第一个可达端口；都不通返回 None（调用方据此直连）。
+/// 回环端口未监听会立即 ECONNREFUSED，实测几十毫秒内完成。
+fn probe_local_proxy_port() -> Option<u16> {
+    use std::net::TcpStream;
+    use std::time::Duration;
+    for &port in PROXY_PROBE_PORTS {
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+            return Some(port);
+        }
+    }
+    None
+}
+
+/// 构造代理 client。
+/// - proxy_url 非空：用用户指定地址
+/// - proxy_url 为空：自动探测本机常见代理端口（7890/7897/10809），探测不到则直连
 ///
 /// 固定使用 rustls-tls：避免 Windows native-tls(schannel) 的证书吊销检查
 /// (CRYPT_E_REVOCATION_OFFLINE) 导致 gist.githubusercontent.com 等域名 TLS 握手失败。
 fn build_proxy_client(proxy_url: &str) -> reqwest::Client {
-    let url = if proxy_url.trim().is_empty() {
-        DEFAULT_PROXY_URL
-    } else {
-        proxy_url.trim()
-    };
     let builder = reqwest::Client::builder().use_rustls_tls();
-    match reqwest::Proxy::all(url) {
-        Ok(proxy) => builder.proxy(proxy).build(),
-        Err(_) => builder.build(),
+    let url = if !proxy_url.trim().is_empty() {
+        Some(proxy_url.trim().to_string())
+    } else {
+        probe_local_proxy_port().map(|p| format!("http://127.0.0.1:{}", p))
+    };
+    match url.as_deref() {
+        Some(url) => match reqwest::Proxy::all(url) {
+            Ok(proxy) => builder.proxy(proxy).build(),
+            Err(_) => builder.build(),
+        },
+        None => builder.build(),
     }
     .unwrap_or_else(|_| reqwest::Client::new())
 }
@@ -60,9 +83,9 @@ pub fn init_proxy_client(proxy_url: &str) {
     let _ = PROXY_CLIENT.set(build_proxy_client(proxy_url));
 }
 
-/// 取代理 client。setup 已初始化则复用；否则用默认地址懒构造。
+/// 取代理 client。setup 已初始化则复用；否则懒构造（自动探测本机代理端口）。
 pub fn proxy_http_client() -> &'static reqwest::Client {
-    PROXY_CLIENT.get_or_init(|| build_proxy_client(DEFAULT_PROXY_URL))
+    PROXY_CLIENT.get_or_init(|| build_proxy_client(""))
 }
 
 #[derive(serde::Serialize)]
