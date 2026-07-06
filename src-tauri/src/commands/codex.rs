@@ -173,39 +173,38 @@ pub async fn upload_codex_auth(db: State<'_, Database>) -> Result<(), String> {
     Ok(())
 }
 
-/// 同步鉴权（用户端）：从 Gist 拉取 → 解密 → 写入本机 + 关联账号 Keychain
-#[tauri::command]
-pub async fn sync_codex_auth(db: State<'_, Database>) -> Result<(), String> {
-    // 1. 读 Gist URL
-    let gist_url = read_setting(&db, GIST_URL_KEY)
+/// 从 Gist 拉取加密的鉴权内容（按 URL 类型分流）
+/// - raw URL (gistusercontent.com)：直接匿名 fetch
+/// - 网页 URL / API URL：用 GitHub Token 解析出 raw URL 后再 fetch
+///   （旧实现的“先试 raw、失败再 resolve”无效：网页/API URL 都返回 HTTP 200，
+///    永远不会触发 fallback，导致 HTML/JSON 被当成 base64 送进 decrypt）
+pub async fn fetch_codex_gist_encrypted(db: &Database) -> Result<String, String> {
+    let gist_url = read_setting(db, GIST_URL_KEY)
         .ok_or("未配置 Gist URL，请在设置中填写")?;
-
-    // 2. 拉取加密内容（按 URL 类型分流）
-    //    - raw URL (gist.githubusercontent.com)：直接匿名 fetch
-    //    - 网页 URL / API URL：用 GitHub Token 解析出 raw URL 后再 fetch
-    //      （旧实现的“先试 raw、失败再 resolve”无效：网页/API URL 都返回 HTTP 200，
-    //       永远不会触发 fallback，导致 HTML/JSON 被当成 base64 送进 decrypt）
-    let encrypted = if gist_url.contains("gistusercontent.com") {
-        codex::sync::fetch_from_gist(crate::proxy_http_client(), &gist_url).await?
+    if gist_url.contains("gistusercontent.com") {
+        codex::sync::fetch_from_gist(crate::proxy_http_client(), &gist_url).await
     } else {
         // 网页 URL / API URL → resolve 出 raw URL
         // consumer 角色无 token 字段，但 gist 是 unlisted，匿名 resolve 也能工作；
         // 有 token 时携带，提升 GitHub API 速率限制
-        let token = read_setting(&db, GITHUB_TOKEN_KEY).unwrap_or_default();
+        let token = read_setting(db, GITHUB_TOKEN_KEY).unwrap_or_default();
         let raw_url =
             codex::sync::resolve_gist_raw_url(crate::proxy_http_client(), &gist_url, &token).await?;
-        codex::sync::fetch_from_gist(crate::proxy_http_client(), &raw_url).await?
-    };
+        codex::sync::fetch_from_gist(crate::proxy_http_client(), &raw_url).await
+    }
+}
 
-    // 3. 解密
-    let json = codex::crypto::decrypt(&encrypted)?;
+/// 解密并应用 codex 鉴权：写本机 ~/.codex/auth.json + 更新已导入账号 Keychain + 记录同步时间
+pub async fn apply_codex_auth(encrypted: &str, db: &Database) -> Result<(), String> {
+    // 解密
+    let json = codex::crypto::decrypt(encrypted)?;
     let auth: codex::types::AuthJson =
         serde_json::from_str(&json).map_err(|e| format!("解析凭证失败: {}", e))?;
 
-    // 4. 写入本机 ~/.codex/auth.json
+    // 写入本机 ~/.codex/auth.json
     codex::auth::write_local_auth_json(&auth)?;
 
-    // 5. 更新所有已导入 codex 账号的 Keychain 凭证
+    // 更新所有已导入 codex 账号的 Keychain 凭证
     {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let mut stmt = conn
@@ -224,7 +223,7 @@ pub async fn sync_codex_auth(db: State<'_, Database>) -> Result<(), String> {
         }
     }
 
-    // 6. 记录同步时间
+    // 记录同步时间
     {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let now = Utc::now().to_rfc3339();
@@ -235,6 +234,13 @@ pub async fn sync_codex_auth(db: State<'_, Database>) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// 同步鉴权（用户端）：从 Gist 拉取 → 解密 → 写入本机 + 关联账号 Keychain
+#[tauri::command]
+pub async fn sync_codex_auth(db: State<'_, Database>) -> Result<(), String> {
+    let encrypted = fetch_codex_gist_encrypted(&db).await?;
+    apply_codex_auth(&encrypted, &db).await
 }
 
 /// 测试 Codex 连接（验证 access_token 是否有效）
@@ -345,6 +351,28 @@ pub fn get_codex_auto_upload(db: State<'_, Database>) -> Result<bool, String> {
     Ok(read_setting(&db, AUTO_UPLOAD_KEY)
         .map(|v| v == "true")
         .unwrap_or(false))
+}
+
+const AUTO_SYNC_KEY: &str = "codex_auto_sync";
+
+/// 设置 Codex 鉴权自动同步开关（consumer 角色用，从 Gist 拉取最新鉴权）
+#[tauri::command]
+pub fn set_codex_auto_sync(db: State<'_, Database>, enabled: bool) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+        rusqlite::params![AUTO_SYNC_KEY, enabled.to_string()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 读取自动同步开关。未设置时默认开启（consumer 开箱即自动同步）
+#[tauri::command]
+pub fn get_codex_auto_sync(db: State<'_, Database>) -> Result<bool, String> {
+    Ok(read_setting(&db, AUTO_SYNC_KEY)
+        .map(|v| v == "true")
+        .unwrap_or(true))
 }
 
 const PROXY_KEY: &str = "codex_proxy";
