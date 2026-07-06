@@ -174,6 +174,8 @@
     "githubTokenPlaceholder": "GitHub Token（gist 权限，仅分发者需要）",
     "proxyPlaceholder": "代理地址，如 http://127.0.0.1:7890（留空自动探测）",
     "proxyDesc": "访问 GitHub / ChatGPT 等境外端点的 HTTP 代理。留空自动探测本机端口（7890/7897/10809），探测不到则直连。修改后需重启生效。",
+    "autoSync": "自动同步",
+    "autoSyncDesc": "每 5 分钟自动从 Gist 拉取最新鉴权（仅当内容变化时更新本机）",
     "show": "显示",
     "hide": "隐藏",
     "lastUpload": "上次上传",

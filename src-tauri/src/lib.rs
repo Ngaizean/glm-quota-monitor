@@ -828,6 +828,86 @@ fn try_codex_auto_upload(db: &Database) -> Result<(), String> {
     Ok(())
 }
 
+/// Codex 鉴权自动同步调度（consumer 角色）
+/// 每 5 分钟从 Gist 拉取加密内容，与上次指纹对比，有变化（或首次）才解密应用。
+/// 避免无谓地反复写本机 auth.json / Keychain。
+fn run_codex_auto_sync(app: &tauri::AppHandle) {
+    std::thread::sleep(Duration::from_secs(60));
+    let mut last_signature: Option<String> = None;
+
+    loop {
+        if let Some(db) = app.try_state::<Database>() {
+            let role = db
+                .conn
+                .lock()
+                .ok()
+                .and_then(|conn| {
+                    conn.query_row(
+                        "SELECT value FROM app_settings WHERE key = 'codex_role'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .ok()
+                })
+                .unwrap_or_else(|| "owner".to_string());
+
+            if role != "consumer" {
+                std::thread::sleep(Duration::from_secs(300));
+                continue;
+            }
+
+            // 自动同步开关（consumer 未设置时默认开启）
+            let auto_sync = db
+                .conn
+                .lock()
+                .ok()
+                .and_then(|conn| {
+                    conn.query_row(
+                        "SELECT value FROM app_settings WHERE key = 'codex_auto_sync'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .ok()
+                })
+                .map(|v| v == "true")
+                .unwrap_or(true);
+
+            if !auto_sync {
+                std::thread::sleep(Duration::from_secs(300));
+                continue;
+            }
+
+            // 拉取 Gist 加密内容并算指纹（前 32 字符足够区分变化）
+            let encrypted =
+                tauri::async_runtime::block_on(commands::codex::fetch_codex_gist_encrypted(&db));
+            match encrypted {
+                Ok(enc) => {
+                    let fingerprint = if enc.len() >= 32 {
+                        enc[..32].to_string()
+                    } else {
+                        enc.clone()
+                    };
+                    if last_signature.as_deref() != Some(fingerprint.as_str()) {
+                        // 内容变化（或首次）→ 解密应用
+                        match tauri::async_runtime::block_on(
+                            commands::codex::apply_codex_auth(&enc, &db),
+                        ) {
+                            Ok(()) => {
+                                eprintln!("Codex auto-sync: gist changed, applied successfully");
+                                last_signature = Some(fingerprint);
+                            }
+                            Err(e) => eprintln!("Codex auto-sync apply failed: {}", e),
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Codex auto-sync fetch failed: {}", e),
+            }
+        }
+
+        std::thread::sleep(Duration::from_secs(300)); // 5 分钟检测一次
+    }
+}
+
 fn run_spin_scheduler(app: &tauri::AppHandle) {
     if let Some(db) = app.try_state::<Database>() {
         if let Ok(conn) = db.conn.lock() {
@@ -1006,6 +1086,13 @@ pub fn run() {
                 run_codex_auto_upload(&codex_handle);
             });
 
+            // Codex 鉴权自动同步线程（仅 consumer 角色）
+            // 定时从 Gist 拉取，有变化才解密应用到本机
+            let codex_sync_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                run_codex_auto_sync(&codex_sync_handle);
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1062,6 +1149,8 @@ pub fn run() {
             commands::codex::get_codex_sync_info,
             commands::codex::set_codex_auto_upload,
             commands::codex::get_codex_auto_upload,
+            commands::codex::set_codex_auto_sync,
+            commands::codex::get_codex_auto_sync,
             commands::codex::set_codex_proxy,
             commands::codex::get_codex_proxy,
             close_popover,

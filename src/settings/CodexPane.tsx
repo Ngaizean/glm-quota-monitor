@@ -80,6 +80,7 @@ export default function CodexPane() {
   const [autoUpload, setAutoUpload] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [proxyUrl, setProxyUrl] = useState("");
+  const [autoSync, setAutoSync] = useState(true);
 
   useEffect(() => {
     loadData();
@@ -87,7 +88,7 @@ export default function CodexPane() {
 
   async function loadData() {
     try {
-      const [r, url, token, auth, sync, au, proxy] = await Promise.all([
+      const [r, url, token, auth, sync, au, proxy, autosync] = await Promise.all([
         invoke<string>("get_codex_role"),
         invoke<string | null>("get_codex_gist_url"),
         invoke<string | null>("get_codex_github_token"),
@@ -95,6 +96,7 @@ export default function CodexPane() {
         invoke<SyncInfo>("get_codex_sync_info"),
         invoke<boolean>("get_codex_auto_upload"),
         invoke<string | null>("get_codex_proxy"),
+        invoke<boolean>("get_codex_auto_sync"),
       ]);
       setRole(r || "owner");
       setGistUrl(url || "");
@@ -103,6 +105,7 @@ export default function CodexPane() {
       setSyncInfo(sync);
       setAutoUpload(au);
       setProxyUrl(proxy || "");
+      setAutoSync(autosync);
     } catch (e) {
       setError(String(e));
     }
@@ -148,6 +151,16 @@ export default function CodexPane() {
   async function handleProxyChange(value: string) {
     setProxyUrl(value);
     await invoke("set_codex_proxy", { url: value });
+  }
+
+  async function handleAutoSyncToggle(value: boolean) {
+    setAutoSync(value);
+    try {
+      await invoke("set_codex_auto_sync", { enabled: value });
+    } catch (e) {
+      setError(String(e));
+      setAutoSync(!value);
+    }
   }
 
   async function handleUpload() {
@@ -397,6 +410,17 @@ export default function CodexPane() {
           <p className="text-[9px] text-[var(--color-text-tertiary)] leading-relaxed">
             {t('codexPane.syncDesc')}
           </p>
+          <div className="flex items-center justify-between pt-1.5 border-t border-[var(--color-border-subtle)]">
+            <div>
+              <span className="text-[11px] font-medium text-[var(--color-text-primary)] block">
+                {t('codexPane.autoSync')}
+              </span>
+              <span className="text-[9px] text-[var(--color-text-tertiary)]">
+                {t('codexPane.autoSyncDesc')}
+              </span>
+            </div>
+            <Toggle checked={autoSync} onChange={() => handleAutoSyncToggle(!autoSync)} />
+          </div>
         </div>
       )}
     </div>
