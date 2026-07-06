@@ -828,10 +828,24 @@ fn try_codex_auto_upload(db: &Database) -> Result<(), String> {
     Ok(())
 }
 
+/// 把 auto-sync 日志追加到 app_data_dir/codex_auto_sync.log
+/// （GUI release build 无 stderr console，后台线程日志只能落文件）
+fn log_auto_sync(msg: &str) {
+    use std::io::Write;
+    let Some(base) = dirs::data_dir() else { return };
+    let dir = base.join("com.ngaizean.glm-quota-monitor");
+    let path = dir.join("codex_auto_sync.log");
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "[{}] {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"), msg);
+    }
+}
+
 /// Codex 鉴权自动同步调度（consumer 角色）
 /// 每 5 分钟从 Gist 拉取加密内容，与上次指纹对比，有变化（或首次）才解密应用。
 /// 避免无谓地反复写本机 auth.json / Keychain。
 fn run_codex_auto_sync(app: &tauri::AppHandle) {
+    log_auto_sync("thread started, sleep 60s before first run");
     std::thread::sleep(Duration::from_secs(60));
     let mut last_signature: Option<String> = None;
 
@@ -852,6 +866,7 @@ fn run_codex_auto_sync(app: &tauri::AppHandle) {
                 .unwrap_or_else(|| "owner".to_string());
 
             if role != "consumer" {
+                log_auto_sync(&format!("skip: role={role} (auto-sync only runs for consumer)"));
                 std::thread::sleep(Duration::from_secs(300));
                 continue;
             }
@@ -873,11 +888,13 @@ fn run_codex_auto_sync(app: &tauri::AppHandle) {
                 .unwrap_or(true);
 
             if !auto_sync {
+                log_auto_sync("skip: auto_sync disabled");
                 std::thread::sleep(Duration::from_secs(300));
                 continue;
             }
 
             // 拉取 Gist 加密内容并算指纹（前 32 字符足够区分变化）
+            log_auto_sync("fetching gist...");
             let encrypted =
                 tauri::async_runtime::block_on(commands::codex::fetch_codex_gist_encrypted(&db));
             match encrypted {
@@ -887,20 +904,28 @@ fn run_codex_auto_sync(app: &tauri::AppHandle) {
                     } else {
                         enc.clone()
                     };
+                    log_auto_sync(&format!(
+                        "fetch ok, {} bytes, fp prefix={}",
+                        enc.len(),
+                        &fingerprint[..8.min(fingerprint.len())]
+                    ));
                     if last_signature.as_deref() != Some(fingerprint.as_str()) {
                         // 内容变化（或首次）→ 解密应用
+                        log_auto_sync("content changed (or first run), applying...");
                         match tauri::async_runtime::block_on(
                             commands::codex::apply_codex_auth(&enc, &db),
                         ) {
                             Ok(()) => {
-                                eprintln!("Codex auto-sync: gist changed, applied successfully");
+                                log_auto_sync("applied successfully");
                                 last_signature = Some(fingerprint);
                             }
-                            Err(e) => eprintln!("Codex auto-sync apply failed: {}", e),
+                            Err(e) => log_auto_sync(&format!("apply FAILED: {e}")),
                         }
+                    } else {
+                        log_auto_sync("no change since last run, skip apply");
                     }
                 }
-                Err(e) => eprintln!("Codex auto-sync fetch failed: {}", e),
+                Err(e) => log_auto_sync(&format!("fetch FAILED: {e}")),
             }
         }
 
