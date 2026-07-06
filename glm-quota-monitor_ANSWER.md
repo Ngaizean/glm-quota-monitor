@@ -1,75 +1,102 @@
-# 编译最新版 Windows 软件
+# Codex 鉴权失败诊断
 
-**仓库**: glm-quota-monitor | **Session**: build | **日期**: 2026-07-06
-**任务**: 在 Windows 本机编译 v6.1.0 安装包
+**仓库**: glm-quota-monitor | **Session**: debug | **日期**: 2026-07-06
+**症状**: codex 鉴权报 `查询 Gist 失败：error sending request for url (https://api.github.com/gists/30e3f0d216159f34774f...)`
 
 ---
 
-## 结论：✅ 成功，两个安装包已生成
+## 结论：双重根因，配置层只能修一半，必须改代码
 
-完整报告见 `record/windows-build-v6.1.0-20260706.md`。
+### 根因 1：默认代理端口错误（导致当前 resolve 报错）
 
-| 产物 | 大小 | 路径 |
+`src-tauri/src/lib.rs:37`：
+```rust
+const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:7897";
+```
+
+`proxy_http_client()`（lib.rs:62）在数据库无 `codex_proxy` 记录时，强制走 7897。但本机代理软件实际监听 **7890**（netstat 实测）：
+
+| 端口 | netstat 监听 | curl 走该代理访问 GitHub |
 |---|---|---|
-| NSIS 安装包（推荐） | 4.8 MB | `src-tauri/target/release/bundle/nsis/GLM Quota Monitor_6.1.0_x64-setup.exe` |
-| MSI 安装包 | 6.8 MB | `src-tauri/target/release/bundle/msi/GLM Quota Monitor_6.1.0_x64_en-US.msi` |
+| 7897（代码默认） | ❌ 未监听 | ❌ connection refused |
+| 7890（实际） | ✅ LISTENING | ✅ HTTP 200 |
 
-版本资源确认：ProductName=GLM Quota Monitor, ProductVersion=6.1.0, Company=ngaizean。
+→ reqwest 连 127.0.0.1:7897 被拒 → `error sending request for url`。
 
----
+**且前端无代理设置 UI**（grep `src/` 全空），后端 `set_codex_proxy` 命令存在但无界面调用，用户无法自行改端口。
 
-## 构建过程（7.5 分钟）
+### 根因 2：Windows native-tls 证书吊销检查失败（导致 fetch 必失败）
 
-`npm run tauri build` 三阶段全过：
+Cargo.lock 确认 reqwest 走 **native-tls**（= Windows schannel）。schannel 默认做证书吊销检查（CRL/OCSP），本机连不上吊销服务器：
 
-1. **前端** `tsc + vite`（~9s）— 739 模块打包到 `dist/`
-2. **Rust** `cargo build --release`（6m48s）— 首次全量编译，0 error，7 个死代码 warning
-3. **打包** NSIS + MSI 各 ~30s 生成
-
----
-
-## 构建中遇到的两个问题
-
-### 问题 1：前端缺 npm 依赖（已修复）
-
-第一次构建在 TypeScript 阶段失败：找不到 `@tauri-apps/plugin-updater` 和 `plugin-process` 模块。
-
-**根因**：`node_modules/` 是从别的机器同步过来的，`package.json` 里声明了这两个包但本机没装（`@tauri-apps/` 下只有 `plugin-opener`）。这两个是后加的依赖。
-
-**修复**：跑了一次 `npm install`，补装 2 个包后构建通过。
-
-### 问题 2：Updater 签名缺私钥（非阻塞，可忽略）
-
-两个安装包都生成完之后，末尾报：
 ```
-A public key has been found, but no private key. Make sure to set `TAURI_SIGNING_PRIVATE_KEY` environment variable.
+curl 走 7890 代理访问 gist.githubusercontent.com（默认吊销检查）:
+  → CRYPT_E_REVOCATION_OFFLINE (0x80092013)  TLS 握手失败
+
+curl 走 7890 代理 + --ssl-no-revoke（= rustls 行为）:
+  → HTTP 301  成功
 ```
-进程退出码 1。
 
-**这只影响自动更新用的 `.sig` 签名文件，不影响安装包本身**。原因：`tauri.conf.json` 配置了 updater（`createUpdaterArtifacts: true` + 固定 `pubkey`），但本机没有对应的 `TAURI_SIGNING_PRIVATE_KEY`。
+| 阶段 | 域名 | native-tls（当前） | rustls（修复后） |
+|---|---|---|---|
+| resolve | api.github.com | ✅（无吊销问题） | ✅ |
+| fetch | gist.githubusercontent.com | ❌ 吊销失败 | ✅ |
 
-本地自用无需处理。若要发布带自动更新的正式版，需由持有对应私钥的 owner（Ngaizean）在签名环境构建。这也与 `build-install.sh` 里的注释一致（"本地自用不需要自动更新签名"）。
-
----
-
-## 环境信息
-
-- Node v24.13.0 / npm 11.6.2
-- Rust 1.94.1 / Cargo 1.94.1
-- Tauri CLI 2.10.1
-- 目标三元组：`x86_64-pc-windows-msvc`
-- 构建机：Windows 10 Pro，4 核 8 线程
+**关键**：api.github.com 的证书链不触发吊销检查，所以 resolve 直连/走代理都通；gist.githubusercontent.com 的证书链触发吊销 → 失败。即使修好代理端口，fetch 阶段（`fetch_from_gist`）仍会报 `拉取 Gist 失败`。
 
 ---
 
-## 复现（本机二次构建走增量缓存，秒~分钟级）
+## 为什么"只改数据库代理值"不够
+
+写入 `codex_proxy = http://127.0.0.1:7890` + 重启 → resolve（api.github.com）能通 → 但 fetch（gist.githubusercontent.com）撞吊销 → 仍失败。
+
+配置层只能解决根因 1，根因 2 必须代码层切 TLS 后端。
+
+---
+
+## 代码修复方案（两处改动）
+
+### 改动 A：切 rustls-tls（根治根因 2）
+
+`src-tauri/Cargo.toml`：
+```toml
+reqwest = { version = "0.12", features = ["json", "system-proxy", "rustls-tls"] }
+```
+（保留 default-tls，新增 rustls-tls；只让境外 proxy client 用 rustls）
+
+`src-tauri/src/lib.rs` `build_proxy_client`：
+```rust
+match reqwest::Proxy::all(url) {
+    Ok(proxy) => reqwest::Client::builder()
+        .use_rustls_tls()        // 新增：绕过 schannel 吊销检查
+        .proxy(proxy)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::builder().use_rustls_tls().build().unwrap()),
+    Err(_) => reqwest::Client::builder().use_rustls_tls().build().unwrap(),
+}
+```
+
+### 改动 B：修默认代理端口（根治根因 1）
+
+两种做法二选一：
+- **B1（简单）**：`DEFAULT_PROXY_URL` 改 `7897` → `7890`。只对应当前环境，换端口仍要重编。
+- **B2（推荐，长期）**：保留默认值，但**前端加代理设置输入框**，调 `set_codex_proxy`。以后改端口免重编。UI 加在 `src/CodexPane.tsx`。
+
+改动后需 `npm run tauri build` 重编（增量，reqwest 重编 + 链接，约 5~8 分钟）+ 重装。
+
+---
+
+## 附：诊断命令速查
 
 ```bash
-cd C:/Users/y/Desktop/glm-quota-monitor
-npm install          # 仅首次或依赖变更后
-npm run tauri build  # 产物在 src-tauri/target/release/bundle/
+# 端口监听
+netstat -ano | grep 7890   # 7890 LISTENING，7897 无
+
+# 代理可达性
+curl -x http://127.0.0.1:7897 -m5 https://api.github.com/   # 失败
+curl -x http://127.0.0.1:7890 -m5 https://api.github.com/   # 200
+
+# 吊销检查（native-tls 病灶）
+curl -x http://127.0.0.1:7890 https://gist.githubusercontent.com/            # 吊销失败
+curl -x http://127.0.0.1:7890 --ssl-no-revoke https://gist.githubusercontent.com/  # 301
 ```
-
-## 安装
-
-双击 `GLM Quota Monitor_6.1.0_x64-setup.exe`（NSIS，体积小）或 `.msi` 即可。缺 WebView2 时安装包会自动下载引导器。
