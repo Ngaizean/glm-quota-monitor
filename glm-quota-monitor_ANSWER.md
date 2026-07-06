@@ -1,63 +1,68 @@
-# Codex 鉴权修复完成
+# 代理设计是否必须 + 原设计是怎样的
 
-**仓库**: glm-quota-monitor | **Session**: fix | **日期**: 2026-07-06
-**症状**: codex 鉴权报 `查询 Gist 失败：error sending request for url (https://api.github.com/gists/...)`
-**状态**: ✅ 已修复（rustls-tls + 默认代理 7890 + 前端代理 UI），已重编译重装
+**仓库**: glm-quota-monitor | **Session**: design-q&a | **日期**: 2026-07-06
 
 ---
 
-## 根因（双重，详见上一版诊断）
+## 一、先看事实：应用到底访问哪些端点
 
-1. **代理端口错**：`lib.rs` 默认 `http://127.0.0.1:7897`，你的 Clash 实际监听 `7890` → 连不上代理
-2. **Windows native-tls 吊销检查失败**：reqwest 默认 schannel，吊销服务器不可达 → `gist.githubusercontent.com` TLS 握手失败（`CRYPT_E_REVOCATION_OFFLINE`）
+代码里两个 HTTP client，各管一摊：
 
----
-
-## 已完成的改动（4 文件）
-
-### 后端
-- **`src-tauri/Cargo.toml`**：reqwest 加 `rustls-tls` feature
-  ```toml
-  reqwest = { version = "0.12", features = ["json", "system-proxy", "rustls-tls"] }
-  ```
-- **`src-tauri/src/lib.rs`**：
-  - `DEFAULT_PROXY_URL`：`7897` → `7890`
-  - `build_proxy_client`：所有分支加 `.use_rustls_tls()`，绕过 schannel 吊销检查
-
-### 前端
-- **`src/settings/CodexPane.tsx`**：配置区加「代理地址」输入框（调 `get/set_codex_proxy`），owner/consumer 均可见
-- **`src/i18n/locales/{zh,en}.json`**：加 `codexPane.proxyPlaceholder` / `proxyDesc`（含"修改后需重启"提示）
-
-> 注：代理 client 用 `OnceLock` 缓存，**改代理地址需重启 app 生效**（UI 上有提示）。rustls 修复对所有 GitHub 域名（含 `gist.githubusercontent.com`）生效，无需重启即可在网络层修复。
+| client | 用途 | 端点（代码出处） | 大陆可达性 |
+|---|---|---|---|
+| `HTTP_CLIENT`（直连） | 智谱 GLM | `open.bigmodel.cn`（api/client.rs:4）、`open.bigmodel.cn/api/anthropic`（agent.rs:75） | ✅ 国内，直连 |
+| `PROXY_CLIENT`（走代理） | Codex 额度 | `chatgpt.com/backend-api/wham/usage`（codex/client.rs:4） | ❌ **被墙** |
+| | Codex token 刷新 | `auth.openai.com/oauth/token`（codex/auth.rs:92） | ❌ **被墙** |
+| | Gist 同步 | `api.github.com` + `gist.githubusercontent.com`（codex/sync.rs） | ⚠️ 直连不稳 |
 
 ---
 
-## 验证
+## 二、代理是否必须？
 
-### 网络层（已用 curl 证明，等价于修复后的 reqwest 行为）
-```
-curl -x http://127.0.0.1:7890 https://api.github.com/gists/...        → 通（resolve 阶段）
-curl -x http://127.0.0.1:7890 --ssl-no-revoke https://gist.githubusercontent.com/  → 301（fetch 阶段，= rustls）
-```
+**分功能看，不是一刀切：**
 
-### 端到端（需你在 app 里操作）
-1. 打开 app → 设置 → **Codex** 页
-2. 确认「代理地址」栏（默认空 = 用 7890，或显式填 `http://127.0.0.1:7890`）
-3. 角色=接收者(consumer)：点「同步鉴权文件」
-4. 预期：不再报 `查询 Gist 失败: error sending request`，而是
-   - ✅ 成功（gist 存在 + 可解密）→ 显示上次同步时间
-   - 或 404 / 解密错误（说明网络已通，是 gist 本身的问题，如 ID 错或凭证已吊销）
+- **智谱额度监控**：完全不需要代理。走 `HTTP_CLIENT` 直连，国内端点。
+- **Codex 额度监控**：在大陆**实质上必须有代理**——`chatgpt.com` 和 `auth.openai.com` 被墙，直连一定失败。这不是设计选择，是网络硬约束。
+- **Gist 鉴权同步**：不必须。GitHub 直连通常可达，代理只是更稳（也是本次 fetch 阶段吊销问题的来源）。
+
+**所以"代理设计必须吗"的精确答案：**
+> Codex 这条线在大陆绕不开代理；但"在应用代码里**硬编码代理端口**"这个具体做法不是必须的，有更优雅的替代（见第四节）。
 
 ---
 
-## 重编译记录
-- 增量编译 2m31s（首次 6m48s），0 error，7 warnings（死代码，与改动无关）
-- 产物：NSIS 4.8 MB + MSI 6.8 MB，已静默覆盖安装到 `%LOCALAPPDATA%\GLM Quota Monitor\`
-- 中途 cargo 下载 `quinn`（rustls-tls 引入的 HTTP/3 依赖）因 schannel 间歇握手失败 → 加 `HTTPS_PROXY=127.0.0.1:7890 CARGO_NET_RETRY=10` 后通过
+## 三、原来的设计是怎样的
+
+代码现状（lib.rs:30-64）揭示的原设计意图：
+
+1. **双 client 分流**（注释 lib.rs:32-33 原文）：
+   - `HTTP_CLIENT = reqwest::Client::new()` → 智谱直连
+   - `PROXY_CLIENT`（OnceLock）→ codex/gist 走代理
+   - 理由：国内端点不该绕代理（慢、且代理可能不计费国内流量），境外端点必须绕代理
+
+2. **默认代理硬编码 `http://127.0.0.1:7897`**（原值，本次改成 7890）：
+   - 7897 是 **Clash Verge / Mihomo 的混合端口**（macOS 协作者 Ngaizean 的取向）
+   - 经典 Clash for Windows 用 7890——所以原默认值对 Windows 用户经常不匹配（本次 bug 根源）
+
+3. **前端无代理配置 UI**：后端有 `set_codex_proxy`/`get_codex_proxy` 命令，但前端从未接线。用户改不了端口，只能重编。**本次新加了 UI。**
+
+4. **代理 client 用 `OnceLock`**：启动时读一次数据库，之后不可变——改地址要重启 app。
+
+**原设计的隐含假设**：用户开着 Clash，且监听 7897（macOS Verge 默认）。在 macOS 协作者机器上自洽，搬到 Windows + 7890 就炸了。
 
 ---
 
-## 遗留 / 可选改进
-- 代理 client 用 `OnceLock`，改地址要重启。若要热更新，需把 `proxy_http_client()` 返回类型从 `&'static Client` 改为 `Arc<RwLock<Client>>`，涉及所有调用点（commands/codex.rs 等），改动较大，暂未做。
-- `reqwest` 同时编译了 native-tls(default) 和 rustls-tls，二进制略增。若要精简，可 `default-features = false` + 显式列默认 feature，但要补偿 `charset`/`http2` 等，风险较高，暂不动。
-- updater 签名错误（无 `TAURI_SIGNING_PRIVATE_KEY`）仍在末尾，不影响安装包，本地自用可忽略。
+## 四、如果想去掉"应用层代理逻辑"，有这些替代
+
+| 方案 | 做法 | 优点 | 缺点 |
+|---|---|---|---|
+| **A. TUN/系统代理 + 应用直连** | 用户在 Clash 开 TUN 模式（或设 Windows 系统代理），应用全部 `reqwest::Client::new()` 直连，OS 透明代理 | 应用代码删掉所有代理逻辑，最干净 | 要求用户会配 TUN；reqwest 默认不读 Windows 注册表代理，需 TUN（网络层）才有效 |
+| **B. reqwest 读环境变量** | 删掉硬编码，靠 reqwest 的 `system-proxy` feature 读 `HTTPS_PROXY` 环境变量 | 零硬编码 | Windows 用户一般不设这些 env（Clash 不自动设），等于没代理 |
+| **C. 直连 + 失败回退代理** | 先直连，超时再走代理 | 自适应 | codex 直连必失败，每次回退，慢且日志脏 |
+| **D. 保留显式代理 + UI（当前）** | 默认 7890 + UI 可改 | 明确可控、不依赖系统配置 | 用户必须开 HTTP 代理软件 |
+
+**我的建议**：保持现状（方案 D）是最务实的——你已经开了 Clash（7890 在听），显式代理最稳、最不依赖用户系统配置。如果想极致简化代码，**方案 A（让用户开 TUN，应用直连）** 是唯一能真正"删掉代理代码"的路子，但代价是把网络责任转嫁给用户的 Clash 配置。对个人/小团队工具，不值得。
+
+---
+
+## 附：本次会话已落地的改动（上一轮）
+Cargo.toml(+rustls-tls) · lib.rs(7897→7890 + use_rustls_tls) · CodexPane.tsx(代理 UI) · zh/en.json(文案)。已重编译重装，你确认"网络通了"。
