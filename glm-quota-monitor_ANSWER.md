@@ -1,64 +1,63 @@
-# 本机改代码/操作会影响 owner 的 auth 吗？
+# 代理端口自动探测（取代硬编码默认值）
 
-**仓库**: glm-quota-monitor | **Session**: collab-q&a | **日期**: 2026-07-06
-
----
-
-## 结论：改代码完全不影响 owner 的 auth
-
-owner 的 auth 状态只存在两个地方，你本机改代码两个都碰不到：
-1. **owner 本机的 `~/.codex/auth.json`** —— 在他的机器上，你够不到
-2. **Gist 里的加密副本** —— 这是 auth 的共享通道，但**单向**（见下）
-
-代码改动只活在你本机的工作树（`C:\Users\y\Desktop\glm-quota-monitor`），跟 auth 通道（gist）是两条独立的路，不交叉。
+**仓库**: glm-quota-monitor | **Session**: feat | **日期**: 2026-07-06
 
 ---
 
-## 为什么碰不到 gist：鉴权同步是单向流
+## 改动：删掉硬编码默认端口，改成启动时自动探测
 
-代码里两个命令的权限不对称（codex.rs:144-181）：
+**`src-tauri/src/lib.rs`**：
+- 删 `const DEFAULT_PROXY_URL = "http://127.0.0.1:7890"`
+- 新增 `probe_local_proxy_port()`：TCP 连通探测 `[7890, 7897, 10809]`，返回第一个在监听的端口；都不通返回 `None`
+- `build_proxy_client` 逻辑变为：
+  - 用户填了代理 → 用用户的
+  - **没填 → 探测本机端口**，探测到就用 `http://127.0.0.1:{port}`
+  - **探测不到 → 直连**（rustls）
 
-| 命令 | 角色 | 需要 | 对 gist 的操作 |
-|---|---|---|---|
-| `upload_codex_auth` | owner | GIST_URL **+ GITHUB_TOKEN**（缺 token 直接报错） | **写**（PATCH 覆盖） |
-| `sync_codex_auth` | consumer | 只需 GIST_URL | **只读**（GET） |
+```rust
+const PROXY_PROBE_PORTS: &[u16] = &[7890, 7897, 10809];
 
-而且前端 `CodexPane.tsx` 对 consumer **不渲染** GitHub Token 输入框（`{role === "owner" && ...}`），所以 consumer 的数据库里根本没有 token → 即便调 upload 也会卡在"未配置 GitHub Token"。
+fn probe_local_proxy_port() -> Option<u16> {
+    for &port in PROXY_PROBE_PORTS {
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+            return Some(port);
+        }
+    }
+    None
+}
+```
 
-**流向固定为**：`owner 本机 → push → gist → pull → consumer 本机`。你作为 consumer 只能 pull，写不进 gist。
+**为什么快**：回环端口未监听 → 立即 `ECONNREFUSED`（毫秒级），不会等满 200ms。3 个端口实测几十毫秒。
 
----
-
-## 你这些操作，逐个判断会不会影响 owner
-
-| 你的操作 | 影响 owner auth? | 原因 |
-|---|---|---|
-| 改代码（Cargo.toml/lib.rs/UI） | ❌ 不影响 | 本机工作树，与 gist 通道无关 |
-| 在应用里点「同步鉴权」 | ❌ 不影响 | 只读 gist，写本机 auth.json |
-| 本机 `codex login`（用你自己的账号） | ❌ 不影响 gist/owner | 只覆盖**你本机** auth.json；不 push 就不进 gist |
-| 改本机代理设置 / 切 rustls | ❌ 不影响 | 纯本机网络层 |
-| **git push 代码到 origin/master** | ❌ 不影响 auth | 见下方"代码推送"说明 |
-
----
-
-## 唯一能污染 gist 的路径（需主动凑齐 4 步，默认不会发生）
-
-1. 本机 `codex login`（本机 auth.json 变成**你的**凭证）
-2. 应用里角色切成 **owner**
-3. 填入 **GitHub Token**（有 gist 写权限的那个）
-4. 点「上传鉴权文件」或开了**自动上传**
-
-→ 此时你本机的凭证会被 push 覆盖 gist，owner 下次 pull 就拿到你的凭证（覆盖了他的）。
-
-只要保持 **consumer 角色**，第 2-4 步在 UI 上根本走不通，gist 对你就是只读的，**绝对安全**。
+**i18n**（zh/en）：`proxyPlaceholder` / `proxyDesc` 文案改为「留空自动探测本机端口（7890/7897/10809），探测不到则直连」。
 
 ---
 
-## 附：git push 代码对 owner 的影响（与 auth 无关，但值得注意）
+## 为什么这样设计
 
-如果你把本次代码改动 push 到 `origin/master`，owner（macOS）pull 后会拿到：
-- ✅ **rustls-tls**：跨平台，对 macOS 无害（甚至更稳）
-- ✅ **代理 UI**：owner 也受益，可在界面改端口
-- ⚠️ **`DEFAULT_PROXY_URL = 7890`**：这是**你本机**的 clash 端口。owner 的 macOS Clash Verge 默认混合端口常是 **7897**——他 pull 编译后默认代理会变成 7890，如果他的 clash 在 7897 就连不上。**但有 UI 了，他改一下即可**，不需要改代码回滚。
+| 之前（硬编码 7890） | 现在（自动探测） |
+|---|---|
+| 你本机 clash 在 7890 → 碰巧能用 | 探测到 7890 → 用 7890 |
+| macOS owner clash 在 7897 → 默认值不匹配，他 pull 代码后要改 | 探测到 7897 → 自动用 7897 |
+| 没开 clash → 强制连 7890 失败 | 探测不到 → 直连（不报错） |
 
-> 如果你打算 push，可以考虑把默认值改回更中性的（比如留 7897，或做端口自动探测），避免给 macOS 协作者添麻烦。不 push 则无所谓。
+**附带好处**：消除了上一轮你担心的「push 代码影响 owner」问题——默认值不再绑死 7890，macOS 协作者 pull 后会自动探测他自己的端口，无需改代码。
+
+---
+
+## 端口覆盖范围
+- `7890`：Clash 经典 / Clash for Windows HTTP 混合端口
+- `7897`：Clash Verge / Mihomo 默认混合端口
+- `10809`：v2rayN 默认 HTTP 端口
+
+覆盖主流代理软件。如果你用别的端口（如 SOCKS 1080 / 自定义），在 UI「代理地址」栏显式填即可，优先级最高。
+
+---
+
+## 当前状态
+- ✅ 已重编译（增量 1m25s，0 error）+ 静默重装 + 启动（exe 时间 20:06）
+- ✅ 端口探测逻辑生效：本机 7890 在听（netstat 已证）→ app 启动后自动用 7890
+- ⚠️ **codex 同步能否成功仍取决于凭证**：上轮的 `refresh token was revoked` 问题没解决（需 owner `codex login` 重新上传有效 gist）。端口探测只修网络层，凭证是另一层。
+
+**验证方法**：app 里点「同步鉴权」，看是否还报 `error sending request`（网络层）。若改成 404 / 解密错误 / revoked，说明网络已通，剩下是凭证问题。
