@@ -1,84 +1,64 @@
-# Codex CLI: refresh token was revoked
+# 本机改代码/操作会影响 owner 的 auth 吗？
 
-**仓库**: glm-quota-monitor | **Session**: debug | **日期**: 2026-07-06
-**现象**: codex CLI 报
-`⚠ Falling back from WebSockets to HTTPS transport. request timed out`
-`■ Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.`
+**仓库**: glm-quota-monitor | **Session**: collab-q&a | **日期**: 2026-07-06
 
 ---
 
-## 一、这不是应用 bug，是凭证在服务端失效
+## 结论：改代码完全不影响 owner 的 auth
 
-本机 `~/.codex/auth.json` 实测（只读元信息，未读 token 值）：
+owner 的 auth 状态只存在两个地方，你本机改代码两个都碰不到：
+1. **owner 本机的 `~/.codex/auth.json`** —— 在他的机器上，你够不到
+2. **Gist 里的加密副本** —— 这是 auth 的共享通道，但**单向**（见下）
 
-| 项 | 值 | 含义 |
+代码改动只活在你本机的工作树（`C:\Users\y\Desktop\glm-quota-monitor`），跟 auth 通道（gist）是两条独立的路，不交叉。
+
+---
+
+## 为什么碰不到 gist：鉴权同步是单向流
+
+代码里两个命令的权限不对称（codex.rs:144-181）：
+
+| 命令 | 角色 | 需要 | 对 gist 的操作 |
+|---|---|---|---|
+| `upload_codex_auth` | owner | GIST_URL **+ GITHUB_TOKEN**（缺 token 直接报错） | **写**（PATCH 覆盖） |
+| `sync_codex_auth` | consumer | 只需 GIST_URL | **只读**（GET） |
+
+而且前端 `CodexPane.tsx` 对 consumer **不渲染** GitHub Token 输入框（`{role === "owner" && ...}`），所以 consumer 的数据库里根本没有 token → 即便调 upload 也会卡在"未配置 GitHub Token"。
+
+**流向固定为**：`owner 本机 → push → gist → pull → consumer 本机`。你作为 consumer 只能 pull，写不进 gist。
+
+---
+
+## 你这些操作，逐个判断会不会影响 owner
+
+| 你的操作 | 影响 owner auth? | 原因 |
 |---|---|---|
-| 修改时间 | 2026-07-06 19:41 | sync 确实更新了本机文件 ✅ |
-| access_token exp | 2026-07-16 | 本地看**还没过期** |
-| refresh_token | 存在 | — |
-
-**但 codex CLI 报 `revoked`** → 矛盾说明：这套凭证（access + refresh）在 **OpenAI 服务端被主动吊销**，本地 exp 只是理论有效期，服务端可以随时作废。
-
-**关键认知**：sync 成功 ≠ token 有效。应用只是把 gist 里的（已失效的）凭证复制到本机。这印证了 `WINDOWS_TEST_REPORT.md` 的遗留风险——"gist 里的凭证是旧的/失效的，待 owner 重新 login 上传有效凭证"。
+| 改代码（Cargo.toml/lib.rs/UI） | ❌ 不影响 | 本机工作树，与 gist 通道无关 |
+| 在应用里点「同步鉴权」 | ❌ 不影响 | 只读 gist，写本机 auth.json |
+| 本机 `codex login`（用你自己的账号） | ❌ 不影响 gist/owner | 只覆盖**你本机** auth.json；不 push 就不进 gist |
+| 改本机代理设置 / 切 rustls | ❌ 不影响 | 纯本机网络层 |
+| **git push 代码到 origin/master** | ❌ 不影响 auth | 见下方"代码推送"说明 |
 
 ---
 
-## 二、为什么会被吊销
+## 唯一能污染 gist 的路径（需主动凑齐 4 步，默认不会发生）
 
-最可能的原因（OpenAI codex 的 OAuth 行为）：
-1. **单会话吊销**：owner 在别处（或本机）重新 `codex login`，新登录会**吊销之前的 refresh_token**——这是 OAuth token rotation 的常见行为
-2. **安全事件延续**：上次 gist_meta.json 泄露事件中，本机 refresh_token 曾被主动吊销（见 WINDOWS_TEST_REPORT 第三节）；如果 gist 里上传的还是那套旧凭证，就一直是失效的
-3. 账号安全策略主动吊销
+1. 本机 `codex login`（本机 auth.json 变成**你的**凭证）
+2. 应用里角色切成 **owner**
+3. 填入 **GitHub Token**（有 gist 写权限的那个）
+4. 点「上传鉴权文件」或开了**自动上传**
 
-不管哪种，结论一样：**需要重新登录拿新凭证**。
+→ 此时你本机的凭证会被 push 覆盖 gist，owner 下次 pull 就拿到你的凭证（覆盖了他的）。
 
----
-
-## 三、两条错误信息分别是什么
-
-| 信息 | 含义 | 性质 |
-|---|---|---|
-| `refresh token was revoked` | 凭证服务端失效 | **核心矛盾**，必须重新 login |
-| `Falling back from WebSockets to HTTPS / request timed out` | codex CLI 连 chatgpt.com 超时 | 次要：codex CLI **不走应用的 7890 代理**，自己没配代理 → 访问 chatgpt.com 被墙超时 |
-
-即使修好网络（给 codex 配代理），token revoked 还是登不上。所以**先解决凭证，网络是配套**。
+只要保持 **consumer 角色**，第 2-4 步在 UI 上根本走不通，gist 对你就是只读的，**绝对安全**。
 
 ---
 
-## 四、解决步骤
+## 附：git push 代码对 owner 的影响（与 auth 无关，但值得注意）
 
-### 步骤 1：给 codex CLI 配代理（解决 timeout）
-codex CLI 是独立程序，不读应用的代理设置，要单独配。在终端设环境变量：
-```bash
-# Git Bash / WSL
-export HTTPS_PROXY=http://127.0.0.1:7890
-export HTTP_PROXY=http://127.0.0.1:7890
+如果你把本次代码改动 push 到 `origin/master`，owner（macOS）pull 后会拿到：
+- ✅ **rustls-tls**：跨平台，对 macOS 无害（甚至更稳）
+- ✅ **代理 UI**：owner 也受益，可在界面改端口
+- ⚠️ **`DEFAULT_PROXY_URL = 7890`**：这是**你本机**的 clash 端口。owner 的 macOS Clash Verge 默认混合端口常是 **7897**——他 pull 编译后默认代理会变成 7890，如果他的 clash 在 7897 就连不上。**但有 UI 了，他改一下即可**，不需要改代码回滚。
 
-# 或 Windows cmd/PowerShell
-set HTTPS_PROXY=http://127.0.0.1:7890
-```
-（codex 读 `HTTPS_PROXY` 出境。clash 要开着监听 7890）
-
-### 步骤 2：重新登录（解决 revoked）
-```bash
-codex login
-```
-这是交互式 OAuth（开浏览器）。在本会话里可以用：
-```
-! HTTPS_PROXY=http://127.0.0.1:7890 codex login
-```
-登录成功后本机 `~/.codex/auth.json` 更新为有效凭证，codex CLI 立即可用。
-
-### 步骤 3（仅 owner）：把新凭证上传 gist 供其他设备同步
-本机应用 → Codex 设置 → 角色=owner → 填 Gist URL + GitHub Token → 点「上传鉴权文件」。
-其他 consumer 设备再 sync 就能拿到这套新凭证。
-
----
-
-## 五、如果你是 consumer（不是 codex 账号拥有者）
-本机 `codex login` 你没权限（不是你的账号）。需要 owner（Ngaizean）在他的机器执行步骤 2+3，重新 upload 有效 gist，你这边再 sync。
-
----
-
-## 附：与本次应用修复的关系
-应用侧（rustls + 默认代理 7890 + 代理 UI）已经修好——你确认"网络通了"。本次 codex CLI 报错是**另一层**问题（凭证失效 + codex CLI 自身没配代理），不在应用的可修复范围内，需要按上面步骤在本机处理 codex CLI 本身。
+> 如果你打算 push，可以考虑把默认值改回更中性的（比如留 7897，或做端口自动探测），避免给 macOS 协作者添麻烦。不 push 则无所谓。
