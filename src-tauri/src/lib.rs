@@ -33,23 +33,25 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::n
 /// 智谱 API 继续用 HTTP_CLIENT 直连（国内）
 static PROXY_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
-/// 默认代理地址（Clash Verge / Mihomo 常用混合端口）
-const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:7897";
+/// 默认代理地址（Clash / Mihomo 常用 HTTP 混合端口）
+const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:7890";
 
 /// 构造代理 client。proxy_url 为空时用默认代理；代理构造失败回退到直连（不崩）。
+///
+/// 固定使用 rustls-tls：避免 Windows native-tls(schannel) 的证书吊销检查
+/// (CRYPT_E_REVOCATION_OFFLINE) 导致 gist.githubusercontent.com 等域名 TLS 握手失败。
 fn build_proxy_client(proxy_url: &str) -> reqwest::Client {
     let url = if proxy_url.trim().is_empty() {
         DEFAULT_PROXY_URL
     } else {
         proxy_url.trim()
     };
+    let builder = reqwest::Client::builder().use_rustls_tls();
     match reqwest::Proxy::all(url) {
-        Ok(proxy) => reqwest::Client::builder()
-            .proxy(proxy)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new()),
-        Err(_) => reqwest::Client::new(),
+        Ok(proxy) => builder.proxy(proxy).build(),
+        Err(_) => builder.build(),
     }
+    .unwrap_or_else(|_| reqwest::Client::new())
 }
 
 /// 在 setup 里调用：依据数据库 codex_proxy 配置初始化代理 client。
