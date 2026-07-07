@@ -1,17 +1,34 @@
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, Key, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
+use std::sync::LazyLock;
 
-/// 统一加密密钥（256-bit / 32 字节）— 编译期预置，所有客户端共享
-/// 用于加密 auth.json 后上传到 Gist
+/// 统一加密密钥（256-bit / 32 字节）— owner/consumer 共享，用于加密 auth.json 后上传到 Gist。
 ///
-/// 注意：这是分发链路的"预置共享密钥"，非用户级密钥。
-/// 安全模型：Gist raw URL 可能泄露，但内容有这层 AES-256-GCM 加密保护。
-const ENCRYPTION_KEY: [u8; 32] = *b"gLmQu0t4C0d3xSyNcK3y256b1t5SeCr3"; // 32 字节
+/// 编译期从 CODEX_AES_KEY 环境变量注入（32 字节 ASCII）。未设置或长度不符时回退到内置 key，
+/// 保证旧版本/未配置环境仍可编译使用（向后兼容）。
+/// 设置环境变量后，key 不存在于源码，即使源码 + Gist ID 泄露也无法解密（防御纵深）。
+static ENCRYPTION_KEY: LazyLock<[u8; 32]> = LazyLock::new(|| {
+    match option_env!("CODEX_AES_KEY") {
+        Some(k) if k.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(k.as_bytes());
+            arr
+        }
+        _ => {
+            eprintln!(
+                "warn: CODEX_AES_KEY 未设置或长度非 32 字节，回退到内置 key。\
+                 设置 CODEX_AES_KEY 环境变量（32 字节 ASCII）以启用防御纵深。"
+            );
+            *b"gLmQu0t4C0d3xSyNcK3y256b1t5SeCr3"
+        }
+    }
+});
 
 /// 加密明文，返回 base64(nonce || ciphertext || tag)
 pub fn encrypt(plaintext: &str) -> Result<String, String> {
-    let cipher = Aes256Gcm::new(&ENCRYPTION_KEY.into());
+    let key = Key::<Aes256Gcm>::from_slice(&*ENCRYPTION_KEY);
+    let cipher = Aes256Gcm::new(key);
     let mut nonce_bytes = [0u8; 12];
     // 跨平台安全随机数（getrandom：macOS 用 getentropy syscall，Windows 用 BCryptGenRandom）
     getrandom::getrandom(&mut nonce_bytes).map_err(|e| format!("随机数生成失败: {}", e))?;
@@ -42,7 +59,8 @@ pub fn decrypt(b64: &str) -> Result<String, String> {
     let (nonce_bytes, ciphertext) = combined.split_at(12);
     let nonce = Nonce::from_slice(nonce_bytes);
 
-    let cipher = Aes256Gcm::new(&ENCRYPTION_KEY.into());
+    let key = Key::<Aes256Gcm>::from_slice(&*ENCRYPTION_KEY);
+    let cipher = Aes256Gcm::new(key);
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
         .map_err(|_| "解密失败：密钥不匹配或数据已损坏".to_string())?;

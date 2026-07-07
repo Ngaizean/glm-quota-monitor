@@ -76,6 +76,20 @@ cargo build
 
 macOS/Windows 的窗口装饰、托盘定位、应用初始化等逻辑通过 `#[cfg(target_os)]` 条件编译分发到 `platform/macos.rs` 和 `platform/windows.rs`，主入口 `lib.rs` 不含任何平台特定代码。
 
+### Codex 鉴权同步 AES key（防御纵深）
+
+`codex/crypto.rs` 加密 auth.json 后上传 Gist 的 AES-256-GCM key，通过编译期环境变量 `CODEX_AES_KEY` 注入（`option_env!()` 宏），而非硬编码在源码里。
+
+- **格式**：恰好 32 字节 ASCII 字符串
+- **配置**：owner 和 consumer 编译前各自 `export CODEX_AES_KEY="<同一32字节字符串>"`
+- **兜底**：未设置或长度不符时回退到内置 key，保证旧版本/未配置环境仍可编译（向后兼容）
+- **安全收益**：设置后，即使源码 + Gist ID 双双泄露，攻击者也无法解密密文（key 只在编译产物里，不在源码/git 历史）
+
+```bash
+# 生成一个 32 字节随机 key（owner/consumer 必须用同一个）
+openssl rand -base64 24 | head -c 32 | xargs -I{} echo 'export CODEX_AES_KEY="{}"'
+```
+
 ## 前端
 
 ### 暗色模式适配
