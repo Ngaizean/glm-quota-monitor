@@ -94,10 +94,7 @@ const REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
 /// 用 refresh_token 刷新 access_token
 /// 成功后更新 auth.json（本机）+ Keychain + 内存，返回新的 AuthJson
 /// 注意：refresh_token 是轮转的，刷新后旧的立即失效
-pub fn refresh_access_token(
-    http: &reqwest::Client,
-    auth: &AuthJson,
-) -> Result<AuthJson, String> {
+pub fn refresh_access_token(http: &reqwest::Client, auth: &AuthJson) -> Result<AuthJson, String> {
     let refresh_token = &auth.tokens.refresh_token;
     if refresh_token.is_empty() {
         return Err("无 refresh_token".to_string());
@@ -125,15 +122,19 @@ pub fn refresh_access_token(
     .map_err(|e| format!("刷新请求失败: {}", e))?;
 
     let status = resp.status();
-    let body = tauri::async_runtime::block_on(resp.text())
-        .map_err(|e| format!("读取响应失败: {}", e))?;
+    let body =
+        tauri::async_runtime::block_on(resp.text()).map_err(|e| format!("读取响应失败: {}", e))?;
 
     if !status.is_success() {
-        return Err(format!("刷新失败 HTTP {}: {}", status, &body[..body.len().min(200)]));
+        return Err(format!(
+            "刷新失败 HTTP {}: {}",
+            status,
+            &body[..body.len().min(200)]
+        ));
     }
 
-    let token_resp: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| format!("解析刷新响应失败: {}", e))?;
+    let token_resp: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("解析刷新响应失败: {}", e))?;
 
     // 构建新的 AuthJson（保留 account_id，更新 tokens + last_refresh）
     let mut new_auth = auth.clone();
@@ -147,7 +148,11 @@ pub fn refresh_access_token(
         .and_then(|v| v.as_str())
         .unwrap_or(refresh_token) // 某些情况不返回新 refresh_token，保留旧的
         .to_string();
-    if token_resp.get("id_token").and_then(|v| v.as_str()).is_some() {
+    if token_resp
+        .get("id_token")
+        .and_then(|v| v.as_str())
+        .is_some()
+    {
         new_auth.tokens.id_token = token_resp
             .get("id_token")
             .and_then(|v| v.as_str())
@@ -194,4 +199,20 @@ pub fn refresh_and_sync(
     }
 
     Ok(new_auth)
+}
+
+/// 优先用代理刷新 token，网络失败时回退直连。
+pub fn refresh_and_sync_with_fallback(
+    primary: &reqwest::Client,
+    fallback: &reqwest::Client,
+    auth: &AuthJson,
+    account_id: &str,
+) -> Result<AuthJson, String> {
+    match refresh_and_sync(primary, auth, account_id) {
+        Err(primary_error) if primary_error.starts_with("刷新请求失败:") => {
+            eprintln!("Codex token 代理刷新失败，尝试直连重试: {}", primary_error);
+            refresh_and_sync(fallback, auth, account_id)
+        }
+        result => result,
+    }
 }

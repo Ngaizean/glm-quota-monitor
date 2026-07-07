@@ -26,11 +26,14 @@ fn read_setting(db: &Database, key: &str) -> Option<String> {
 /// 从 Keychain 读取 codex 凭证并查询额度，返回统一 QuotaData
 fn fetch_codex_usage(_db: &Database, account_id: &str) -> Result<QuotaData, String> {
     let auth = codex::auth::read_auth_from_keychain(account_id)?;
-    let usage = tauri::async_runtime::block_on(codex::client::CodexClient::get_usage(
-        crate::proxy_http_client(),
-        &auth.tokens.access_token,
-    ))
-    .map_err(|e| e.to_string())?;
+    let proxy = crate::proxy_http_client();
+    let usage =
+        tauri::async_runtime::block_on(codex::client::CodexClient::get_usage_with_fallback(
+            &proxy,
+            &crate::HTTP_CLIENT,
+            &auth.tokens.access_token,
+        ))
+        .map_err(|e| e.to_string())?;
 
     let quota = usage_to_quota_data(&usage);
     Ok(quota)
@@ -70,9 +73,14 @@ pub async fn add_codex_account(
     }
 
     // 2. 验证：用 access_token 调 wham/usage
-    let usage = codex::client::CodexClient::get_usage(crate::proxy_http_client(), &auth.tokens.access_token)
-        .await
-        .map_err(|e| format!("验证失败（access_token 可能已失效）: {}", e))?;
+    let proxy = crate::proxy_http_client();
+    let usage = codex::client::CodexClient::get_usage_with_fallback(
+        &proxy,
+        &crate::HTTP_CLIENT,
+        &auth.tokens.access_token,
+    )
+    .await
+    .map_err(|e| format!("验证失败（access_token 可能已失效）: {}", e))?;
 
     // 3. 存库
     let now = Utc::now().to_rfc3339();
@@ -105,8 +113,7 @@ pub async fn add_codex_account(
     }
 
     // 4. 凭证存 Keychain
-    codex::auth::store_auth_to_keychain(&id, &auth)
-        .map_err(|e| format!("凭证存储失败: {}", e))?;
+    codex::auth::store_auth_to_keychain(&id, &auth).map_err(|e| format!("凭证存储失败: {}", e))?;
 
     let _ = app.emit("accounts-changed", ());
 
@@ -152,13 +159,13 @@ pub async fn upload_codex_auth(db: State<'_, Database>) -> Result<(), String> {
     let encrypted = codex::crypto::encrypt(&json)?;
 
     // 3. 读 Gist URL + GitHub Token
-    let gist_url = read_setting(&db, GIST_URL_KEY)
-        .ok_or("未配置 Gist URL，请在设置中填写")?;
-    let github_token = read_setting(&db, GITHUB_TOKEN_KEY)
-        .ok_or("未配置 GitHub Token，请在设置中填写")?;
+    let gist_url = read_setting(&db, GIST_URL_KEY).ok_or("未配置 Gist URL，请在设置中填写")?;
+    let github_token =
+        read_setting(&db, GITHUB_TOKEN_KEY).ok_or("未配置 GitHub Token，请在设置中填写")?;
 
     // 4. 推送
-    codex::sync::push_to_gist(crate::proxy_http_client(), &gist_url, &github_token, &encrypted).await?;
+    let proxy = crate::proxy_http_client();
+    codex::sync::push_to_gist(&proxy, &gist_url, &github_token, &encrypted).await?;
 
     // 5. 记录上传时间
     {
@@ -181,16 +188,17 @@ pub async fn upload_codex_auth(db: State<'_, Database>) -> Result<(), String> {
 pub async fn fetch_codex_gist_encrypted(db: &Database) -> Result<String, String> {
     let gist_url = read_setting(db, GIST_URL_KEY)
         .ok_or("未配置 Gist URL，请在设置中填写")?;
+    let proxy = crate::proxy_http_client();
     if gist_url.contains("gistusercontent.com") {
-        codex::sync::fetch_from_gist(crate::proxy_http_client(), &gist_url).await
+        codex::sync::fetch_from_gist(&proxy, &gist_url).await
     } else {
         // 网页 URL / API URL → resolve 出 raw URL
         // consumer 角色无 token 字段，但 gist 是 unlisted，匿名 resolve 也能工作；
         // 有 token 时携带，提升 GitHub API 速率限制
         let token = read_setting(db, GITHUB_TOKEN_KEY).unwrap_or_default();
         let raw_url =
-            codex::sync::resolve_gist_raw_url(crate::proxy_http_client(), &gist_url, &token).await?;
-        codex::sync::fetch_from_gist(crate::proxy_http_client(), &raw_url).await
+            codex::sync::resolve_gist_raw_url(&proxy, &gist_url, &token).await?;
+        codex::sync::fetch_from_gist(&proxy, &raw_url).await
     }
 }
 
@@ -245,11 +253,19 @@ pub async fn sync_codex_auth(db: State<'_, Database>) -> Result<(), String> {
 
 /// 测试 Codex 连接（验证 access_token 是否有效）
 #[tauri::command]
-pub async fn test_codex_connection(_db: State<'_, Database>, account_id: String) -> Result<codex::types::UsageResponse, String> {
+pub async fn test_codex_connection(
+    _db: State<'_, Database>,
+    account_id: String,
+) -> Result<codex::types::UsageResponse, String> {
     let auth = codex::auth::read_auth_from_keychain(&account_id)?;
-    let usage = codex::client::CodexClient::get_usage(crate::proxy_http_client(), &auth.tokens.access_token)
-        .await
-        .map_err(|e| e.to_string())?;
+    let proxy = crate::proxy_http_client();
+    let usage = codex::client::CodexClient::get_usage_with_fallback(
+        &proxy,
+        &crate::HTTP_CLIENT,
+        &auth.tokens.access_token,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(usage)
 }
 
@@ -377,10 +393,11 @@ pub fn get_codex_auto_sync(db: State<'_, Database>) -> Result<bool, String> {
 
 const PROXY_KEY: &str = "codex_proxy";
 
-/// 设置 Codex/Gist 代理地址（如 http://127.0.0.1:7897）。
-/// 空字符串表示使用默认代理。修改后需重启 app 生效。
+/// 设置 Codex/Gist 代理地址（如 http://127.0.0.1:50470）。
+/// 空字符串表示使用默认代理，保存后立即生效。
 #[tauri::command]
 pub fn set_codex_proxy(db: State<'_, Database>, url: String) -> Result<(), String> {
+    crate::set_proxy_client(&url)?;
     let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",

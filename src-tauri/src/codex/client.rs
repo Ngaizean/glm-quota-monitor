@@ -57,9 +57,29 @@ impl CodexClient {
         }
 
         let text = resp.text().await?;
-        let usage: UsageResponse = serde_json::from_str(&text)
-            .map_err(|e| CodexApiError::Parse(format!("{} | 原始响应: {}", e, &text[..text.len().min(300)])))?;
+        let usage: UsageResponse = serde_json::from_str(&text).map_err(|e| {
+            CodexApiError::Parse(format!(
+                "{} | 原始响应: {}",
+                e,
+                &text[..text.len().min(300)]
+            ))
+        })?;
 
         Ok(usage)
+    }
+
+    /// 优先使用代理 client，网络层失败时回退到直连。
+    pub async fn get_usage_with_fallback(
+        primary: &reqwest::Client,
+        fallback: &reqwest::Client,
+        access_token: &str,
+    ) -> Result<UsageResponse, CodexApiError> {
+        match Self::get_usage(primary, access_token).await {
+            Err(CodexApiError::Request(primary_error)) => {
+                eprintln!("Codex usage 代理请求失败，尝试直连重试: {}", primary_error);
+                Self::get_usage(fallback, access_token).await
+            }
+            result => result,
+        }
     }
 }

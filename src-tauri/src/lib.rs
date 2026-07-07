@@ -14,7 +14,7 @@ use db::Database;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -31,7 +31,8 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::n
 
 /// Codex/Gist 专用代理 client（chatgpt.com / github.com 等境外端点）
 /// 智谱 API 继续用 HTTP_CLIENT 直连（国内）
-static PROXY_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static PROXY_CLIENT: LazyLock<RwLock<reqwest::Client>> =
+    LazyLock::new(|| RwLock::new(build_proxy_client("")));
 
 /// 常见本地 HTTP 代理端口，按优先级探测：
 ///   - 7890  Clash 经典 HTTP 混合端口 / Clash for Windows
@@ -77,15 +78,23 @@ fn build_proxy_client(proxy_url: &str) -> reqwest::Client {
     .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-/// 在 setup 里调用：依据数据库 codex_proxy 配置初始化代理 client。
-/// 后续修改代理地址需重启 app 才生效（OnceLock 限制）。
-pub fn init_proxy_client(proxy_url: &str) {
-    let _ = PROXY_CLIENT.set(build_proxy_client(proxy_url));
+/// 更新 Codex/Gist 代理 client。保存设置后立即生效。
+pub fn set_proxy_client(proxy_url: &str) -> Result<(), String> {
+    let client = build_proxy_client(proxy_url);
+    let mut guard = PROXY_CLIENT
+        .write()
+        .map_err(|e| format!("代理配置锁定失败: {}", e))?;
+    *guard = client;
+    Ok(())
 }
 
-/// 取代理 client。setup 已初始化则复用；否则懒构造（自动探测本机代理端口）。
-pub fn proxy_http_client() -> &'static reqwest::Client {
-    PROXY_CLIENT.get_or_init(|| build_proxy_client(""))
+/// 取代理 client。reqwest::Client clone 只复制句柄，开销很低。
+/// 返回 owned Client 便于调用方按需取引用（与 fallback 双 client 逻辑配合）。
+pub fn proxy_http_client() -> reqwest::Client {
+    PROXY_CLIENT
+        .read()
+        .map(|client| client.clone())
+        .unwrap_or_else(|_| reqwest::Client::new())
 }
 
 #[derive(serde::Serialize)]
@@ -263,7 +272,13 @@ fn fetch_codex_account_quota(
     // 检查 token 是否快过期（<2天），如果是则自动刷新
     let auth = if is_token_expiring_soon(&local_auth.tokens.access_token, 2) {
         eprintln!("Codex token 即将过期，尝试自动刷新...");
-        match codex::auth::refresh_and_sync(proxy_http_client(), &local_auth, account_id) {
+        let proxy = proxy_http_client();
+        match codex::auth::refresh_and_sync_with_fallback(
+            &proxy,
+            &HTTP_CLIENT,
+            &local_auth,
+            account_id,
+        ) {
             Ok(new_auth) => {
                 eprintln!("Codex token 自动刷新成功");
                 new_auth
@@ -279,19 +294,30 @@ fn fetch_codex_account_quota(
         local_auth
     };
 
-    let usage_result = tauri::async_runtime::block_on(codex::client::CodexClient::get_usage(
-        proxy_http_client(),
-        &auth.tokens.access_token,
-    ));
+    let proxy = proxy_http_client();
+    let usage_result =
+        tauri::async_runtime::block_on(codex::client::CodexClient::get_usage_with_fallback(
+            &proxy,
+            &HTTP_CLIENT,
+            &auth.tokens.access_token,
+        ));
 
     let usage = match usage_result {
         Ok(usage) => usage,
         Err(codex::client::CodexApiError::Http(reqwest::StatusCode::UNAUTHORIZED)) => {
             eprintln!("Codex token 返回 401，尝试刷新后重试...");
-            let refreshed = codex::auth::refresh_and_sync(proxy_http_client(), &auth, account_id)
-                .map_err(|e| format!("wham/usage 调用失败，且刷新 token 失败: {}", e))?;
-            tauri::async_runtime::block_on(codex::client::CodexClient::get_usage(
-                proxy_http_client(),
+            let proxy = proxy_http_client();
+            let refreshed = codex::auth::refresh_and_sync_with_fallback(
+                &proxy,
+                &HTTP_CLIENT,
+                &auth,
+                account_id,
+            )
+            .map_err(|e| format!("wham/usage 调用失败，且刷新 token 失败: {}", e))?;
+            let proxy = proxy_http_client();
+            tauri::async_runtime::block_on(codex::client::CodexClient::get_usage_with_fallback(
+                &proxy,
+                &HTTP_CLIENT,
                 &refreshed.tokens.access_token,
             ))
             .map_err(|e| format!("wham/usage 重试失败: {}", e))?
@@ -809,8 +835,9 @@ fn try_codex_auto_upload(db: &Database) -> Result<(), String> {
     let json = serde_json::to_string(&auth).map_err(|e| format!("序列化失败: {}", e))?;
     let encrypted = codex::crypto::encrypt(&json)?;
 
+    let proxy = proxy_http_client();
     tauri::async_runtime::block_on(codex::sync::push_to_gist(
-        proxy_http_client(),
+        &proxy,
         &gist_url,
         &github_token,
         &encrypted,
@@ -1042,7 +1069,9 @@ pub fn run() {
             app.manage(db);
 
             // 初始化 Codex/Gist 代理 client（境外端点走代理，智谱走直连）
-            init_proxy_client(&proxy_url);
+            if let Err(e) = set_proxy_client(&proxy_url) {
+                eprintln!("初始化 Codex 代理失败: {}", e);
+            }
 
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
             let refresh_item = MenuItemBuilder::with_id("refresh", "立即刷新").build(app)?;

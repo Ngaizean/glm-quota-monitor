@@ -70,6 +70,7 @@ export default function CodexPane() {
   const [role, setRole] = useState<string>("owner");
   const [gistUrl, setGistUrl] = useState("");
   const [githubToken, setGithubToken] = useState("");
+  const [proxyUrl, setProxyUrl] = useState("");
   const [authSummary, setAuthSummary] = useState<AuthSummary | null>(null);
   const [syncInfo, setSyncInfo] = useState<SyncInfo | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -79,7 +80,6 @@ export default function CodexPane() {
   const [showToken, setShowToken] = useState(false);
   const [autoUpload, setAutoUpload] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [proxyUrl, setProxyUrl] = useState("");
   const [autoSync, setAutoSync] = useState(true);
 
   useEffect(() => {
@@ -317,6 +317,16 @@ export default function CodexPane() {
         <span className="text-[10px] text-[var(--color-text-tertiary)] block">
           {t('codexPane.gistConfig')}
         </span>
+        <input
+          type="text"
+          placeholder={t('codexPane.proxyPlaceholder')}
+          value={proxyUrl}
+          onChange={(e) => handleProxyChange(e.target.value)}
+          className={`${inputClass} font-mono`}
+        />
+        <p className="text-[9px] text-[var(--color-text-tertiary)] leading-relaxed">
+          {t('codexPane.proxyDesc')}
+        </p>
         <input
           type="text"
           placeholder={t('codexPane.gistUrlPlaceholder')}
