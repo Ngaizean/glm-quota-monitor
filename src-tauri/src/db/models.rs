@@ -36,5 +36,6 @@ pub struct AlertRule {
     pub threshold: f64,
     pub enabled: bool,
     pub account_id: Option<String>,
+    pub dedupe_window_mins: i64,
 }
 
