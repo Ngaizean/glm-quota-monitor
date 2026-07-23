@@ -1,9 +1,7 @@
 use crate::api::client::ZhipuClient;
 use crate::crypto;
-use crate::db::Database;
 use chrono::Timelike;
 use serde::{Deserialize, Serialize};
-use tauri::State;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenUsagePeriod {
@@ -20,21 +18,9 @@ pub struct TokenUsageSummary {
 }
 
 #[tauri::command]
-pub async fn get_usage_summary(db: State<'_, Database>, account_id: String) -> Result<TokenUsageSummary, String> {
-    let db_key = {
-        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-        conn.query_row(
-            "SELECT api_key FROM accounts WHERE id = ?1",
-            rusqlite::params![account_id],
-            |row| row.get::<_, String>(0),
-        ).map_err(|e| format!("账号不存在: {}", e))?
-    };
-
-    let api_key = crypto::resolve_api_key(&account_id, &db_key, &|| {
-        if let Ok(c) = db.conn.lock() {
-            let _ = c.execute("UPDATE accounts SET api_key = '' WHERE id = ?1", rusqlite::params![account_id]);
-        }
-    }).ok_or("API key not found".to_string())?;
+pub async fn get_usage_summary(account_id: String) -> Result<TokenUsageSummary, String> {
+    let api_key = crypto::get_api_key(&account_id)
+        .map_err(|e| format!("API Key 读取失败: {}", e))?;
 
     let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
 
