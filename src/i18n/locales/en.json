@@ -54,7 +54,10 @@
     "monthly": "Plan",
     "unitPrice": "Unit",
     "currency": "$",
-    "ratio": "Cost/Plan"
+    "ratio": "Cost/Plan",
+    "weightedNote": "Per-model · {{currency}}{{price}}/M (free models excluded)",
+    "fallbackNote": "Flat unit · {{currency}}{{price}}/M",
+    "unitPriceDisabledTip": "Per-model billing active; this flat unit price is not in effect"
   },
   "toolUsage": {
     "title": "MCP Tool Usage",
@@ -147,12 +150,21 @@
     "token5hDesc": "Token usage rate alert for 5-hour window",
     "mcpMonthly": "Monthly MCP Quota Alert",
     "mcpMonthlyDesc": "Monthly MCP call quota alert",
+    "resetSoon": "Reset Reminder",
+    "resetSoonDesc": "Remind before quota resets",
     "idleAccount": "Idle Account Alert",
     "idleAccountDesc": "Alert when account is unused for a long time",
     "notifyAbove": "Notify when above {{threshold}}%",
+    "notifyBefore": "Notify {{time}} before reset",
     "idleNotifyAfter": "Notify when idle for {{time}}",
     "minutes": "minutes",
-    "hours": "hours"
+    "hours": "hours",
+    "muteAll": "Mute All",
+    "muteAllDesc": "Pause all system notifications and webhooks",
+    "globalDefault": "Global Default",
+    "editingAccount": "Editing: {{name}}",
+    "resetToGlobal": "Reset to global default",
+    "dedupeWindow": "Dedupe window"
   },
   "codexPane": {
     "role": "Role",
@@ -295,8 +307,14 @@
     "title": "Token Trend",
     "tokenUsage": "Token Usage",
     "timeUsage": "Time Usage",
+    "mcpUsage": "MCP Usage",
     "tokenLabel": "Token",
-    "timeLabel": "Time"
+    "timeLabel": "Time",
+    "mcpLabel": "MCP",
+    "range1d": "1D",
+    "range7d": "7D",
+    "range30d": "30D",
+    "range90d": "90D"
   },
   "weekdays": {
     "short": ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]

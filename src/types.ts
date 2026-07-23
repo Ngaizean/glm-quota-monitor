@@ -38,7 +38,9 @@ export interface TokenHistoryPoint {
   timestamp: string;
   token_pct: number;
   time_pct: number;
+  mcp_pct: number;
   tokens_24h: number | null;
+  calls: number | null;
 }
 
 export interface TokenUsagePeriod {
@@ -68,6 +70,8 @@ export interface CostEstimate {
   plan_price: number;
   daily_avg: number;
   ratio: number;
+  unit_price: number;
+  weighted: boolean;
 }
 
 export interface ToolUsageItem {

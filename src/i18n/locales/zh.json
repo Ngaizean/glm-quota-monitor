@@ -54,7 +54,10 @@
     "monthly": "包月",
     "unitPrice": "单价",
     "currency": "¥",
-    "ratio": "费用/套餐"
+    "ratio": "费用/套餐",
+    "weightedNote": "按模型计费 · {{currency}}{{price}}/百万（免费模型不计）",
+    "fallbackNote": "统一单价 · {{currency}}{{price}}/百万",
+    "unitPriceDisabledTip": "按模型加权计费中，此兜底价暂未生效"
   },
   "toolUsage": {
     "title": "MCP 工具用量",
@@ -147,12 +150,21 @@
     "token5hDesc": "5 小时窗口 Token 使用率告警",
     "mcpMonthly": "月度 MCP 额度预警",
     "mcpMonthlyDesc": "月度 MCP 调用额度告警",
+    "resetSoon": "重置提醒",
+    "resetSoonDesc": "额度重置前提前提醒",
     "idleAccount": "空闲账号提醒",
     "idleAccountDesc": "账号长时间未使用时提醒",
     "notifyAbove": "超过 {{threshold}}% 时通知",
+    "notifyBefore": "重置前 {{time}} 通知",
     "idleNotifyAfter": "空闲超过 {{time}} 时通知",
     "minutes": "分钟",
-    "hours": "小时"
+    "hours": "小时",
+    "muteAll": "全部静音",
+    "muteAllDesc": "暂停所有系统通知与 Webhook",
+    "globalDefault": "全局默认",
+    "editingAccount": "正在编辑：{{name}}",
+    "resetToGlobal": "重置为全局默认",
+    "dedupeWindow": "去重窗口"
   },
   "codexPane": {
     "role": "角色",
@@ -295,8 +307,14 @@
     "title": "Token 趋势",
     "tokenUsage": "Token 用量",
     "timeUsage": "时间用量",
+    "mcpUsage": "MCP 用量",
     "tokenLabel": "Token",
-    "timeLabel": "时间"
+    "timeLabel": "时间",
+    "mcpLabel": "MCP",
+    "range1d": "1天",
+    "range7d": "7天",
+    "range30d": "30天",
+    "range90d": "90天"
   },
   "weekdays": {
     "short": ["日", "一", "二", "三", "四", "五", "六"]

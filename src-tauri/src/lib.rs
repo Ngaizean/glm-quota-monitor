@@ -195,15 +195,8 @@ fn get_refresh_interval(db: &Database) -> u64 {
     .unwrap_or(DEFAULT_REFRESH_INTERVAL_SECS)
 }
 
-fn resolve_api_key_for_refresh(db: &Database, account_id: &str, db_key: &str) -> Option<String> {
-    crypto::resolve_api_key(account_id, db_key, &|| {
-        if let Ok(conn) = db.conn.lock() {
-            let _ = conn.execute(
-                "UPDATE accounts SET api_key = '' WHERE id = ?1",
-                rusqlite::params![account_id],
-            );
-        }
-    })
+fn resolve_api_key_for_refresh(account_id: &str) -> Option<String> {
+    crypto::get_api_key(account_id).ok()
 }
 
 /// 获取单个账号的配额数据 + 今日 token 用量
@@ -211,7 +204,7 @@ fn fetch_account_quota(
     db: &Database,
     account_id: &str,
     api_key: &str,
-) -> Result<(QuotaData, i32, f64), String> {
+) -> Result<(QuotaData, i32, f64, f64), String> {
     // 按 platform 分流
     let platform: String = db
         .conn
@@ -239,7 +232,7 @@ fn fetch_account_quota(
 fn fetch_zhipu_account_quota(
     _account_id: &str,
     api_key: &str,
-) -> Result<(QuotaData, i32, f64), String> {
+) -> Result<(QuotaData, i32, f64, f64), String> {
     let client = ZhipuClient::with_client(&HTTP_CLIENT, api_key);
     let quota =
         tauri::async_runtime::block_on(client.get_quota_limit()).map_err(|e| e.to_string())?;
@@ -250,9 +243,9 @@ fn fetch_zhipu_account_quota(
         .map(|l| l.percentage as i32)
         .unwrap_or(0);
 
-    let today_tokens = fetch_today_tokens(&client);
+    let (today_tokens, today_calls) = fetch_today_tokens(&client);
 
-    Ok((quota, pct, today_tokens))
+    Ok((quota, pct, today_tokens, today_calls))
 }
 
 /// Codex 账号额度查询
@@ -260,7 +253,7 @@ fn fetch_zhipu_account_quota(
 fn fetch_codex_account_quota(
     db: &Database,
     account_id: &str,
-) -> Result<(QuotaData, i32, f64), String> {
+) -> Result<(QuotaData, i32, f64, f64), String> {
     // 第一步：尝试本机 auth.json（Codex CLI 维护的，总是最新源）
     let local_auth = codex::auth::read_local_auth_json()
         .or_else(|_| codex::auth::read_auth_from_keychain(account_id))?;
@@ -357,24 +350,26 @@ fn finalize_codex_quota(
     db: &Database,
     account_id: &str,
     usage: &codex::types::UsageResponse,
-) -> (QuotaData, i32, f64) {
+) -> (QuotaData, i32, f64, f64) {
     let quota = codex::usage_to_quota_data(usage);
+    // Codex 仅有周额度（TOKENS_LIMIT + unit=6），取其百分比作为卡片徽标
     let pct = quota
         .limits
         .iter()
-        .find(|l| l.unit == Some(3.0))
+        .find(|l| l.limit_type == "TOKENS_LIMIT" && l.unit == Some(6.0))
         .map(|l| l.percentage as i32)
         .unwrap_or(0);
 
     if let Ok(conn) = db.conn.lock() {
-        let _ = db::record_quota_snapshot(&conn, account_id, &quota, 0.0);
+        // Codex 无"今日 token/调用数"概念，均传 0.0
+        let _ = db::record_quota_snapshot(&conn, account_id, &quota, 0.0, 0.0);
         detect_codex_activity(&conn, account_id, &quota);
     }
 
-    (quota, pct, 0.0)
+    (quota, pct, 0.0, 0.0)
 }
 
-/// Codex 活跃检测：对比 5h 窗口百分比变化。
+/// Codex 活跃检测：对比周额度百分比变化（Codex 仅有周额度，5h 窗口已废弃）。
 fn detect_codex_activity(conn: &rusqlite::Connection, account_id: &str, quota: &QuotaData) {
     let prev_pct = conn
         .query_row(
@@ -387,15 +382,15 @@ fn detect_codex_activity(conn: &rusqlite::Connection, account_id: &str, quota: &
         .ok()
         .flatten();
 
-    let current_5h = quota
+    let current_weekly = quota
         .limits
         .iter()
-        .find(|l| l.limit_type == "TOKENS_LIMIT" && l.unit == Some(3.0))
+        .find(|l| l.limit_type == "TOKENS_LIMIT" && l.unit == Some(6.0))
         .map(|l| l.percentage)
         .unwrap_or(0.0);
 
     if let Some(prev) = prev_pct {
-        if current_5h > prev {
+        if current_weekly > prev {
             let now_str = chrono::Local::now().to_rfc3339();
             let key = format!("last_active_{}", account_id);
             let _ = conn.execute(
@@ -406,10 +401,10 @@ fn detect_codex_activity(conn: &rusqlite::Connection, account_id: &str, quota: &
     }
 }
 
-/// 获取今日（本地 00:00 至现在）的 token 总用量。
-/// API 失败时返回 0.0 而非报错，避免阻塞快照写入。
+/// 获取今日（本地 00:00 至现在）的 token 用量与调用次数，返回 (tokens, calls)。
+/// API 失败时返回 (0.0, 0.0) 而非报错，避免阻塞快照写入。
 /// 提取为 pub 以便 quota.rs 的手动刷新路径复用，修复趋势图清零 bug。
-pub fn fetch_today_tokens(client: &ZhipuClient) -> f64 {
+pub fn fetch_today_tokens(client: &ZhipuClient) -> (f64, f64) {
     let now = chrono::Local::now();
     // with_hour(0) 在夏令时前跳的 00:00 极少数情况返回 None，安全回退到 now
     let today_start = now
@@ -419,8 +414,11 @@ pub fn fetch_today_tokens(client: &ZhipuClient) -> f64 {
         .unwrap_or(now);
     let fmt = |dt: chrono::DateTime<chrono::Local>| dt.format("%Y-%m-%d %H:%M:%S").to_string();
     match tauri::async_runtime::block_on(client.get_model_usage(&fmt(today_start), &fmt(now))) {
-        Ok(data) => data.total_usage.total_tokens_usage,
-        Err(_) => 0.0,
+        Ok(data) => (
+            data.total_usage.total_tokens_usage,
+            data.total_usage.total_model_call_count,
+        ),
+        Err(_) => (0.0, 0.0),
     }
 }
 
@@ -547,13 +545,13 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
         None => return RefreshResult { max_pct: 0, quotas: HashMap::new(), primary_items: Vec::new() },
     };
 
-    // (id, alias, api_key, platform, is_primary)
-    let accounts: Vec<(String, String, String, String, bool)> = {
+    // (id, alias, platform, is_primary)
+    let accounts: Vec<(String, String, String, bool)> = {
         let Ok(guard) = db.conn.lock() else {
             return RefreshResult { max_pct: 0, quotas: HashMap::new(), primary_items: Vec::new() };
         };
         let result = guard.prepare(
-            "SELECT id, alias, api_key, platform, COALESCE(is_primary, 0) FROM accounts WHERE is_active = 1"
+            "SELECT id, alias, platform, COALESCE(is_primary, 0) FROM accounts WHERE is_active = 1"
         );
         let Ok(mut stmt) = result else {
             return RefreshResult { max_pct: 0, quotas: HashMap::new(), primary_items: Vec::new() };
@@ -562,9 +560,8 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
-                row.get(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, i32>(4)? == 1,
+                row.get::<_, String>(2)?,
+                row.get::<_, i32>(3)? == 1,
             ))
         });
         match rows {
@@ -591,11 +588,11 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
     let mut primary_items: Vec<PrimaryDisplay> = Vec::new();
     let mut quotas = HashMap::new();
 
-    for (account_id, account_alias, db_key, platform, is_primary) in &accounts {
+    for (account_id, account_alias, platform, is_primary) in &accounts {
         // Codex 账号凭证从 Keychain 读取（不走 GLM 的 api_key 解析）
         if platform == "codex" {
             match fetch_codex_account_quota(&db, account_id) {
-                Ok((mut quota, pct, _)) => {
+                Ok((mut quota, pct, _, _)) => {
                     if pct > max_pct {
                         max_pct = pct;
                     }
@@ -646,14 +643,14 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
             continue;
         }
 
-        // GLM 账号：从 Keychain 解析 API Key
-        let api_key = match resolve_api_key_for_refresh(&db, account_id, db_key) {
+        // GLM 账号：从 Keychain 读取 API Key
+        let api_key = match resolve_api_key_for_refresh(account_id) {
             Some(k) => k,
             None => continue,
         };
 
         match fetch_zhipu_account_quota(account_id, &api_key) {
-            Ok((mut quota, pct, today_tokens)) => {
+            Ok((mut quota, pct, today_tokens, today_calls)) => {
                 if pct > max_pct {
                     max_pct = pct;
                 }
@@ -662,7 +659,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                 }
 
                 if let Ok(conn2) = db.conn.lock() {
-                    let _ = db::record_quota_snapshot(&conn2, account_id, &quota, today_tokens);
+                    let _ = db::record_quota_snapshot(&conn2, account_id, &quota, today_tokens, today_calls);
                     detect_account_activity(&conn2, account_id, &quota);
 
                     // 读取持久化的 last_active
@@ -1044,6 +1041,8 @@ pub fn run() {
             let db = Database::new(&get_db_path(app))
                 .expect("Failed to initialize database");
             db.init_tables().expect("Failed to create tables");
+            // 把老版本残留的明文 api_key 批量迁移到 Keychain 并清空
+            let _ = db.migrate_legacy_api_keys();
 
             {
                 if let Ok(conn) = db.conn.lock() {
@@ -1172,6 +1171,9 @@ pub fn run() {
             commands::spin::get_spin_history,
             commands::alerts::get_alert_rules,
             commands::alerts::update_alert_rule,
+            commands::alerts::reset_account_overrides,
+            commands::alerts::set_alert_muted,
+            commands::alerts::get_alert_muted,
             commands::alerts::set_webhook_url,
             commands::alerts::get_webhook_url,
             commands::cost::get_cost_estimate,
