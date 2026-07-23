@@ -164,7 +164,7 @@ export default function UsageSummary({ accountId, tokenPct, refreshKey }: { acco
     setLoading(true);
     Promise.all([
       invoke<TokenUsageSummary>("get_usage_summary", { accountId }).catch(() => null),
-      invoke<TokenHistoryPoint[]>("get_token_history", { accountId }).catch(() => []),
+      invoke<TokenHistoryPoint[]>("get_token_history", { accountId, days: 30 }).catch(() => []),
     ]).then(([sum, hist]) => {
       if (stale) return;
       setSummary(sum);

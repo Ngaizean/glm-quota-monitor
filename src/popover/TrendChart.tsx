@@ -15,7 +15,9 @@ interface HistoryPoint {
   timestamp: string;
   token_pct: number;
   time_pct: number;
+  mcp_pct: number;
   tokens_24h: number | null;
+  calls: number | null;
 }
 
 function formatTime(ts: string) {
@@ -44,29 +46,38 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   return (
     <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 shadow-md text-[10px]">
       <div className="text-[var(--color-text-tertiary)] mb-1">{label}</div>
-      {payload.map((entry, i) => (
-        <div key={i} className="text-[var(--color-text-primary)] font-medium">
-          {entry.dataKey === "token_pct"
-            ? `${t("trendChart.tokenLabel")}: ${entry.value.toFixed(1)}%`
-            : `${t("trendChart.timeLabel")}: ${entry.value.toFixed(1)}%`}
-        </div>
-      ))}
+      {payload.map((entry, i) => {
+        const labelKey =
+          entry.dataKey === "token_pct"
+            ? "trendChart.tokenLabel"
+            : entry.dataKey === "time_pct"
+            ? "trendChart.timeLabel"
+            : "trendChart.mcpLabel";
+        return (
+          <div key={i} className="text-[var(--color-text-primary)] font-medium">
+            {t(labelKey)}: {entry.value.toFixed(1)}%
+          </div>
+        );
+      })}
     </div>
   );
 }
+
+const RANGES = [1, 7, 30, 90] as const;
 
 export default function TrendChart({ accountId, refreshKey }: { accountId: string; refreshKey: number }) {
   const { t } = useTranslation();
   const [data, setData] = useState<HistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [range, setRange] = useState<number>(1);
 
   useEffect(() => {
     setLoading(true);
-    invoke<HistoryPoint[]>("get_token_history", { accountId })
+    invoke<HistoryPoint[]>("get_token_history", { accountId, days: range })
       .then((points) => setData(points))
       .catch(() => setData([]))
       .finally(() => setLoading(false));
-  }, [accountId, refreshKey]);
+  }, [accountId, refreshKey, range]);
 
   if (loading) {
     return (
@@ -88,11 +99,30 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
   const timeValues = data.map((p) => p.time_pct);
   const allSame = timeValues.every((v) => v === timeValues[0]);
   const showTimeLine = !allSame;
+  // MCP 线仅当存在非零数据时显示
+  const showMcpLine = data.some((p) => p.mcp_pct > 0);
 
   return (
     <div className="mt-2 px-1">
-      <div className="text-[10px] font-medium text-[var(--color-text-secondary)] mb-1.5">
-        {t("trendChart.title")}
+      <div className="flex items-center justify-between mb-1.5">
+        <div className="text-[10px] font-medium text-[var(--color-text-secondary)]">
+          {t("trendChart.title")}
+        </div>
+        <div className="flex items-center gap-0.5">
+          {RANGES.map((r) => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              className={`px-1.5 py-0.5 rounded text-[9px] tabular-nums transition-colors ${
+                range === r
+                  ? "bg-[var(--color-accent)] text-white"
+                  : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
+              }`}
+            >
+              {t(`trendChart.range${r}d`)}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="h-[100px]">
         <ResponsiveContainer width="100%" height="100%">
@@ -133,6 +163,17 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
                 activeDot={{ r: 2, fill: "var(--color-chart-secondary)" }}
               />
             )}
+            {showMcpLine && (
+              <Line
+                type="monotone"
+                dataKey="mcp_pct"
+                stroke="var(--color-chart-tertiary, #a855f7)"
+                strokeWidth={1}
+                dot={false}
+                strokeDasharray="2 2"
+                activeDot={{ r: 2, fill: "var(--color-chart-tertiary, #a855f7)" }}
+              />
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -145,6 +186,12 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
           <div className="flex items-center gap-1">
             <div className="w-2.5 h-0.5 rounded opacity-60" style={{ backgroundColor: "var(--color-chart-secondary)", borderStyle: "dashed" }} />
             <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.timeUsage")}</span>
+          </div>
+        )}
+        {showMcpLine && (
+          <div className="flex items-center gap-1">
+            <div className="w-2.5 h-0.5 rounded opacity-70" style={{ backgroundColor: "var(--color-chart-tertiary, #a855f7)", borderStyle: "dashed" }} />
+            <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.mcpUsage")}</span>
           </div>
         )}
       </div>

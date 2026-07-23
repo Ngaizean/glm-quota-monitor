@@ -45,8 +45,8 @@ pub fn get_codex_quota(db: State<'_, Database>, account_id: String) -> Result<Qu
     let quota = fetch_codex_usage(&db, &account_id)?;
 
     if let Ok(conn) = db.conn.lock() {
-        // Codex 没有"今日 token"概念，传 0.0
-        let _ = crate::db::record_quota_snapshot(&conn, &account_id, &quota, 0.0);
+        // Codex 没有"今日 token/调用数"概念，均传 0.0
+        let _ = crate::db::record_quota_snapshot(&conn, &account_id, &quota, 0.0, 0.0);
     }
 
     Ok(quota)
