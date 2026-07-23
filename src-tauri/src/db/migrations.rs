@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     purpose     TEXT NOT NULL DEFAULT '',
     platform    TEXT NOT NULL DEFAULT 'zhipu',
     level       TEXT,
-    api_key     TEXT NOT NULL,
+    api_key     TEXT NOT NULL DEFAULT '',
     is_primary  INTEGER DEFAULT 0,
     is_active   INTEGER DEFAULT 1,
     created_at  TEXT NOT NULL,
@@ -31,11 +31,12 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_account_time
     ON usage_snapshots(account_id, timestamp);
 
 CREATE TABLE IF NOT EXISTS alert_rules (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    rule_type   TEXT NOT NULL,
-    threshold   REAL NOT NULL,
-    enabled     INTEGER DEFAULT 1,
-    account_id  TEXT REFERENCES accounts(id)
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_type          TEXT NOT NULL,
+    threshold          REAL NOT NULL,
+    enabled            INTEGER DEFAULT 1,
+    account_id         TEXT REFERENCES accounts(id),
+    dedupe_window_mins INTEGER DEFAULT 60
 );
 
 CREATE TABLE IF NOT EXISTS alert_history (

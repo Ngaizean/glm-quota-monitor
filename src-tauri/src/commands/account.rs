@@ -111,6 +111,12 @@ pub fn delete_account(
     {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        // 清理指向该账号的 agent 绑定（agent_claude_code/agent_openclaw 等），避免删除后悬空引用
+        tx.execute(
+            "DELETE FROM app_settings WHERE value = ?1 AND key LIKE 'agent\\_%' ESCAPE '\\'",
+            rusqlite::params![id],
+        )
+        .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM alert_history WHERE account_id = ?1", rusqlite::params![id])
             .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM alert_rules WHERE account_id = ?1", rusqlite::params![id])
@@ -201,53 +207,17 @@ pub async fn validate_api_key(api_key: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn mask_api_key(db: State<'_, Database>, account_id: String) -> Result<String, String> {
-    let db_key = {
-        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-        conn.query_row(
-            "SELECT api_key FROM accounts WHERE id = ?1",
-            rusqlite::params![account_id],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|e| format!("账号不存在: {}", e))?
-    };
-
-    let api_key = crypto::resolve_api_key(&account_id, &db_key, &|| {
-        if let Ok(c) = db.conn.lock() {
-            let _ = c.execute(
-                "UPDATE accounts SET api_key = '' WHERE id = ?1",
-                rusqlite::params![account_id],
-            );
-        }
-    })
-    .ok_or("API Key 未找到".to_string())?;
-
+pub fn mask_api_key(account_id: String) -> Result<String, String> {
+    let api_key = crypto::get_api_key(&account_id)
+        .map_err(|e| format!("API Key 读取失败: {}", e))?;
     Ok(crypto::mask_key(&api_key))
 }
 
-/// 获取账号的明文 API Key（用于复制到剪贴板）
-/// 走与 mask_api_key 相同的 resolve 回退逻辑，保证从 DB 明文自动迁移到 Keychain
+/// 获取账号的明文 API Key（用于复制到剪贴板）。仅从 Keychain 读取。
 #[tauri::command]
-pub fn get_api_key_raw(db: State<'_, Database>, account_id: String) -> Result<String, String> {
-    let db_key = {
-        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-        conn.query_row(
-            "SELECT api_key FROM accounts WHERE id = ?1",
-            rusqlite::params![account_id],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|e| format!("账号不存在: {}", e))?
-    };
-
-    crypto::resolve_api_key(&account_id, &db_key, &|| {
-        if let Ok(c) = db.conn.lock() {
-            let _ = c.execute(
-                "UPDATE accounts SET api_key = '' WHERE id = ?1",
-                rusqlite::params![account_id],
-            );
-        }
-    })
-    .ok_or("API Key 未找到".to_string())
+pub fn get_api_key_raw(account_id: String) -> Result<String, String> {
+    crypto::get_api_key(&account_id)
+        .map_err(|e| format!("API Key 读取失败: {}", e))
 }
 
 /// 修改账号的 API Key

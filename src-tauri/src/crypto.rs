@@ -53,7 +53,10 @@ pub fn delete_api_key(account_id: &str) -> Result<(), CryptoError> {
     Ok(())
 }
 
-/// 从系统凭据管理器或数据库明文获取 API Key，自动迁移并清除明文
+/// 从系统凭据管理器或数据库明文获取 API Key，自动迁移并清除明文。
+/// 安全网：启动时 `Database::migrate_legacy_api_keys` 已批量搬迁，
+/// 正常路径直接用 `get_api_key`。保留供异常兜底/后续清理，当前无调用者。
+#[allow(dead_code)]
 pub fn resolve_api_key(account_id: &str, db_key: &str, clear_db_fn: &dyn Fn()) -> Option<String> {
     if let Ok(key) = get_api_key(account_id) {
         return Some(key);
