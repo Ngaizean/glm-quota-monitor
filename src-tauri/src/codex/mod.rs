@@ -9,21 +9,20 @@ use types::{UsageResponse, Window};
 
 /// 将 Codex 的 wham/usage 响应转换为统一的 QuotaData
 ///
-/// 真实 API 结构：
-///   rate_limit.primary_window   (5h 窗口)  → TIME_LIMIT  → 前端归类为 hourly
-///   rate_limit.secondary_window (7d 周额度) → TOKENS_LIMIT → 前端归类为 weekly
+/// primary_window / secondary_window 均按其 limit_window_seconds 真实时长分类：
+///   ≤~7h（如 18000s）→ TOKENS_LIMIT + unit=3（前端归类为 5h 窗口）
+///   更长（如 604800s/7d）→ TOKENS_LIMIT + unit=6（前端归类为周额度）
+/// Codex 已取消 5h 额度，两窗口通常都是周额度；前端按 category 去重只显示一条。
 pub fn usage_to_quota_data(usage: &UsageResponse) -> QuotaData {
     let mut quota = QuotaData::default();
     quota.level = usage.plan_type.clone().unwrap_or_default();
 
     if let Some(ref rate_limit) = usage.rate_limit {
-        // primary_window → 5h 窗口（对应 GLM 的 TOKENS_LIMIT + unit=3 / hourly）
         if let Some(ref window) = rate_limit.primary_window {
-            quota.limits.push(window_to_quota_limit(window, "TOKENS_LIMIT", Some(3.0)));
+            quota.limits.push(window_to_quota_limit(window, "TOKENS_LIMIT", classify_window_unit(window)));
         }
-        // secondary_window → 周额度（对应 GLM 的 TOKENS_LIMIT + unit=6 / weekly）
         if let Some(ref window) = rate_limit.secondary_window {
-            quota.limits.push(window_to_quota_limit(window, "TOKENS_LIMIT", Some(6.0)));
+            quota.limits.push(window_to_quota_limit(window, "TOKENS_LIMIT", classify_window_unit(window)));
         }
     }
 
@@ -39,6 +38,17 @@ pub fn usage_to_quota_data(usage: &UsageResponse) -> QuotaData {
     }
 
     quota
+}
+
+/// 按窗口总时长推断前端分类用的 unit：
+/// ≤~7h（如 18000s/5h）→ unit=3（hourly），更长（如 604800s/7d）→ unit=6（weekly）；
+/// 未知时长 → None（前端按重置周期兜底）。
+fn classify_window_unit(window: &Window) -> Option<f64> {
+    match window.limit_window_seconds {
+        Some(s) if s > 0.0 && s <= 25000.0 => Some(3.0),
+        Some(s) if s > 25000.0 => Some(6.0),
+        _ => None,
+    }
 }
 
 /// 将单个窗口转换为统一 QuotaLimit
