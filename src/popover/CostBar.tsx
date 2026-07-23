@@ -51,6 +51,17 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
         </span>
       </div>
 
+      {/* 单价说明：有明细按模型加权（免费模型归零），否则兜底 */}
+      <div className="flex items-center justify-center text-[9px] text-[var(--color-text-tertiary)]">
+        {data.weighted ? (
+          <span style={{ color: "var(--color-success)" }}>
+            {t('cost.weightedNote', { price: data.unit_price.toFixed(1), currency })}
+          </span>
+        ) : (
+          <span>{t('cost.fallbackNote', { price: data.unit_price.toFixed(1), currency })}</span>
+        )}
+      </div>
+
       <div className="grid grid-cols-3 gap-1.5">
         {[
           { label: t('usage.today'), value: data.today_cost },
@@ -87,13 +98,17 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
             }}
           />
         </div>
-        <div className="flex items-center justify-between px-2 py-1 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border-subtle)]">
+        <div
+          className={`flex items-center justify-between px-2 py-1 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border-subtle)] ${data.weighted ? "opacity-40" : ""}`}
+          title={data.weighted ? t('cost.unitPriceDisabledTip') : undefined}
+        >
           <span className="text-[9px] text-[var(--color-text-tertiary)]">{t('cost.unitPrice')}</span>
           <input
             type="number"
             step="0.1"
             value={unitPrice || ""}
             placeholder="10"
+            disabled={data.weighted}
             className="w-12 text-right text-[10px] font-bold tabular-nums text-[var(--color-accent)] bg-transparent outline-none"
             onChange={(e) => {
               const v = Number(e.target.value);

@@ -1,7 +1,8 @@
 use crate::api::client::ZhipuClient;
+use crate::api::types::QuotaData;
 use crate::crypto;
 use crate::db::Database;
-use crate::pricing::{plan_price_for_level, DEFAULT_UNIT_PRICE};
+use crate::pricing::{get_price, plan_price_for_level, DEFAULT_UNIT_PRICE};
 use chrono::Timelike;
 use serde::Serialize;
 use tauri::State;
@@ -14,6 +15,35 @@ pub struct CostEstimate {
     pub plan_price: f64,
     pub daily_avg: f64,
     pub ratio: f64,
+    /// 实际生效单价（元/百万 tokens）：有用量明细时按模型加权，否则用兜底单价
+    pub unit_price: f64,
+    /// true = 按模型加权计费（免费模型份额已归零）
+    pub weighted: bool,
+}
+
+/// 从额度快照的按模型明细算加权单价（元/百万 tokens）。
+/// 免费模型（PRICING 中 price=0）的份额贡献 0 到分子，自然归零。
+/// 返回 None 表示无明细，调用方回落兜底单价。
+/// 当 usage 比例 ≈ 各模型 token 占比时，加权单价 × 总 token 精确等价于按模型逐项计费。
+fn weighted_price_from_quota(quota: &QuotaData) -> Option<f64> {
+    let mut total_usage = 0.0_f64;
+    let mut total_cost = 0.0_f64; // Σ(usage × price)
+    for limit in &quota.limits {
+        if let Some(details) = limit.usage_details.as_ref() {
+            for d in details {
+                if d.usage <= 0.0 {
+                    continue;
+                }
+                total_usage += d.usage;
+                total_cost += d.usage * get_price(&d.model_code);
+            }
+        }
+    }
+    if total_usage > 0.0 {
+        Some(total_cost / total_usage)
+    } else {
+        None
+    }
 }
 
 fn get_setting_f64(db: &Database, key: &str) -> Option<f64> {
@@ -49,24 +79,9 @@ fn get_account_level(db: &Database, account_id: &str) -> String {
 
 #[tauri::command]
 pub async fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> Result<CostEstimate, String> {
-    let (db_key, level) = {
-        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-        conn.query_row(
-            "SELECT api_key, COALESCE(level, '') FROM accounts WHERE id = ?1",
-            rusqlite::params![account_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        ).map_err(|e| format!("账号不存在: {}", e))?
-    };
-
-    let api_key = crypto::resolve_api_key(&account_id, &db_key, &|| {
-        if let Ok(c) = db.conn.lock() {
-            let _ = c.execute(
-                "UPDATE accounts SET api_key = '' WHERE id = ?1",
-                rusqlite::params![account_id],
-            );
-        }
-    })
-    .ok_or("API key not found".to_string())?;
+    let level = get_account_level(&db, &account_id);
+    let api_key = crypto::get_api_key(&account_id)
+        .map_err(|e| format!("API Key 读取失败: {}", e))?;
 
     let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
     let now = chrono::Local::now();
@@ -83,10 +98,11 @@ pub async fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> R
     let seven_str = fmt(seven_days_ago);
     let thirty_str = fmt(thirty_days_ago);
 
-    let (today_res, seven_res, thirty_res) = tokio::join!(
+    let (today_res, seven_res, thirty_res, quota_res) = tokio::join!(
         client.get_model_usage(&today_str, &now_str),
         client.get_model_usage(&seven_str, &now_str),
         client.get_model_usage(&thirty_str, &now_str),
+        client.get_quota_limit(),
     );
 
     let today_tokens = today_res.map_err(|e| e.to_string())?.total_usage.total_tokens_usage;
@@ -94,7 +110,12 @@ pub async fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> R
     let tokens_30d = thirty_res.map_err(|e| e.to_string())?.total_usage.total_tokens_usage;
 
     let price_key = format!("unit_price_{}", account_id);
-    let unit_price = get_setting_f64(&db, &price_key).unwrap_or(DEFAULT_UNIT_PRICE);
+    let fallback_price = get_setting_f64(&db, &price_key).unwrap_or(DEFAULT_UNIT_PRICE);
+    // 按模型加权计费：有用量明细时用加权单价（免费模型归零），否则回落用户配置的兜底单价
+    let (unit_price, weighted) = quota_res
+        .ok()
+        .and_then(|q| weighted_price_from_quota(&q).map(|p| (p, true)))
+        .unwrap_or((fallback_price, false));
     let today_cost = today_tokens / 1_000_000.0 * unit_price;
     let cost_7d = tokens_7d / 1_000_000.0 * unit_price;
     let cost_30d = tokens_30d / 1_000_000.0 * unit_price;
@@ -113,6 +134,8 @@ pub async fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> R
         plan_price,
         daily_avg,
         ratio,
+        unit_price,
+        weighted,
     })
 }
 
