@@ -65,17 +65,34 @@ pub fn start_drag(window: &tauri::WebviewWindow) {
     }
 }
 
-pub fn update_tray(tray: &tauri::tray::TrayIcon, primary_items: &[crate::PrimaryDisplay]) {
+pub fn update_tray(
+    tray: &tauri::tray::TrayIcon,
+    primary_items: &[crate::PrimaryDisplay],
+    radar_model: Option<&str>,
+    _radar_prob: Option<f64>,
+) {
     if primary_items.is_empty() {
-        let _ = tray.set_tooltip(Some("GLM Quota Monitor"));
+        let tip = match radar_model {
+            Some(m) if !m.is_empty() && m != "?" => {
+                format!("GLM Quota Monitor — 🧠 {}", m)
+            }
+            _ => "GLM Quota Monitor".to_string(),
+        };
+        let _ = tray.set_tooltip(Some(&tip));
     } else {
         let max_pct = primary_items.iter().map(|i| i.pct).max().unwrap_or(0);
         let icon = generate_tray_icon(max_pct);
         if let Some(img) = icon {
             let _ = tray.set_icon(Some(img));
         }
-        let tooltip = super::format_tray_items(primary_items);
-        let _ = tray.set_tooltip(Some(&format!("GLM Quota Monitor — {}", tooltip)));
+        let pct = super::format_tray_items(primary_items);
+        let tip = match radar_model {
+            Some(m) if !m.is_empty() && m != "?" => {
+                format!("GLM Quota Monitor — {} | 🧠 {}", pct, m)
+            }
+            _ => format!("GLM Quota Monitor — {}", pct),
+        };
+        let _ = tray.set_tooltip(Some(&tip));
     }
 }
 

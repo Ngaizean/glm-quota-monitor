@@ -53,20 +53,32 @@ pub fn init_app(app: &mut tauri::App) {
 
 /// 更新托盘显示（macOS 用文字，Windows 用图标）
 /// primary_items: 所有收藏账号的平台+百分比；为空则只显示图标
-pub fn update_tray(app: &tauri::AppHandle, primary_items: &[crate::PrimaryDisplay]) {
+/// radar_model: 雷达最佳模型名（None=未就绪/拉取失败）；macOS 追加到 title 前部，tooltip 拼接
+pub fn update_tray(
+    app: &tauri::AppHandle,
+    primary_items: &[crate::PrimaryDisplay],
+    radar_model: Option<&str>,
+    radar_prob: Option<f64>,
+) {
     if let Some(tray) = app.tray_by_id("main") {
         #[cfg(target_os = "macos")]
-        macos::update_tray(&tray, primary_items);
+        macos::update_tray(&tray, primary_items, radar_model, radar_prob);
         #[cfg(target_os = "windows")]
-        windows::update_tray(&tray, primary_items);
+        windows::update_tray(&tray, primary_items, radar_model, radar_prob);
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
-            if primary_items.is_empty() {
-                let _ = tray.set_tooltip(Some("GLM Quota Monitor"));
+            let pct = if primary_items.is_empty() {
+                String::new()
             } else {
-                let s = format_tray_items(primary_items);
-                let _ = tray.set_tooltip(Some(&format!("GLM Quota Monitor — {}", s)));
-            }
+                format_tray_items(primary_items)
+            };
+            let s = match radar_model.filter(|m| !m.is_empty() && *m != "?") {
+                Some(m) if !pct.is_empty() => format!("GLM Quota Monitor — {} | {}", pct, m),
+                Some(m) => format!("GLM Quota Monitor — {}", m),
+                None if !pct.is_empty() => format!("GLM Quota Monitor — {}", pct),
+                None => "GLM Quota Monitor".to_string(),
+            };
+            let _ = tray.set_tooltip(Some(&s));
         }
     }
 }

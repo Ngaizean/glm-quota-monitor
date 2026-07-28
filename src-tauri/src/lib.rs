@@ -710,8 +710,19 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
     RefreshResult { max_pct: display_pct, quotas, primary_items }
 }
 
-fn update_tray_display(app: &tauri::AppHandle, primary_items: &[PrimaryDisplay]) {
-    platform::update_tray(app, primary_items);
+/// 读取雷达最佳模型 + 24h 重置概率（None=未就绪/拉取失败），并刷新托盘显示
+pub(crate) fn update_tray_display(app: &tauri::AppHandle, primary_items: &[PrimaryDisplay]) {
+    let radar = app
+        .try_state::<commands::codex_radar::CodexRadarState>()
+        .and_then(|s| {
+            let g = s.0.lock().ok()?;
+            g.as_ref().map(|d| (d.best_model.clone(), d.probability_24h))
+        });
+    let (radar_model, radar_prob) = match radar {
+        Some((m, p)) if !m.is_empty() && m != "?" => (Some(m), Some(p)),
+        _ => (None, None),
+    };
+    platform::update_tray(app, primary_items, radar_model.as_deref(), radar_prob);
 }
 
 fn do_refresh(app: &tauri::AppHandle) {
@@ -1072,6 +1083,11 @@ pub fn run() {
                 eprintln!("初始化 Codex 代理失败: {}", e);
             }
 
+            // Codex 雷达缓存 state（后台线程写，popover 读）
+            app.manage(commands::codex_radar::CodexRadarState(std::sync::Mutex::new(
+                None,
+            )));
+
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
             let refresh_item = MenuItemBuilder::with_id("refresh", "立即刷新").build(app)?;
             let tray_menu = MenuBuilder::new(app)
@@ -1146,6 +1162,18 @@ pub fn run() {
                 run_codex_auto_sync(&codex_sync_handle);
             });
 
+            // Codex 雷达刷新线程：定时拉取 codexradar.com 公开摘要缓存到 state。
+            // 数据源响应慢(~10s)，故 8s 后首次拉、之后每 5 分钟一次。
+            let radar_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(8));
+                commands::codex_radar::refresh_once(&radar_handle);
+                loop {
+                    std::thread::sleep(Duration::from_secs(300));
+                    commands::codex_radar::refresh_once(&radar_handle);
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1209,6 +1237,8 @@ pub fn run() {
             commands::codex::get_codex_auto_sync,
             commands::codex::set_codex_proxy,
             commands::codex::get_codex_proxy,
+            commands::codex_radar::get_codex_radar,
+            commands::codex_radar::refresh_codex_radar,
             close_popover,
             start_window_drag,
             fit_window_size,

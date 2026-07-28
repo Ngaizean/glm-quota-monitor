@@ -11,6 +11,35 @@ interface RefreshResult {
   quotas: Record<string, QuotaData>;
 }
 
+interface CodexRadarData {
+  best_model: string;
+  best_score: number;
+  probability_24h: number;
+  probability_level: string;
+  updated_at: string;
+}
+
+// 24h 硬重置概率 -> 颜色（绿=高=重置临近 / 额度刷新利好）
+function radarProbColor(p: number): string {
+  if (p >= 0.70) return "#22c55e"; // 亮绿
+  if (p >= 0.50) return "#16a34a"; // 绿
+  if (p >= 0.30) return "#ca8a04"; // 琥珀
+  if (p >= 0.15) return "#0891b2"; // 青
+  return "#9ca3af"; // 灰
+}
+
+// 把 updated_at (ISO) 格式化成「刚刚 / N分钟前 / HH:MM」，每次刷新都更新
+function formatRefreshTime(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return "刚刚";
+  if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`;
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void; screenHeight: number }) {
   const { t } = useTranslation();
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -20,6 +49,8 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
   const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [radar, setRadar] = useState<CodexRadarData | null>(null);
+  const [radarRefreshing, setRadarRefreshing] = useState(false);
 
   const refreshAll = useCallback(async () => {
     setLoading(true);
@@ -35,6 +66,11 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
       setQuotas(result.quotas);
       setInitialized(true);
       setRefreshKey((k) => k + 1);
+
+      // 雷达数据：后台线程已缓存，此处同步读取，不阻塞主刷新
+      invoke<CodexRadarData | null>("get_codex_radar")
+        .then((r) => r && setRadar(r))
+        .catch(() => {});
     } catch (e) {
       setError(String(e));
       setInitialized(true);
@@ -103,6 +139,20 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
     refreshAll();
   }
 
+  // 手动刷新雷达（强制抓取 codexradar.com，约 10s）；防重复点击
+  const refreshRadar = useCallback(async () => {
+    if (radarRefreshing) return;
+    setRadarRefreshing(true);
+    try {
+      const r = await invoke<CodexRadarData>("refresh_codex_radar");
+      if (r) setRadar(r);
+    } catch (e) {
+      console.error("radar refresh failed", e);
+    } finally {
+      setRadarRefreshing(false);
+    }
+  }, [radarRefreshing]);
+
   const glmAccounts = accounts.filter((a) => a.platform !== "codex");
   const codexAccounts = accounts.filter((a) => a.platform === "codex");
 
@@ -116,6 +166,74 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
         {error && (
           <div className="mx-4 mt-3 text-[11px] text-[var(--color-danger)] rounded-xl p-3 border border-[var(--color-danger)]/20 bg-[var(--color-danger)]/5">
             {error}
+          </div>
+        )}
+
+        {radar && (
+          <div className="mx-4 mt-3 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-secondary)] p-2.5 animate-fade-in">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-1 mb-0.5">
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className="text-[8px]">🧠</span>
+                    <span className="text-[9px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
+                      Codex 雷达
+                    </span>
+                  </div>
+                  <button
+                    onClick={refreshRadar}
+                    disabled={radarRefreshing}
+                    className="p-0.5 rounded hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] disabled:opacity-40 shrink-0"
+                    title="刷新雷达"
+                  >
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={radarRefreshing ? "animate-spin" : ""}
+                    >
+                      <polyline points="23 4 23 10 17 10" />
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="flex items-baseline gap-1.5 min-w-0">
+                  <span
+                    className="text-[13px] font-semibold truncate"
+                    style={{ color: radarProbColor(radar.probability_24h) }}
+                    title={radar.best_model}
+                  >
+                    {radar.best_model}
+                  </span>
+                  <span className="text-[11px] text-[var(--color-text-tertiary)] shrink-0">
+                    IQ {radar.best_score.toFixed(1)}
+                  </span>
+                </div>
+              </div>
+              <div
+                className="text-right shrink-0"
+                title="24 小时内硬重置概率，越高越可能重置（绿色=临近）"
+              >
+                <div
+                  className="text-[14px] font-bold tabular-nums"
+                  style={{ color: radarProbColor(radar.probability_24h) }}
+                >
+                  {(radar.probability_24h * 100).toFixed(0)}%
+                </div>
+                <div className="text-[8px] text-[var(--color-text-tertiary)] uppercase tracking-wide">
+                  24h 重置
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-[8px] text-[var(--color-text-tertiary)] opacity-60 mt-1.5">
+              <span>数据来自 codexradar.com</span>
+              {radar.updated_at && <span>刷新于 {formatRefreshTime(radar.updated_at)}</span>}
+            </div>
           </div>
         )}
 
