@@ -4,6 +4,7 @@ mod codex;
 mod commands;
 mod crypto;
 mod db;
+mod deepseek;
 mod platform;
 mod pricing;
 
@@ -110,6 +111,9 @@ struct RefreshResult {
 struct PrimaryDisplay {
     platform: String,
     pct: i32,
+    /// DeepSeek 余额（绝对货币）；GLM/Codex 为 None（它们走 pct）。
+    /// 托盘 deepseek 分支显 `D{balance}`（无 %），其余仍 `{prefix}{pct}%`。
+    balance: Option<f64>,
 }
 
 fn get_db_path(app: &tauri::App) -> PathBuf {
@@ -223,6 +227,9 @@ fn fetch_account_quota(
     if platform == "codex" {
         return fetch_codex_account_quota(db, account_id);
     }
+    if platform == "deepseek" {
+        return fetch_deepseek_account_quota(db, account_id);
+    }
 
     // GLM 默认路径
     fetch_zhipu_account_quota(account_id, api_key)
@@ -319,6 +326,30 @@ fn fetch_codex_account_quota(
     };
 
     Ok(finalize_codex_quota(db, account_id, &usage))
+}
+
+/// DeepSeek 账号额度查询：拉 /user/balance → 转 minimal QuotaData（DEEPSEEK_BALANCE）→ 写快照。
+///
+/// 返回 `(quota, 0, 0.0, 0.0)` —— DeepSeek 是绝对货币余额，无百分比/今日 token 概念，
+/// 与 Codex 同传 0（见 finalize_codex_quota）。富展示数据走 `commands::deepseek::get_deepseek_balance`。
+/// **绝不调用 `record_quota_snapshot`**（只认 TIME/TOKENS/MCP，会丢 DEEPSEEK_BALANCE 并污染 GLM 表）。
+fn fetch_deepseek_account_quota(
+    db: &Database,
+    account_id: &str,
+) -> Result<(QuotaData, i32, f64, f64), String> {
+    let api_key = deepseek::auth::get_api_key(account_id)?;
+    let balance = tauri::async_runtime::block_on(
+        deepseek::client::DeepSeekClient::get_balance(&HTTP_CLIENT, &api_key),
+    )
+    .map_err(|e| commands::deepseek::deepseek_error_msg(&e))?;
+
+    let quota = deepseek::balance_to_quota_data(&balance);
+
+    if let Ok(conn) = db.conn.lock() {
+        let _ = db::record_deepseek_snapshot(&conn, account_id, &balance);
+    }
+
+    Ok((quota, 0, 0.0, 0.0))
 }
 
 /// 检查 JWT access_token 是否在 N 天内过期
@@ -508,6 +539,76 @@ fn build_offline_quota(
     Some(offline_quota)
 }
 
+/// DeepSeek 网络异常时的离线重建：从 `deepseek_snapshots` 最近一次快照构造 DEEPSEEK_BALANCE QuotaLimit。
+///
+/// 与 [`build_offline_quota`]（GLM/Codex，读 usage_snapshots）并行；按平台分流，互不污染。
+/// `err_msg` 已是经 `deepseek_error_msg` 转过的友好文案（fetch 端 stringify）。
+/// 始终返回 Some（即便无快照也保留 error，让 popover 离线卡显错误串）；currency 信息无法塞进 QuotaLimit，丢弃。
+fn build_deepseek_offline_quota(
+    db: &Database,
+    account_id: &str,
+    err_msg: &str,
+) -> Option<QuotaData> {
+    let mut quota = QuotaData::default();
+    quota.is_offline = true;
+    quota.error = Some(err_msg.to_string());
+
+    if let Ok(conn) = db.conn.lock() {
+        // 取最近一次快照的全部币种行（一次拉取的多币种共享同一 timestamp）
+        let latest_ts: Option<String> = conn
+            .query_row(
+                "SELECT MAX(timestamp) FROM deepseek_snapshots WHERE account_id = ?1",
+                rusqlite::params![account_id],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten();
+        if let Some(ts) = latest_ts {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT total_balance, granted_balance, topped_up_balance \
+                 FROM deepseek_snapshots WHERE account_id = ?1 AND timestamp = ?2",
+            ) {
+                let rows = stmt.query_map(rusqlite::params![account_id, ts], |row| {
+                    Ok((
+                        row.get::<_, f64>(0)?,
+                        row.get::<_, f64>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ))
+                });
+                if let Ok(rows) = rows {
+                    for r in rows.flatten() {
+                        let (total, granted, topped) = r;
+                        let lifetime = granted + topped;
+                        quota.limits.push(crate::api::types::QuotaLimit {
+                            limit_type: deepseek::LIMIT_TYPE_BALANCE.to_string(),
+                            percentage: 0.0,
+                            next_reset_time: 0,
+                            unit: None,
+                            number: Some(lifetime),
+                            usage: Some((lifetime - total).max(0.0)),
+                            current_value: Some(total),
+                            remaining: Some(total),
+                            usage_details: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        // 读取持久化的 last_active（DeepSeek 当前不写入，恒为 None；保留以备 Phase 2）
+        let key = format!("last_active_{}", account_id);
+        quota.last_active = conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                rusqlite::params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .ok();
+    }
+
+    Some(quota)
+}
+
 /// 检测账号活跃度：对比快照中 token 百分比变化
 fn detect_account_activity(conn: &rusqlite::Connection, account_id: &str, quota: &QuotaData) {
     let current_pct = quota
@@ -597,7 +698,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                         max_pct = pct;
                     }
                     if *is_primary {
-                        primary_items.push(PrimaryDisplay { platform: "codex".to_string(), pct });
+                        primary_items.push(PrimaryDisplay { platform: "codex".to_string(), pct, balance: None });
                     }
 
                     // 读取持久化的 last_active（和 GLM 一致）
@@ -643,6 +744,72 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
             continue;
         }
 
+        // DeepSeek 账号：余额本位（绝对货币），无百分比/今日 token 概念
+        if platform == "deepseek" {
+            match fetch_deepseek_account_quota(&db, account_id) {
+                Ok((mut quota, _pct, _, _)) => {
+                    // 首条 DEEPSEEK_BALANCE 的 total 即托盘徽章余额
+                    let total = quota
+                        .limits
+                        .iter()
+                        .find(|l| l.limit_type == deepseek::LIMIT_TYPE_BALANCE)
+                        .and_then(|l| l.current_value);
+
+                    if *is_primary {
+                        if let Some(bal) = total {
+                            primary_items.push(PrimaryDisplay {
+                                platform: "deepseek".to_string(),
+                                pct: 0,
+                                balance: Some(bal),
+                            });
+                        }
+                        // total=None（如 is_available=false 且无解析条目）时不推徽章，
+                        // 避免显示误导性的 D0；其余平台的 max_pct 仍生效。
+                    }
+
+                    if let Ok(conn2) = db.conn.lock() {
+                        let key = format!("last_active_{}", account_id);
+                        quota.last_active = conn2.query_row(
+                            "SELECT value FROM app_settings WHERE key = ?1",
+                            rusqlite::params![key],
+                            |row| row.get::<_, String>(0),
+                        ).ok();
+                    }
+
+                    quotas.insert(account_id.clone(), quota.clone());
+                    let quota_clone = quota.clone();
+                    let app_clone = app.clone();
+                    let aid = account_id.clone();
+                    let alias = account_alias.clone();
+                    let wh = webhook_url.clone();
+                    alert::check_and_notify_with_webhook(
+                        &db,
+                        &aid,
+                        &alias,
+                        &quota_clone,
+                        |msg: &str| {
+                            use tauri_plugin_notification::NotificationExt;
+                            let _ = app_clone
+                                .notification()
+                                .builder()
+                                .title("GLM Quota Monitor")
+                                .body(msg.to_string())
+                                .show();
+                        },
+                        wh.as_deref(),
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Failed to refresh deepseek account {}: {}", account_id, e);
+                    // DeepSeek 错误无法装进 ApiError；e 已是 deepseek_error_msg 转过的友好串
+                    if let Some(offline) = build_deepseek_offline_quota(&db, account_id, &e) {
+                        quotas.insert(account_id.clone(), offline);
+                    }
+                }
+            }
+            continue;
+        }
+
         // GLM 账号：从 Keychain 读取 API Key
         let api_key = match resolve_api_key_for_refresh(account_id) {
             Some(k) => k,
@@ -655,7 +822,7 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                     max_pct = pct;
                 }
                 if *is_primary {
-                    primary_items.push(PrimaryDisplay { platform: "zhipu".to_string(), pct });
+                    primary_items.push(PrimaryDisplay { platform: "zhipu".to_string(), pct, balance: None });
                 }
 
                 if let Ok(conn2) = db.conn.lock() {
@@ -1237,6 +1404,14 @@ pub fn run() {
             commands::codex::get_codex_auto_sync,
             commands::codex::set_codex_proxy,
             commands::codex::get_codex_proxy,
+            commands::deepseek::add_deepseek_account,
+            commands::deepseek::get_deepseek_balance,
+            commands::deepseek::get_deepseek_models,
+            commands::deepseek::get_deepseek_balance_history,
+            commands::deepseek::validate_deepseek_api_key,
+            commands::deepseek::mask_deepseek_api_key,
+            commands::deepseek::get_deepseek_api_key_raw,
+            commands::deepseek::update_deepseek_api_key,
             commands::codex_radar::get_codex_radar,
             commands::codex_radar::refresh_codex_radar,
             close_popover,

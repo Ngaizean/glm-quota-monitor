@@ -127,3 +127,40 @@ pub fn record_quota_snapshot(
 
     Ok(())
 }
+
+/// 记录 DeepSeek 余额快照（每币种一行）。
+///
+/// **仅用于 platform='deepseek' 账号**。绝不与 [`record_quota_snapshot`] 混用——
+/// 后者只认 TIME/TOKENS/MCP，会把 DEEPSEEK_BALANCE 静默丢弃并写 NULL 到 usage_snapshots，
+/// 污染 GLM 趋势查询。
+///
+/// 余额一律 coalesce 为 f64 写入（不留 NULL），与 converter 的 unwrap_or(0.0) 语义一致，
+/// 保证读回 `row.get::<_, f64>()` 不会因 NULL 列报错。
+/// `total_balance` 解析失败的币种跳过（与 balance_info_to_limit / balance_view_entries 一致）。
+pub fn record_deepseek_snapshot(
+    conn: &Connection,
+    account_id: &str,
+    balance: &crate::deepseek::types::BalanceResponse,
+) -> SqlResult<()> {
+    let now = chrono::Local::now().to_rfc3339();
+    let raw = serde_json::to_string(balance).unwrap_or_default();
+    let is_avail: i32 = if balance.is_available { 1 } else { 0 };
+
+    for info in &balance.balance_infos {
+        let total = match info.total_balance.trim().parse::<f64>() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let granted = info.granted_balance.trim().parse::<f64>().unwrap_or(0.0);
+        let topped = info.topped_up_balance.trim().parse::<f64>().unwrap_or(0.0);
+        conn.execute(
+            "INSERT INTO deepseek_snapshots (account_id, timestamp, currency, is_available, total_balance, granted_balance, topped_up_balance, raw_response)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                account_id, now, info.currency, is_avail, total, granted, topped, raw,
+            ],
+        )?;
+    }
+
+    Ok(())
+}

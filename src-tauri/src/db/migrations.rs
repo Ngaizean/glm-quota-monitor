@@ -30,6 +30,24 @@ CREATE TABLE IF NOT EXISTS usage_snapshots (
 CREATE INDEX IF NOT EXISTS idx_snapshots_account_time
     ON usage_snapshots(account_id, timestamp);
 
+-- DeepSeek 余额快照：绝对货币本位，与 usage_snapshots（百分比）完全解耦。
+-- 每币种一行（双币种账号一次拉取写多行，共享同一 timestamp）。
+-- total_balance 解析失败的币种不写入（与 converter / 前端过滤语义一致）。
+CREATE TABLE IF NOT EXISTS deepseek_snapshots (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id         TEXT NOT NULL REFERENCES accounts(id),
+    timestamp          TEXT NOT NULL,
+    currency           TEXT NOT NULL DEFAULT 'CNY',
+    is_available       INTEGER DEFAULT 1,
+    total_balance      REAL,
+    granted_balance    REAL,
+    topped_up_balance  REAL,
+    raw_response       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_deepseek_snapshots_account_time
+    ON deepseek_snapshots(account_id, timestamp);
+
 CREATE TABLE IF NOT EXISTS alert_rules (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     rule_type          TEXT NOT NULL,

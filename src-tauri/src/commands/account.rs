@@ -108,6 +108,17 @@ pub fn delete_account(
     db: State<'_, Database>,
     id: String,
 ) -> Result<(), String> {
+    // 事务前读 platform（事务内 accounts 行会被删），用于事务后按平台清理 Keychain
+    let platform: String = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        conn.query_row(
+            "SELECT platform FROM accounts WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| "zhipu".to_string())
+    };
+
     {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -122,6 +133,8 @@ pub fn delete_account(
         tx.execute("DELETE FROM alert_rules WHERE account_id = ?1", rusqlite::params![id])
             .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM usage_snapshots WHERE account_id = ?1", rusqlite::params![id])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM deepseek_snapshots WHERE account_id = ?1", rusqlite::params![id])
             .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![id])
             .map_err(|e| e.to_string())?;
@@ -144,7 +157,18 @@ pub fn delete_account(
         }
     }
 
-    let _ = crypto::delete_api_key(&id);
+    // 按平台清理 Keychain（修复旧实现只删裸 {id}、泄漏 codex_{id}/deepseek_{id} 的 bug）
+    match platform.as_str() {
+        "codex" => {
+            let _ = crate::codex::auth::delete_auth_from_keychain(&id);
+        }
+        "deepseek" => {
+            let _ = crate::deepseek::auth::delete_api_key(&id);
+        }
+        _ => {
+            let _ = crypto::delete_api_key(&id);
+        }
+    }
     let _ = app.emit("accounts-changed", ());
     Ok(())
 }

@@ -40,7 +40,16 @@ fn read_default_model(conn: &rusqlite::Connection) -> Option<String> {
     .ok()
 }
 
-fn write_claude_code_key(api_key: &str, model: &str) -> Result<(), String> {
+const ANTHROPIC_BASE_URL: &str = "https://open.bigmodel.cn/api/anthropic";
+/// DeepSeek 官方 Anthropic 协议原生兼容端点（与 GLM 的 /api/anthropic 完全平行）。
+const DEEPSEEK_ANTHROPIC_BASE_URL: &str = "https://api.deepseek.com/anthropic";
+/// DeepSeek 快速绑定/未显式选模型时的防御性回落（UI 仍要求用户从 picker 显式选择）。
+const DEEPSEEK_FALLBACK_MODEL: &str = "deepseek-v4-flash";
+
+/// 把指定 base_url + api_key + 模型写入 ~/.claude/settings.json 的 env 块。
+/// GLM 与 DeepSeek 均提供 Anthropic 协议原生兼容端点，仅 base_url 与模型名不同，故共用此函数。
+/// 合并到现有 env，保留用户其他环境变量；env 字段缺失或非对象（用户手动改坏）时重建为空对象，避免 panic。
+fn write_claude_code_env(api_key: &str, model: &str, base_url: &str) -> Result<(), String> {
     let claude_dir = dirs::home_dir()
         .ok_or("无法获取 home 目录")?
         .join(".claude");
@@ -54,15 +63,13 @@ fn write_claude_code_key(api_key: &str, model: &str) -> Result<(), String> {
         serde_json::json!({})
     };
 
-    // 合并 GLM 配置到现有 env，保留用户其他环境变量
-    // 若 env 字段缺失或非对象（用户手动改坏），重建为空对象，避免 unwrap panic
     if !settings["env"].is_object() {
         settings["env"] = serde_json::json!({});
     }
     let env = settings["env"]
         .as_object_mut()
         .ok_or("settings.json 的 env 字段格式异常，无法写入")?;
-    env.insert("ANTHROPIC_BASE_URL".into(), serde_json::Value::String("https://open.bigmodel.cn/api/anthropic".into()));
+    env.insert("ANTHROPIC_BASE_URL".into(), serde_json::Value::String(base_url.into()));
     env.insert("ANTHROPIC_AUTH_TOKEN".into(), serde_json::Value::String(api_key.into()));
     env.insert("ANTHROPIC_MODEL".into(), serde_json::Value::String(model.into()));
     env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), serde_json::Value::String(model.into()));
@@ -72,7 +79,14 @@ fn write_claude_code_key(api_key: &str, model: &str) -> Result<(), String> {
     write_json(&path, &settings)
 }
 
-const ANTHROPIC_BASE_URL: &str = "https://open.bigmodel.cn/api/anthropic";
+fn write_claude_code_key(api_key: &str, model: &str) -> Result<(), String> {
+    write_claude_code_env(api_key, model, ANTHROPIC_BASE_URL)
+}
+
+/// DeepSeek 覆盖 Claude Code：官方 Anthropic 兼容端点 + Bearer key（与余额/模型查询同一把 key）。
+fn write_claude_code_key_deepseek(api_key: &str, model: &str) -> Result<(), String> {
+    write_claude_code_env(api_key, model, DEEPSEEK_ANTHROPIC_BASE_URL)
+}
 
 /// 查找 openclaw CLI 路径 — 覆盖 Homebrew / Cargo / npm / 用户本地 / Windows
 fn find_openclaw_cli() -> Result<String, String> {
@@ -195,20 +209,50 @@ pub fn bind_agent(
     account_id: String,
     model: Option<String>,
 ) -> Result<(), String> {
-    let api_key = crypto::get_api_key(&account_id)
-        .map_err(|e| format!("获取 API Key 失败: {}", e))?;
+    // 读取账号平台 + GLM 默认模型（同一把锁，避免重复加锁）
+    let (platform, glm_default_model) = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        let platform: String = conn
+            .query_row(
+                "SELECT platform FROM accounts WHERE id = ?1",
+                rusqlite::params![account_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| format!("账号不存在: {}", account_id))?;
+        let glm_default_model =
+            read_default_model(&conn).unwrap_or_else(|| FALLBACK_MODEL.to_string());
+        (platform, glm_default_model)
+    };
 
+    // 按平台取 API Key（GLM 走 crypto，DeepSeek 走 deepseek::auth，keychain key 前缀不同）。
+    // crypto 返回 CryptoError、deepseek 返回 String，统一到 String 再加前缀。
+    let api_key = match platform.as_str() {
+        "deepseek" => crate::deepseek::auth::get_api_key(&account_id),
+        _ => crypto::get_api_key(&account_id).map_err(|e| e.to_string()),
+    }
+    .map_err(|e| format!("获取 API Key 失败: {}", e))?;
+
+    // 默认模型按平台：DeepSeek 用 v4-flash（防御性；UI 应通过 picker 显式选择），GLM 用全局默认模型
     let model_val = match model {
         Some(m) => m,
-        None => {
-            let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-            read_default_model(&conn).unwrap_or_else(|| FALLBACK_MODEL.to_string())
-        }
+        None => match platform.as_str() {
+            "deepseek" => DEEPSEEK_FALLBACK_MODEL.to_string(),
+            _ => glm_default_model,
+        },
     };
 
     match agent.as_str() {
-        "claude_code" => write_claude_code_key(&api_key, &model_val)?,
-        "openclaw" => write_openclaw_key(&api_key, &model_val)?,
+        "claude_code" => match platform.as_str() {
+            "deepseek" => write_claude_code_key_deepseek(&api_key, &model_val)?,
+            _ => write_claude_code_key(&api_key, &model_val)?,
+        },
+        "openclaw" => {
+            // OpenClaw 绑定目前仅支持智谱 GLM（本工具定位）；DeepSeek 暂不支持
+            if platform == "deepseek" {
+                return Err("OpenClaw 暂不支持 DeepSeek，仅支持智谱 GLM".to_string());
+            }
+            write_openclaw_key(&api_key, &model_val)?
+        }
         _ => return Err(format!("未知 agent: {}", agent)),
     }
 
@@ -258,15 +302,40 @@ pub fn unbind_agent(db: State<'_, Database>, agent: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub fn fetch_models(account_id: String) -> Result<Vec<String>, String> {
-    let api_key = crypto::get_api_key(&account_id)
-        .map_err(|e| format!("获取 API Key 失败: {}", e))?;
+pub fn fetch_models(
+    db: State<'_, Database>,
+    account_id: String,
+) -> Result<Vec<String>, String> {
+    // 按账号平台分发：DeepSeek 走其 /models（v4-flash/v4-pro），GLM 走智谱模型列表
+    let platform: String = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        conn.query_row(
+            "SELECT platform FROM accounts WHERE id = ?1",
+            rusqlite::params![account_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| format!("账号不存在: {}", account_id))?
+    };
 
-    let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
-    let resp = tauri::async_runtime::block_on(client.list_models())
-        .map_err(|e| format!("获取模型列表失败: {}", e))?;
-
-    let mut models: Vec<String> = resp.data.into_iter().map(|m| m.id).collect();
+    let mut models: Vec<String> = match platform.as_str() {
+        "deepseek" => {
+            let api_key = crate::deepseek::auth::get_api_key(&account_id)
+                .map_err(|e| format!("获取 API Key 失败: {}", e))?;
+            let resp = tauri::async_runtime::block_on(
+                crate::deepseek::client::DeepSeekClient::get_models(&crate::HTTP_CLIENT, &api_key),
+            )
+            .map_err(|e| format!("获取模型列表失败: {}", e))?;
+            resp.data.into_iter().map(|m| m.id).collect()
+        }
+        _ => {
+            let api_key = crypto::get_api_key(&account_id)
+                .map_err(|e| format!("获取 API Key 失败: {}", e))?;
+            let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
+            let resp = tauri::async_runtime::block_on(client.list_models())
+                .map_err(|e| format!("获取模型列表失败: {}", e))?;
+            resp.data.into_iter().map(|m| m.id).collect()
+        }
+    };
     models.sort();
     Ok(models)
 }

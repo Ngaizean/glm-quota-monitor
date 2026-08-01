@@ -9,6 +9,9 @@ const inputClass =
 
 type AgentType = "claude_code" | "openclaw";
 
+/** DeepSeek 快速绑定/未显式选模型时的默认模型（UI 仍要求从 picker 显式选择 flash/pro）。 */
+const DS_DEFAULT_MODEL = "deepseek-v4-flash";
+
 export default function AccountsPane() {
   const { t } = useTranslation();
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -29,11 +32,19 @@ export default function AccountsPane() {
   const [apiKey, setApiKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [platformTab, setPlatformTab] = useState<"zhipu" | "codex">("zhipu");
+  const [platformTab, setPlatformTab] = useState<"zhipu" | "codex" | "deepseek">("zhipu");
   const [codexImporting, setCodexImporting] = useState(false);
   const [showCodexImport, setShowCodexImport] = useState(false);
   const [codexAlias, setCodexAlias] = useState("");
   const [codexAuthExists, setCodexAuthExists] = useState(false);
+  // DeepSeek：API key 表单 + 卡片脱敏/明文 key 切换
+  const [showDsAdd, setShowDsAdd] = useState(false);
+  const [dsAlias, setDsAlias] = useState("");
+  const [dsApiKey, setDsApiKey] = useState("");
+  const [dsImporting, setDsImporting] = useState(false);
+  const [dsMasked, setDsMasked] = useState<Record<string, string>>({});
+  const [dsRevealedId, setDsRevealedId] = useState<string | null>(null);
+  const [dsRawKey, setDsRawKey] = useState("");
 
   useEffect(() => {
     refresh();
@@ -58,6 +69,16 @@ export default function AccountsPane() {
         const auth = await invoke<{ exists: boolean }>("read_local_codex_auth");
         setCodexAuthExists(auth.exists);
       } catch { /* ignore */ }
+      // DeepSeek：加载脱敏 key（卡片默认显示明文需手动展开）
+      try {
+        const masks: Record<string, string> = {};
+        for (const a of accs) {
+          if (a.platform === "deepseek") {
+            masks[a.id] = await invoke<string>("mask_deepseek_api_key", { accountId: a.id });
+          }
+        }
+        setDsMasked(masks);
+      } catch { /* ignore */ }
     } catch (e) {
       setError(String(e));
     }
@@ -76,6 +97,38 @@ export default function AccountsPane() {
       setError(String(e));
     } finally {
       setCodexImporting(false);
+    }
+  }
+
+  async function handleAddDeepseek() {
+    if (!dsAlias.trim() || !dsApiKey.trim()) return;
+    setDsImporting(true);
+    setError("");
+    try {
+      await invoke("add_deepseek_account", { alias: dsAlias.trim(), apiKey: dsApiKey.trim() });
+      setDsAlias("");
+      setDsApiKey("");
+      setShowDsAdd(false);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDsImporting(false);
+    }
+  }
+
+  async function toggleDsKey(accountId: string) {
+    if (dsRevealedId === accountId) {
+      setDsRevealedId(null);
+      setDsRawKey("");
+      return;
+    }
+    try {
+      const raw = await invoke<string>("get_deepseek_api_key_raw", { accountId });
+      setDsRawKey(raw);
+      setDsRevealedId(accountId);
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -181,8 +234,9 @@ export default function AccountsPane() {
     }
   }
 
-  const glmAccounts = accounts.filter((a) => a.platform !== "codex");
+  const glmAccounts = accounts.filter((a) => (a.platform ?? "zhipu") === "zhipu");
   const codexAccounts = accounts.filter((a) => a.platform === "codex");
+  const deepseekAccounts = accounts.filter((a) => a.platform === "deepseek");
 
   const groups = useMemo(
     () =>
@@ -217,6 +271,16 @@ export default function AccountsPane() {
           }`}
         >
           {t('accountsPane.platformCodex')}
+        </button>
+        <button
+          onClick={() => { setPlatformTab("deepseek"); setShowAdd(false); setShowCodexImport(false); setShowDsAdd(false); }}
+          className={`flex-1 py-1.5 text-[11px] font-medium rounded-md transition-[var(--transition-fast)] ${
+            platformTab === "deepseek"
+              ? "bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] shadow-sm"
+              : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
+          }`}
+        >
+          {t('accountsPane.platformDeepseek')}
         </button>
       </div>
 
@@ -581,6 +645,174 @@ export default function AccountsPane() {
                   </svg>
                 </div>
                 <p className="text-[11px] text-[var(--color-text-tertiary)]">{t('codexPane.noAccounts')}</p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* DeepSeek 平台 */}
+      {platformTab === "deepseek" && (
+        <>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-medium text-[var(--color-text-tertiary)] uppercase tracking-wider">
+              {deepseekAccounts.length > 0 ? t('accountsPane.keyCount', { count: deepseekAccounts.length }) : ""}
+            </span>
+            <button
+              onClick={() => setShowDsAdd(!showDsAdd)}
+              className="text-[11px] font-medium px-3 py-1.5 bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] rounded-lg transition-[var(--transition-fast)] shadow-sm"
+            >
+              {showDsAdd ? t('accountsPane.cancel') : t('accountsPane.add')}
+            </button>
+          </div>
+
+          {showDsAdd && (
+            <div className="bg-[var(--color-bg-secondary)] rounded-xl p-3.5 space-y-2.5 border border-[var(--color-border-subtle)] animate-slide-down">
+              <input
+                type="text"
+                placeholder={t('accountsPane.aliasPlaceholder')}
+                value={dsAlias}
+                onChange={(e) => setDsAlias(e.target.value)}
+                className={inputClass}
+                autoFocus
+              />
+              <input
+                type="password"
+                placeholder={t('accountsPane.deepseekApiKeyPlaceholder')}
+                value={dsApiKey}
+                onChange={(e) => setDsApiKey(e.target.value)}
+                className={`${inputClass} font-mono`}
+              />
+              <button
+                onClick={handleAddDeepseek}
+                disabled={dsImporting || !dsAlias.trim() || !dsApiKey.trim()}
+                className="w-full py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:bg-[var(--color-bg-tertiary)] disabled:text-[var(--color-text-tertiary)] text-white rounded-lg text-xs font-medium transition-[var(--transition-fast)] shadow-sm"
+              >
+                {dsImporting ? t('accountsPane.verifying') : t('accountsPane.addAccount')}
+              </button>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {deepseekAccounts.map((acc) => {
+              const gradient = getAvatarGradient(acc.alias);
+              const revealed = dsRevealedId === acc.id;
+              const isDsPickerOpen = picker?.accountId === acc.id && picker.agent === "claude_code";
+              const dsModels = modelCache[acc.id] ?? [];
+              const ccBound = bindings["claude_code"] === acc.id;
+              return (
+                <div key={acc.id} className="bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border-subtle)] overflow-hidden">
+                  <div className="p-3 flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-bold text-white shrink-0" style={{ background: gradient }}>
+                      {acc.alias.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-[var(--color-text-primary)] truncate">{acc.alias}</span>
+                        {acc.is_primary && (
+                          <span className="px-1.5 py-0.5 rounded text-[8px] bg-[var(--color-accent-subtle)] text-[var(--color-accent)] font-medium">{t('account.primary')}</span>
+                        )}
+                      </div>
+                      <div className="text-[9px] text-[var(--color-text-tertiary)] font-mono truncate">
+                        {revealed ? dsRawKey : (dsMasked[acc.id] ?? "—")}
+                      </div>
+                    </div>
+
+                    {/* Claude Code 覆盖：DeepSeek 官方提供 anthropic 兼容端点，点开选择模型（v4-flash/v4-pro）。
+                        与 GLM 共享 bindings["claude_code"]，单值天然实现 GLM↔DS 互斥（cc 仅一个 env 块）。 */}
+                    <button
+                      onClick={() => openPicker("claude_code", acc.id)}
+                      title={ccBound ? t('accountsPane.ccBound', { model: DS_DEFAULT_MODEL }) : t('accountsPane.ccBind', { model: DS_DEFAULT_MODEL })}
+                      className={`text-[9px] font-bold px-2.5 py-0.5 rounded-md border transition-[var(--transition-fast)] shrink-0 ${
+                        ccBound
+                          ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                          : "text-[var(--color-text-tertiary)] border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                      }`}
+                    >
+                      CC ▾
+                    </button>
+
+                    <button
+                      onClick={() => toggleDsKey(acc.id)}
+                      title={revealed ? t('accountsPane.hideKey') : t('accountsPane.showKey')}
+                      className="text-[var(--color-text-tertiary)] hover:text-[var(--color-accent)] transition-[var(--transition-fast)] p-1 rounded-md hover:bg-[var(--color-accent)]/5 shrink-0"
+                    >
+                      {revealed ? (
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                        </svg>
+                      ) : (
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleDelete(acc.id)}
+                      className="text-[10px] font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-danger)] transition-[var(--transition-fast)] p-1 rounded-md hover:bg-[var(--color-danger)]/5 shrink-0"
+                    >
+                      {t('common.delete')}
+                    </button>
+                  </div>
+
+                  {isDsPickerOpen && (
+                    <div className="px-3 pb-3">
+                      <div className="rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-primary)] p-2.5 space-y-2 animate-slide-down">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-[var(--color-text-tertiary)]">
+                            {t('accountsPane.selectOverrideModel', { agent: "Claude Code" })}
+                          </span>
+                          <button
+                            onClick={() => setPicker(null)}
+                            className="text-[10px] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
+                          >
+                            {t('accountsPane.collapse')}
+                          </button>
+                        </div>
+
+                        <button
+                          onClick={() => handleBind("claude_code", acc.id)}
+                          className="w-full text-left px-3 py-2 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] transition-[var(--transition-fast)]"
+                        >
+                          <div className="text-[11px] font-medium text-[var(--color-text-primary)]">{t('accountsPane.useDefaultModel')}</div>
+                          <div className="text-[10px] text-[var(--color-text-tertiary)] font-mono mt-0.5">{DS_DEFAULT_MODEL}</div>
+                        </button>
+
+                        <div className="max-h-40 overflow-y-auto scroll-area overscroll-contain rounded-lg border border-[var(--color-border-subtle)]">
+                          {pickerLoading ? (
+                            <div className="px-3 py-2 text-[10px] text-[var(--color-text-tertiary)]">{t('accountsPane.loadingModels')}</div>
+                          ) : dsModels.length ? (
+                            dsModels.map((model) => (
+                              <button
+                                key={model}
+                                onClick={() => handleBind("claude_code", acc.id, model)}
+                                className="w-full text-left px-3 py-2 text-[10px] font-mono text-[var(--color-text-secondary)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] transition-[var(--transition-fast)] border-b border-[var(--color-border-subtle)] last:border-b-0"
+                              >
+                                {model}
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-3 py-2 text-[10px] text-[var(--color-text-tertiary)]">{t('accountsPane.noModels')}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {deepseekAccounts.length === 0 && !showDsAdd && (
+              <div className="text-center py-10">
+                <div className="w-10 h-10 mx-auto rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] flex items-center justify-center mb-2">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="5" width="20" height="14" rx="2" />
+                    <path d="M2 10h20" />
+                  </svg>
+                </div>
+                <p className="text-[11px] text-[var(--color-text-tertiary)]">{t('accountsPane.noAccounts')}</p>
               </div>
             )}
           </div>

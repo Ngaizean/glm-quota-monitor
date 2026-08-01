@@ -80,10 +80,21 @@ pub fn update_tray(
         };
         let _ = tray.set_tooltip(Some(&tip));
     } else {
-        let max_pct = primary_items.iter().map(|i| i.pct).max().unwrap_or(0);
-        let icon = generate_tray_icon(max_pct);
-        if let Some(img) = icon {
-            let _ = tray.set_icon(Some(img));
+        // 图标按百分比着色/绘字：仅对百分比类（GLM/Codex）有意义。
+        // DeepSeek 是货币余额（pct 恒为 0），若参与 max_pct 会画出误导性的「0%」，
+        // 故图标只取非 deepseek 项；纯 DeepSeek 收藏时回退默认应用图标。
+        let pct_items: Vec<&crate::PrimaryDisplay> = primary_items
+            .iter()
+            .filter(|i| i.platform != "deepseek")
+            .collect();
+        if pct_items.is_empty() {
+            let app = tray.app_handle();
+            let _ = tray.set_icon(app.default_window_icon().cloned());
+        } else {
+            let max_pct = pct_items.iter().map(|i| i.pct).max().unwrap_or(0);
+            if let Some(img) = generate_tray_icon(max_pct) {
+                let _ = tray.set_icon(Some(img));
+            }
         }
         let pct = super::format_tray_items(primary_items);
         let tip = match radar_model {

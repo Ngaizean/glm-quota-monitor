@@ -8,7 +8,7 @@ export interface Account {
   is_primary: boolean;
 }
 
-export type QuotaLimitType = "TIME_LIMIT" | "TOKENS_LIMIT" | "MCP_MONTHLY" | (string & {});
+export type QuotaLimitType = "TIME_LIMIT" | "TOKENS_LIMIT" | "MCP_MONTHLY" | "DEEPSEEK_BALANCE" | (string & {});
 
 export interface QuotaLimit {
   type: QuotaLimitType;
@@ -41,6 +41,32 @@ export interface TokenHistoryPoint {
   mcp_pct: number;
   tokens_24h: number | null;
   calls: number | null;
+}
+
+// ========== DeepSeek（绝对货币余额，非百分比；独立于 GLM/Codex 的百分比通路）==========
+export interface DeepSeekBalanceEntry {
+  currency: string;
+  total: number;
+  granted: number;
+  toppedUp: number;
+}
+
+export interface DeepSeekBalanceView {
+  isAvailable: boolean;
+  balances: DeepSeekBalanceEntry[];
+  models: string[];
+  level: string | null;
+  lastActive: string | null;
+  error?: string | null;
+  isOffline?: boolean;
+}
+
+export interface DeepSeekBalancePoint {
+  timestamp: string;
+  currency: string;
+  totalBalance: number;
+  grantedBalance: number;
+  toppedUpBalance: number;
 }
 
 export interface TokenUsagePeriod {

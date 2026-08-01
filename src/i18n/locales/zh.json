@@ -10,7 +10,8 @@
     "getStartedDesc": "添加智谱 API Key，<br />即可实时监控额度用量",
     "addKey": "添加 API Key",
     "sectionGlm": "智谱 GLM",
-    "sectionCodex": "Codex"
+    "sectionCodex": "Codex",
+    "sectionDeepseek": "DeepSeek"
   },
   "account": {
     "setPrimary": "设为收藏",
@@ -20,7 +21,8 @@
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
     "daysAgo": "{{count}} 天前",
-    "offlineData": "离线数据"
+    "offlineData": "离线数据",
+    "primary": "主账号"
   },
   "quota": {
     "tokenTitle": "Token 额度",
@@ -143,7 +145,11 @@
     "keyUpdated": "API Key 已更新",
     "addCodex": "+ Codex",
     "importCodex": "导入 Codex 账号",
-    "codexImportDesc": "从本机 ~/.codex/auth.json 导入 Codex 账号，输入别名后自动验证"
+    "codexImportDesc": "从本机 ~/.codex/auth.json 导入 Codex 账号，输入别名后自动验证",
+    "platformDeepseek": "DeepSeek",
+    "deepseekApiKeyPlaceholder": "API Key（sk-...）",
+    "showKey": "显示 Key",
+    "hideKey": "隐藏 Key"
   },
   "alertsPane": {
     "token5h": "5h 额度预警",
@@ -311,10 +317,21 @@
     "tokenLabel": "Token",
     "timeLabel": "时间",
     "mcpLabel": "MCP",
+    "balanceLabel": "余额",
     "range1d": "1天",
     "range7d": "7天",
     "range30d": "30天",
     "range90d": "90天"
+  },
+  "deepseekPane": {
+    "balanceTitle": "账户余额",
+    "grantedLabel": "赠送",
+    "toppedUpLabel": "充值",
+    "availableFalse": "不可用",
+    "noData": "暂无余额数据",
+    "modelsTitle": "可用模型",
+    "loading": "加载中...",
+    "balanceChartTitle": "余额趋势"
   },
   "weekdays": {
     "short": ["日", "一", "二", "三", "四", "五", "六"]

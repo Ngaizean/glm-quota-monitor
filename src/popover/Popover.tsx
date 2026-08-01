@@ -153,8 +153,11 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
     }
   }, [radarRefreshing]);
 
-  const glmAccounts = accounts.filter((a) => a.platform !== "codex");
+  // 按平台精确分区：必须用 === "zhipu"，否则 DeepSeek（platform="deepseek"）会泄漏进 GLM 区。
+  // platform 字段缺失（旧数据）按 zhipu 兜底。
+  const glmAccounts = accounts.filter((a) => (a.platform ?? "zhipu") === "zhipu");
   const codexAccounts = accounts.filter((a) => a.platform === "codex");
+  const deepseekAccounts = accounts.filter((a) => a.platform === "deepseek");
 
   return (
     <div
@@ -307,6 +310,29 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
             </div>
             <AccountList
               accounts={codexAccounts}
+              expandedIds={expandedIds}
+              onToggle={toggleExpand}
+              onSetPrimary={handleSetPrimary}
+              quotas={quotas}
+              loading={loading}
+              refreshKey={refreshKey}
+            />
+          </div>
+        )}
+
+        {initialized && deepseekAccounts.length > 0 && (
+          <div className="px-4">
+            <div className="flex items-center gap-1.5 mt-4 mb-1">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="5" width="20" height="14" rx="2" />
+                <path d="M2 10h20" />
+              </svg>
+              <span className="text-[9px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
+                {t('popover.sectionDeepseek')}
+              </span>
+            </div>
+            <AccountList
+              accounts={deepseekAccounts}
               expandedIds={expandedIds}
               onToggle={toggleExpand}
               onSetPrimary={handleSetPrimary}

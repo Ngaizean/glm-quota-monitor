@@ -2,6 +2,7 @@ pub mod account;
 pub mod agent;
 pub mod codex;
 pub mod codex_radar;
+pub mod deepseek;
 pub mod alerts;
 pub mod cost;
 pub mod export;

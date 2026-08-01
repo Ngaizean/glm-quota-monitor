@@ -191,6 +191,30 @@ pub fn check_and_notify_with_webhook(
                         }
                     }
                 }
+                "deepseek_low_balance" => {
+                    if quota.is_offline {
+                        continue;
+                    }
+                    // threshold 单位=货币（隐含在 rule_type 名中）；多币种取首条 DEEPSEEK_BALANCE
+                    let balance = quota
+                        .limits
+                        .iter()
+                        .find(|l| l.limit_type == crate::deepseek::LIMIT_TYPE_BALANCE)
+                        .and_then(|l| l.current_value);
+                    if let Some(bal) = balance {
+                        if bal <= *threshold {
+                            if has_fired_this_period(&conn, account_id, rule_type, *dedupe) {
+                                continue;
+                            }
+                            let msg = format!(
+                                "[{}] DeepSeek 余额仅剩 {:.2}（阈值 {:.0}）",
+                                account_alias, bal, threshold
+                            );
+                            record_alert(&conn, account_id, rule_type, bal);
+                            pending.push(msg);
+                        }
+                    }
+                }
                 _ => continue,
             }
         }

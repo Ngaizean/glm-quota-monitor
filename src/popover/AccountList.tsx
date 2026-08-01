@@ -6,6 +6,10 @@ import QuotaSection from "./QuotaSection";
 import UsageSummary from "./UsageSummary";
 import ToolUsageSection from "./ToolUsageSection";
 import TrendChart from "./TrendChart";
+import DeepSeekBalanceBadge from "./DeepSeekBalanceBadge";
+import DeepSeekBalanceBar from "./DeepSeekBalanceBar";
+import DeepSeekModelList from "./DeepSeekModelList";
+import DeepSeekBalanceChart from "./DeepSeekBalanceChart";
 import type { Account, QuotaData } from "../types";
 
 function formatLastActive(
@@ -200,7 +204,11 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                 <div className="w-3 h-3 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin shrink-0" />
               )}
               <StarButton isPrimary={acc.is_primary} onClick={() => onSetPrimary(acc.id)} />
-              <PctBadge pct={tokenPct} weeklyPct={weeklyPct} />
+              {acc.platform === "deepseek" ? (
+                <DeepSeekBalanceBadge quota={quota} />
+              ) : (
+                <PctBadge pct={tokenPct} weeklyPct={weeklyPct} />
+              )}
               <ChevronIcon open={expanded} />
             </button>
 
@@ -211,7 +219,7 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                 </span>
                 <LastActiveLabel lastActive={formatLastActive(quota?.last_active, t, i18n.language)} />
               </div>
-              {quota?.error && (
+              {quota?.error && acc.platform !== "deepseek" && (
                 <div className="mx-3 mb-1.5 text-[10px] text-[var(--color-danger)] flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/20">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10" />
@@ -221,23 +229,35 @@ export default function AccountList({ accounts, expandedIds, onToggle, onSetPrim
                   {quota.error}
                 </div>
               )}
-              {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}
-              {acc.platform !== "codex" && (
+              {acc.platform === "deepseek" ? (
                 <>
-                  <div className="px-3 py-2.5">
-                    <UsageSummary accountId={acc.id} tokenPct={tokenPct} refreshKey={refreshKey} />
-                  </div>
+                  <DeepSeekBalanceBar accountId={acc.id} refreshKey={refreshKey} />
+                  <DeepSeekModelList accountId={acc.id} refreshKey={refreshKey} />
                   <div className="px-3 pb-3">
-                    <CostBar accountId={acc.id} refreshKey={refreshKey} />
+                    <DeepSeekBalanceChart accountId={acc.id} refreshKey={refreshKey} />
                   </div>
+                </>
+              ) : (
+                <>
+                  {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}
+                  {acc.platform !== "codex" && (
+                    <>
+                      <div className="px-3 py-2.5">
+                        <UsageSummary accountId={acc.id} tokenPct={tokenPct} refreshKey={refreshKey} />
+                      </div>
+                      <div className="px-3 pb-3">
+                        <CostBar accountId={acc.id} refreshKey={refreshKey} />
+                      </div>
+                      <div className="px-3 pb-3">
+                        <ToolUsageSection accountId={acc.id} refreshKey={refreshKey} />
+                      </div>
+                    </>
+                  )}
                   <div className="px-3 pb-3">
-                    <ToolUsageSection accountId={acc.id} refreshKey={refreshKey} />
+                    <TrendChart accountId={acc.id} refreshKey={refreshKey} />
                   </div>
                 </>
               )}
-              <div className="px-3 pb-3">
-                <TrendChart accountId={acc.id} refreshKey={refreshKey} />
-              </div>
             </Expandable>
           </div>
         );

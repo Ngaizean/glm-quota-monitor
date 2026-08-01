@@ -6,6 +6,7 @@ pub const DEFAULT_RULES: &[(&str, f64)] = &[
     ("mcp_monthly", 90.0),
     ("reset_soon", 10.0),    // 分钟：额度重置前 10 分钟提醒
     ("idle_account", 120.0), // 分钟
+    ("deepseek_low_balance", 10.0), // 货币单位（CNY）：余额 ≤ 10 提醒
 ];
 
 /// 初始化默认规则并处理迁移
@@ -55,6 +56,22 @@ pub fn init_default_rules(conn: &Connection) {
     if exists == 0 {
         let _ = conn.execute(
             "INSERT INTO alert_rules (rule_type, threshold, enabled) VALUES ('reset_soon', 10, 1)",
+            [],
+        );
+    }
+
+    // 迁移：新增 deepseek_low_balance 规则（DeepSeek 余额本位，threshold=货币单位）
+    let exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM alert_rules WHERE rule_type = 'deepseek_low_balance'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if exists == 0 {
+        let _ = conn.execute(
+            "INSERT INTO alert_rules (rule_type, threshold, enabled) VALUES ('deepseek_low_balance', 10, 1)",
             [],
         );
     }

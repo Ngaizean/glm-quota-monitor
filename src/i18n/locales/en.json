@@ -10,7 +10,8 @@
     "getStartedDesc": "Add a Zhipu API Key to<br />start monitoring quota usage",
     "addKey": "Add API Key",
     "sectionGlm": "Zhipu GLM",
-    "sectionCodex": "Codex"
+    "sectionCodex": "Codex",
+    "sectionDeepseek": "DeepSeek"
   },
   "account": {
     "setPrimary": "Add to favorites",
@@ -20,7 +21,8 @@
     "minutesAgo": "{{count}} min ago",
     "hoursAgo": "{{count}} hr ago",
     "daysAgo": "{{count}} days ago",
-    "offlineData": "Offline data"
+    "offlineData": "Offline data",
+    "primary": "Primary"
   },
   "quota": {
     "tokenTitle": "Token Quota",
@@ -143,7 +145,11 @@
     "keyUpdated": "API Key updated",
     "addCodex": "+ Codex",
     "importCodex": "Import Codex Account",
-    "codexImportDesc": "Import Codex account from local ~/.codex/auth.json. Enter an alias to auto-verify."
+    "codexImportDesc": "Import Codex account from local ~/.codex/auth.json. Enter an alias to auto-verify.",
+    "platformDeepseek": "DeepSeek",
+    "deepseekApiKeyPlaceholder": "API Key (sk-...)",
+    "showKey": "Show Key",
+    "hideKey": "Hide Key"
   },
   "alertsPane": {
     "token5h": "5h Quota Alert",
@@ -311,10 +317,21 @@
     "tokenLabel": "Token",
     "timeLabel": "Time",
     "mcpLabel": "MCP",
+    "balanceLabel": "Balance",
     "range1d": "1D",
     "range7d": "7D",
     "range30d": "30D",
     "range90d": "90D"
+  },
+  "deepseekPane": {
+    "balanceTitle": "Account Balance",
+    "grantedLabel": "Granted",
+    "toppedUpLabel": "Topped up",
+    "availableFalse": "Unavailable",
+    "noData": "No balance data",
+    "modelsTitle": "Available Models",
+    "loading": "Loading...",
+    "balanceChartTitle": "Balance Trend"
   },
   "weekdays": {
     "short": ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]

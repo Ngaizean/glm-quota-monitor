@@ -83,13 +83,17 @@ pub fn update_tray(
     }
 }
 
-/// 格式化状态栏文本：G42% C0%（G=GLM，C=Codex）
+/// 格式化状态栏文本：G42% C0% D10（G=GLM，C=Codex，D=DeepSeek）
+///
+/// DeepSeek 是绝对货币余额，显 `D{balance}`（无 %，四舍五入到整数）；
+/// GLM/Codex 仍 `{prefix}{pct}%`。currency 不进托盘（空间有限），仅显数值。
 pub fn format_tray_items(items: &[crate::PrimaryDisplay]) -> String {
     items
         .iter()
-        .map(|i| {
-            let prefix = if i.platform == "codex" { "C" } else { "G" };
-            format!("{}{}%", prefix, i.pct)
+        .map(|i| match i.platform.as_str() {
+            "codex" => format!("C{}%", i.pct),
+            "deepseek" => format!("D{:.0}", i.balance.unwrap_or(0.0)),
+            _ => format!("G{}%", i.pct),
         })
         .collect::<Vec<_>>()
         .join(" ")
