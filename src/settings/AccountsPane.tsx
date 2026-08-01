@@ -32,6 +32,7 @@ export default function AccountsPane() {
   const [apiKey, setApiKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [platformTab, setPlatformTab] = useState<"zhipu" | "codex" | "deepseek">("zhipu");
   const [codexImporting, setCodexImporting] = useState(false);
   const [showCodexImport, setShowCodexImport] = useState(false);
@@ -206,10 +207,16 @@ export default function AccountsPane() {
   }
 
   async function handleBind(agent: AgentType, accountId: string, model?: string) {
+    setNotice("");
     try {
       await invoke("bind_agent", { agent, accountId, model });
       setPicker(null);
       await refresh();
+      // Claude Code 的 base_url 走 settings.json，但「当前模型」是会话级状态（启动时固化）。
+      // 切换端点后必须新开会话，否则旧会话仍用上次的模型名 → base_url 与 model 不匹配 → 400。
+      if (agent === "claude_code") {
+        setNotice(t('accountsPane.ccRestartNotice'));
+      }
     } catch (e) {
       setError(String(e));
     }
@@ -287,6 +294,17 @@ export default function AccountsPane() {
       {error && (
         <div className="text-[11px] text-[var(--color-danger)] rounded-xl p-3 border border-[var(--color-danger)]/20 bg-[var(--color-danger)]/5">
           {error}
+        </div>
+      )}
+
+      {notice && (
+        <div className="text-[11px] text-[var(--color-accent)] rounded-xl p-3 border border-[var(--color-accent)]/20 bg-[var(--color-accent)]/5 flex items-start gap-2">
+          <svg className="shrink-0 mt-0.5" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          <span className="leading-relaxed">{notice}</span>
         </div>
       )}
 

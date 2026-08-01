@@ -131,6 +131,7 @@
     "ocBound": "OpenClaw bound (default model: {{model}})",
     "ocBind": "Bind to OpenClaw (default model: {{model}})",
     "selectOverrideModel": "{{agent}} override model",
+    "ccRestartNotice": "Claude Code endpoint switched. Please restart (open a new) Claude Code session for the new model to take effect — the old session still holds the previous model name and may trigger a 400 error.",
     "collapse": "Collapse",
     "useDefaultModel": "Use default model",
     "loadingModels": "Loading models...",

@@ -48,6 +48,9 @@ const DEEPSEEK_FALLBACK_MODEL: &str = "deepseek-v4-flash";
 
 /// 把指定 base_url + api_key + 模型写入 ~/.claude/settings.json 的 env 块。
 /// GLM 与 DeepSeek 均提供 Anthropic 协议原生兼容端点，仅 base_url 与模型名不同，故共用此函数。
+/// 单一模型统一填入 ANTHROPIC_MODEL + 三个 DEFAULT_*_MODEL tier 槽：用户选哪个模型，
+/// cc 的 haiku/sonnet/opus 三个 tier 就全部对应同一个模型（选 flash 全 flash、选 pro 全 pro），
+/// 避免不同 tier 取到不同模型名导致端点 400。
 /// 合并到现有 env，保留用户其他环境变量；env 字段缺失或非对象（用户手动改坏）时重建为空对象，避免 panic。
 fn write_claude_code_env(api_key: &str, model: &str, base_url: &str) -> Result<(), String> {
     let claude_dir = dirs::home_dir()

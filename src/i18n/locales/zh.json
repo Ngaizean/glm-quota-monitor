@@ -131,6 +131,7 @@
     "ocBound": "OpenClaw 已绑定（默认模型：{{model}}）",
     "ocBind": "绑定到 OpenClaw（默认模型：{{model}}）",
     "selectOverrideModel": "{{agent}} 覆盖模型",
+    "ccRestartNotice": "已切换 Claude Code 端点。请重启（新开一个）Claude Code 会话使新模型生效——旧会话仍持有上次的模型名，可能触发 400 错误。",
     "collapse": "收起",
     "useDefaultModel": "使用默认模型",
     "loadingModels": "加载模型中...",
