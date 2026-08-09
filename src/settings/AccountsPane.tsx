@@ -16,7 +16,7 @@ export default function AccountsPane() {
   const { t } = useTranslation();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bindings, setBindings] = useState<Record<string, string | null>>({});
-  const [defaultModel, setDefaultModel] = useState("glm-5.1");
+  const [defaultModel, setDefaultModel] = useState("glm-5.2");
   const [modelCache, setModelCache] = useState<Record<string, string[]>>({});
   const [picker, setPicker] = useState<{ accountId: string; agent: AgentType } | null>(null);
   const [pickerLoading, setPickerLoading] = useState(false);
@@ -59,7 +59,7 @@ export default function AccountsPane() {
         invoke<string>("get_default_model"),
       ]);
       setAccounts(accs);
-      setDefaultModel(model || "glm-5.1");
+      setDefaultModel(model || "glm-5.2");
       const map: Record<string, string | null> = {};
       for (const b of binds) {
         map[b.agent] = b.account_id;

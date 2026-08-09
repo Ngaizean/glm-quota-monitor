@@ -20,7 +20,9 @@ pub fn store_api_key(account_id: &str, api_key: &str) -> Result<(), CryptoError>
     entry
         .set_password(api_key)
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
-    CACHE.lock().unwrap_or_else(|e| e.into_inner())
+    CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .insert(account_id.to_string(), api_key.to_string());
     Ok(())
 }
@@ -37,7 +39,9 @@ pub fn get_api_key(account_id: &str) -> Result<String, CryptoError> {
     let key = entry
         .get_password()
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
-    CACHE.lock().unwrap_or_else(|e| e.into_inner())
+    CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .insert(account_id.to_string(), key.clone());
     Ok(key)
 }
@@ -45,12 +49,15 @@ pub fn get_api_key(account_id: &str) -> Result<String, CryptoError> {
 pub fn delete_api_key(account_id: &str) -> Result<(), CryptoError> {
     let entry = Entry::new(SERVICE_NAME, account_id)
         .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
-    entry
-        .delete_password()
-        .map_err(|e| CryptoError::CredentialStore(e.to_string()))?;
-    CACHE.lock().unwrap_or_else(|e| e.into_inner())
+    let result = entry.delete_password();
+    CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .remove(account_id);
-    Ok(())
+    match result {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(CryptoError::CredentialStore(error.to_string())),
+    }
 }
 
 /// 从系统凭据管理器或数据库明文获取 API Key，自动迁移并清除明文。

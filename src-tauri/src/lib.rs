@@ -135,8 +135,18 @@ fn position_popover(window: &tauri::WebviewWindow, app: &tauri::AppHandle) {
             {
                 let scale = window.scale_factor().unwrap_or(1.0);
                 let window_w = (platform::POPOVER_WIDTH_LOGICAL * scale) as u32;
-                let window_h = window.inner_size().unwrap_or(tauri::PhysicalSize::new(window_w, 600)).height;
-                let (x, y) = platform::popover_position(pos.x, pos.y, size.width, size.height, window_w, window_h);
+                let window_h = window
+                    .inner_size()
+                    .unwrap_or(tauri::PhysicalSize::new(window_w, 600))
+                    .height;
+                let (x, y) = platform::popover_position(
+                    pos.x,
+                    pos.y,
+                    size.width,
+                    size.height,
+                    window_w,
+                    window_h,
+                );
                 let _ = window.set_position(tauri::Position::Physical(
                     tauri::PhysicalPosition::new(x, y),
                 ));
@@ -163,17 +173,20 @@ fn create_popover_window(app: &tauri::AppHandle) {
         return;
     }
 
-    let window =
-        WebviewWindowBuilder::new(app, POPOVER_LABEL, tauri::WebviewUrl::App("index.html".into()))
-            .title("GLM Quota Monitor")
-            .inner_size(360.0, 600.0)
-            .decorations(false)
-            .resizable(false)
-            .skip_taskbar(true)
-            .always_on_top(true)
-            .visible(false)
-            .build()
-            .expect("Failed to create popover window");
+    let window = WebviewWindowBuilder::new(
+        app,
+        POPOVER_LABEL,
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("GLM Quota Monitor")
+    .inner_size(360.0, 600.0)
+    .decorations(false)
+    .resizable(false)
+    .skip_taskbar(true)
+    .always_on_top(true)
+    .visible(false)
+    .build()
+    .expect("Failed to create popover window");
 
     platform::apply_window_decoration(&window);
     position_popover(&window, app);
@@ -183,56 +196,31 @@ fn create_popover_window(app: &tauri::AppHandle) {
 
 // ========== 后台刷新 ==========
 
+fn parse_refresh_interval_secs(value: Option<&str>) -> u64 {
+    value
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|minutes| (1..=30).contains(minutes))
+        .map(|minutes| minutes * 60)
+        .unwrap_or(DEFAULT_REFRESH_INTERVAL_SECS)
+}
+
 fn get_refresh_interval(db: &Database) -> u64 {
     let conn = match db.conn.lock() {
         Ok(c) => c,
         Err(_) => return DEFAULT_REFRESH_INTERVAL_SECS,
     };
-    conn.query_row(
-        "SELECT value FROM app_settings WHERE key = 'refresh_interval'",
-        [],
-        |row| row.get::<_, String>(0),
-    )
-    .ok()
-    .and_then(|v| v.parse::<u64>().ok())
-    .map(|mins| mins * 60)
-    .unwrap_or(DEFAULT_REFRESH_INTERVAL_SECS)
+    let value = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'refresh_interval'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok();
+    parse_refresh_interval_secs(value.as_deref())
 }
 
 fn resolve_api_key_for_refresh(account_id: &str) -> Option<String> {
     crypto::get_api_key(account_id).ok()
-}
-
-/// 获取单个账号的配额数据 + 今日 token 用量
-fn fetch_account_quota(
-    db: &Database,
-    account_id: &str,
-    api_key: &str,
-) -> Result<(QuotaData, i32, f64, f64), String> {
-    // 按 platform 分流
-    let platform: String = db
-        .conn
-        .lock()
-        .ok()
-        .and_then(|conn| {
-            conn.query_row(
-                "SELECT platform FROM accounts WHERE id = ?1",
-                rusqlite::params![account_id],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-        })
-        .unwrap_or_else(|| "zhipu".to_string());
-
-    if platform == "codex" {
-        return fetch_codex_account_quota(db, account_id);
-    }
-    if platform == "deepseek" {
-        return fetch_deepseek_account_quota(db, account_id);
-    }
-
-    // GLM 默认路径
-    fetch_zhipu_account_quota(account_id, api_key)
 }
 
 /// GLM 账号额度查询（原有逻辑）
@@ -244,9 +232,7 @@ fn fetch_zhipu_account_quota(
     let quota =
         tauri::async_runtime::block_on(client.get_quota_limit()).map_err(|e| e.to_string())?;
     let pct = quota
-        .limits
-        .iter()
-        .find(|l| l.limit_type == "TOKENS_LIMIT")
+        .preferred_token_limit()
         .map(|l| l.percentage as i32)
         .unwrap_or(0);
 
@@ -338,9 +324,10 @@ fn fetch_deepseek_account_quota(
     account_id: &str,
 ) -> Result<(QuotaData, i32, f64, f64), String> {
     let api_key = deepseek::auth::get_api_key(account_id)?;
-    let balance = tauri::async_runtime::block_on(
-        deepseek::client::DeepSeekClient::get_balance(&HTTP_CLIENT, &api_key),
-    )
+    let balance = tauri::async_runtime::block_on(deepseek::client::DeepSeekClient::get_balance(
+        &HTTP_CLIENT,
+        &api_key,
+    ))
     .map_err(|e| commands::deepseek::deepseek_error_msg(&e))?;
 
     let quota = deepseek::balance_to_quota_data(&balance);
@@ -404,8 +391,8 @@ fn finalize_codex_quota(
 fn detect_codex_activity(conn: &rusqlite::Connection, account_id: &str, quota: &QuotaData) {
     let prev_pct = conn
         .query_row(
-            "SELECT token_limit_pct FROM usage_snapshots \
-             WHERE account_id = ?1 AND token_limit_pct IS NOT NULL \
+            "SELECT weekly_limit_pct FROM usage_snapshots \
+             WHERE account_id = ?1 AND weekly_limit_pct IS NOT NULL \
              ORDER BY timestamp DESC LIMIT 1 OFFSET 1",
             rusqlite::params![account_id],
             |row| row.get::<_, Option<f64>>(0),
@@ -453,28 +440,60 @@ pub fn fetch_today_tokens(client: &ZhipuClient) -> (f64, f64) {
     }
 }
 
+struct CachedQuotaLimits {
+    time_pct: Option<f64>,
+    time_reset: Option<i64>,
+    token_pct: Option<f64>,
+    token_reset: Option<i64>,
+    weekly_pct: Option<f64>,
+    weekly_reset: Option<i64>,
+    mcp_pct: Option<f64>,
+    mcp_reset: Option<i64>,
+}
+
 /// 网络异常时从本地缓存构造离线 QuotaData
 fn build_offline_quota(
     db: &Database,
     account_id: &str,
     error: &crate::api::client::ApiError,
 ) -> Option<QuotaData> {
-    let mut offline_quota = QuotaData::default();
-    offline_quota.is_offline = true;
+    let mut offline_quota = QuotaData {
+        is_offline: true,
+        ..Default::default()
+    };
 
     if let Ok(conn2) = db.conn.lock() {
         // 读取最近快照
-        let snap_limits: Option<(Option<f64>, Option<i64>, Option<f64>, Option<i64>)> = conn2
+        let platform = conn2
             .query_row(
-                "SELECT time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset \
+                "SELECT platform FROM accounts WHERE id = ?1",
+                rusqlite::params![account_id],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| "zhipu".to_string());
+        let snap_limits: Option<CachedQuotaLimits> = conn2
+            .query_row(
+                "SELECT time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset, \
+                        weekly_limit_pct, weekly_limit_reset, mcp_limit_pct, mcp_limit_reset \
                  FROM usage_snapshots WHERE account_id = ?1 ORDER BY timestamp DESC LIMIT 1",
                 rusqlite::params![account_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok(CachedQuotaLimits {
+                        time_pct: row.get(0)?,
+                        time_reset: row.get(1)?,
+                        token_pct: row.get(2)?,
+                        token_reset: row.get(3)?,
+                        weekly_pct: row.get(4)?,
+                        weekly_reset: row.get(5)?,
+                        mcp_pct: row.get(6)?,
+                        mcp_reset: row.get(7)?,
+                    })
+                },
             )
             .ok();
 
-        if let Some((time_pct, time_reset, token_pct, token_reset)) = snap_limits {
-            if let (Some(pct), Some(reset)) = (time_pct, time_reset) {
+        if let Some(snapshot) = snap_limits {
+            if let (Some(pct), Some(reset)) = (snapshot.time_pct, snapshot.time_reset) {
                 offline_quota.limits.push(crate::api::types::QuotaLimit {
                     limit_type: "TIME_LIMIT".into(),
                     percentage: pct,
@@ -487,9 +506,53 @@ fn build_offline_quota(
                     usage_details: None,
                 });
             }
-            if let (Some(pct), Some(reset)) = (token_pct, token_reset) {
+            // 迁移后的旧 Codex 快照会同时保留 token/weekly；只回显周额度，避免重复。
+            if platform != "codex" {
+                if let (Some(pct), Some(reset)) = (snapshot.token_pct, snapshot.token_reset) {
+                    offline_quota.limits.push(crate::api::types::QuotaLimit {
+                        limit_type: "TOKENS_LIMIT".into(),
+                        percentage: pct,
+                        next_reset_time: reset,
+                        unit: Some(3.0),
+                        number: None,
+                        usage: None,
+                        current_value: None,
+                        remaining: None,
+                        usage_details: None,
+                    });
+                }
+            }
+            if let (Some(pct), Some(reset)) = (snapshot.weekly_pct, snapshot.weekly_reset) {
                 offline_quota.limits.push(crate::api::types::QuotaLimit {
                     limit_type: "TOKENS_LIMIT".into(),
+                    percentage: pct,
+                    next_reset_time: reset,
+                    unit: Some(6.0),
+                    number: None,
+                    usage: None,
+                    current_value: None,
+                    remaining: None,
+                    usage_details: None,
+                });
+            } else if platform == "codex" {
+                // 极旧数据库尚未完成周额度回填时的兼容兜底。
+                if let (Some(pct), Some(reset)) = (snapshot.token_pct, snapshot.token_reset) {
+                    offline_quota.limits.push(crate::api::types::QuotaLimit {
+                        limit_type: "TOKENS_LIMIT".into(),
+                        percentage: pct,
+                        next_reset_time: reset,
+                        unit: Some(6.0),
+                        number: None,
+                        usage: None,
+                        current_value: None,
+                        remaining: None,
+                        usage_details: None,
+                    });
+                }
+            }
+            if let (Some(pct), Some(reset)) = (snapshot.mcp_pct, snapshot.mcp_reset) {
+                offline_quota.limits.push(crate::api::types::QuotaLimit {
+                    limit_type: "MCP_MONTHLY".into(),
                     percentage: pct,
                     next_reset_time: reset,
                     unit: None,
@@ -525,7 +588,8 @@ fn build_offline_quota(
     // 401 特殊标记
     if matches!(error, crate::api::client::ApiError::Unauthorized) {
         offline_quota.error = Some("API Key 无效或已过期".into());
-    } else if error.to_string().contains("吊销") || error.to_string().contains("TokenInvalidated") {
+    } else if error.to_string().contains("吊销") || error.to_string().contains("TokenInvalidated")
+    {
         // Codex token 被吊销（不是过期），特殊提示
         offline_quota.error = Some("Token 已被吊销，请重新登录 Codex".into());
     } else if offline_quota.limits.is_empty() {
@@ -549,9 +613,11 @@ fn build_deepseek_offline_quota(
     account_id: &str,
     err_msg: &str,
 ) -> Option<QuotaData> {
-    let mut quota = QuotaData::default();
-    quota.is_offline = true;
-    quota.error = Some(err_msg.to_string());
+    let mut quota = QuotaData {
+        is_offline: true,
+        error: Some(err_msg.to_string()),
+        ..Default::default()
+    };
 
     if let Ok(conn) = db.conn.lock() {
         // 取最近一次快照的全部币种行（一次拉取的多币种共享同一 timestamp）
@@ -612,9 +678,7 @@ fn build_deepseek_offline_quota(
 /// 检测账号活跃度：对比快照中 token 百分比变化
 fn detect_account_activity(conn: &rusqlite::Connection, account_id: &str, quota: &QuotaData) {
     let current_pct = quota
-        .limits
-        .iter()
-        .find(|l| l.limit_type == "TOKENS_LIMIT")
+        .preferred_token_limit()
         .map(|l| l.percentage)
         .unwrap_or(0.0);
     let prev_pct = conn
@@ -643,19 +707,33 @@ fn detect_account_activity(conn: &rusqlite::Connection, account_id: &str, quota:
 fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
     let db = match app.try_state::<Database>() {
         Some(db) => db,
-        None => return RefreshResult { max_pct: 0, quotas: HashMap::new(), primary_items: Vec::new() },
+        None => {
+            return RefreshResult {
+                max_pct: 0,
+                quotas: HashMap::new(),
+                primary_items: Vec::new(),
+            }
+        }
     };
 
     // (id, alias, platform, is_primary)
     let accounts: Vec<(String, String, String, bool)> = {
         let Ok(guard) = db.conn.lock() else {
-            return RefreshResult { max_pct: 0, quotas: HashMap::new(), primary_items: Vec::new() };
+            return RefreshResult {
+                max_pct: 0,
+                quotas: HashMap::new(),
+                primary_items: Vec::new(),
+            };
         };
         let result = guard.prepare(
-            "SELECT id, alias, platform, COALESCE(is_primary, 0) FROM accounts WHERE is_active = 1"
+            "SELECT id, alias, platform, COALESCE(is_primary, 0) FROM accounts WHERE is_active = 1",
         );
         let Ok(mut stmt) = result else {
-            return RefreshResult { max_pct: 0, quotas: HashMap::new(), primary_items: Vec::new() };
+            return RefreshResult {
+                max_pct: 0,
+                quotas: HashMap::new(),
+                primary_items: Vec::new(),
+            };
         };
         let rows = stmt.query_map([], |row| {
             Ok((
@@ -672,18 +750,14 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
     };
 
     // 读取 webhook URL
-    let webhook_url: Option<String> = db
-        .conn
-        .lock()
+    let webhook_url: Option<String> = db.conn.lock().ok().and_then(|conn| {
+        conn.query_row(
+            "SELECT value FROM app_settings WHERE key = 'webhook_url'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
         .ok()
-        .and_then(|conn| {
-            conn.query_row(
-                "SELECT value FROM app_settings WHERE key = 'webhook_url'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-        });
+    });
 
     let mut max_pct = 0i32;
     let mut primary_items: Vec<PrimaryDisplay> = Vec::new();
@@ -698,17 +772,23 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                         max_pct = pct;
                     }
                     if *is_primary {
-                        primary_items.push(PrimaryDisplay { platform: "codex".to_string(), pct, balance: None });
+                        primary_items.push(PrimaryDisplay {
+                            platform: "codex".to_string(),
+                            pct,
+                            balance: None,
+                        });
                     }
 
                     // 读取持久化的 last_active（和 GLM 一致）
                     if let Ok(conn2) = db.conn.lock() {
                         let key = format!("last_active_{}", account_id);
-                        quota.last_active = conn2.query_row(
-                            "SELECT value FROM app_settings WHERE key = ?1",
-                            rusqlite::params![key],
-                            |row| row.get::<_, String>(0),
-                        ).ok();
+                        quota.last_active = conn2
+                            .query_row(
+                                "SELECT value FROM app_settings WHERE key = ?1",
+                                rusqlite::params![key],
+                                |row| row.get::<_, String>(0),
+                            )
+                            .ok();
                     }
 
                     quotas.insert(account_id.clone(), quota.clone());
@@ -736,7 +816,11 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                 }
                 Err(e) => {
                     eprintln!("Failed to refresh codex account {}: {}", account_id, e);
-                    if let Some(offline_quota) = build_offline_quota(&db, account_id, &crate::api::client::ApiError::Api { code: -1, msg: e }) {
+                    if let Some(offline_quota) = build_offline_quota(
+                        &db,
+                        account_id,
+                        &crate::api::client::ApiError::Api { code: -1, msg: e },
+                    ) {
                         quotas.insert(account_id.clone(), offline_quota);
                     }
                 }
@@ -769,11 +853,13 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
 
                     if let Ok(conn2) = db.conn.lock() {
                         let key = format!("last_active_{}", account_id);
-                        quota.last_active = conn2.query_row(
-                            "SELECT value FROM app_settings WHERE key = ?1",
-                            rusqlite::params![key],
-                            |row| row.get::<_, String>(0),
-                        ).ok();
+                        quota.last_active = conn2
+                            .query_row(
+                                "SELECT value FROM app_settings WHERE key = ?1",
+                                rusqlite::params![key],
+                                |row| row.get::<_, String>(0),
+                            )
+                            .ok();
                     }
 
                     quotas.insert(account_id.clone(), quota.clone());
@@ -822,20 +908,32 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                     max_pct = pct;
                 }
                 if *is_primary {
-                    primary_items.push(PrimaryDisplay { platform: "zhipu".to_string(), pct, balance: None });
+                    primary_items.push(PrimaryDisplay {
+                        platform: "zhipu".to_string(),
+                        pct,
+                        balance: None,
+                    });
                 }
 
                 if let Ok(conn2) = db.conn.lock() {
-                    let _ = db::record_quota_snapshot(&conn2, account_id, &quota, today_tokens, today_calls);
+                    let _ = db::record_quota_snapshot(
+                        &conn2,
+                        account_id,
+                        &quota,
+                        today_tokens,
+                        today_calls,
+                    );
                     detect_account_activity(&conn2, account_id, &quota);
 
                     // 读取持久化的 last_active
                     let key = format!("last_active_{}", account_id);
-                    quota.last_active = conn2.query_row(
-                        "SELECT value FROM app_settings WHERE key = ?1",
-                        rusqlite::params![key],
-                        |row| row.get::<_, String>(0),
-                    ).ok();
+                    quota.last_active = conn2
+                        .query_row(
+                            "SELECT value FROM app_settings WHERE key = ?1",
+                            rusqlite::params![key],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .ok();
                 }
 
                 quotas.insert(account_id.clone(), quota.clone());
@@ -865,7 +963,10 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
             Err(e) => {
                 eprintln!("Failed to refresh account {}: {}", account_id, e);
 
-                let api_err = crate::api::client::ApiError::Api { code: -1, msg: e.clone() };
+                let api_err = crate::api::client::ApiError::Api {
+                    code: -1,
+                    msg: e.clone(),
+                };
                 if let Some(offline_quota) = build_offline_quota(&db, account_id, &api_err) {
                     quotas.insert(account_id.clone(), offline_quota);
                 }
@@ -873,8 +974,16 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
         }
     }
 
-    let display_pct = if primary_items.is_empty() { max_pct } else { primary_items.iter().map(|i| i.pct).max().unwrap_or(0) };
-    RefreshResult { max_pct: display_pct, quotas, primary_items }
+    let display_pct = if primary_items.is_empty() {
+        max_pct
+    } else {
+        primary_items.iter().map(|i| i.pct).max().unwrap_or(0)
+    };
+    RefreshResult {
+        max_pct: display_pct,
+        quotas,
+        primary_items,
+    }
 }
 
 /// 读取雷达最佳模型 + 24h 重置概率（None=未就绪/拉取失败），并刷新托盘显示
@@ -883,7 +992,8 @@ pub(crate) fn update_tray_display(app: &tauri::AppHandle, primary_items: &[Prima
         .try_state::<commands::codex_radar::CodexRadarState>()
         .and_then(|s| {
             let g = s.0.lock().ok()?;
-            g.as_ref().map(|d| (d.best_model.clone(), d.probability_24h))
+            g.as_ref()
+                .map(|d| (d.best_model.clone(), d.probability_24h))
         });
     let (radar_model, radar_prob) = match radar {
         Some((m, p)) if !m.is_empty() && m != "?" => (Some(m), Some(p)),
@@ -996,15 +1106,8 @@ fn try_codex_auto_upload(db: &Database) -> Result<(), String> {
         )
         .map_err(|_| "未配置 Gist URL".to_string())?
     };
-    let github_token = {
-        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-        conn.query_row(
-            "SELECT value FROM app_settings WHERE key = 'codex_github_token'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|_| "未配置 GitHub Token".to_string())?
-    };
+    let github_token =
+        commands::codex::read_github_token(db).ok_or_else(|| "未配置 GitHub Token".to_string())?;
 
     let auth = codex::auth::read_local_auth_json()?;
     let json = serde_json::to_string(&auth).map_err(|e| format!("序列化失败: {}", e))?;
@@ -1030,6 +1133,88 @@ fn try_codex_auto_upload(db: &Database) -> Result<(), String> {
     Ok(())
 }
 
+/// SSH 自动覆盖调度
+/// 每 5 分钟检测一次：对开启自动覆盖的主机，若本机 auth.json 有变化（指纹），
+/// 且该主机「免密」或「已存储密码」才执行推送；非免密且无密码的主机跳过
+/// （由用户手动弹框输入密码后开启）。
+fn run_ssh_auto_override(app: &tauri::AppHandle) {
+    std::thread::sleep(Duration::from_secs(60));
+    let mut last_signatures: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    loop {
+        if let Some(db) = app.try_state::<Database>() {
+            // 本机 auth.json 变化指纹（与 run_codex_auto_upload 一致）
+            let current_sig = codex::auth::read_local_auth_json().ok().map(|auth| {
+                let token_fingerprint = if auth.tokens.access_token.len() >= 16 {
+                    &auth.tokens.access_token[..16]
+                } else {
+                    &auth.tokens.access_token
+                };
+                format!(
+                    "{}|{}",
+                    auth.last_refresh.clone().unwrap_or_default(),
+                    token_fingerprint
+                )
+            });
+
+            if let Some(sig) = current_sig {
+                // 开启自动覆盖的主机
+                let enabled_hosts: Vec<String> = db
+                    .conn
+                    .lock()
+                    .ok()
+                    .and_then(|conn| {
+                        let mut stmt = conn
+                            .prepare(
+                                "SELECT key FROM app_settings \
+                                 WHERE key LIKE 'ssh_auto_override_%' AND value = 'true'",
+                            )
+                            .ok()?;
+                        let rows = stmt.query_map([], |row| row.get::<_, String>(0)).ok()?;
+                        Some(
+                            rows.filter_map(|r| r.ok())
+                                .filter_map(|k| {
+                                    k.strip_prefix("ssh_auto_override_").map(|s| s.to_string())
+                                })
+                                .collect(),
+                        )
+                    })
+                    .unwrap_or_default();
+
+                for host in &enabled_hosts {
+                    if last_signatures.get(host) == Some(&sig) {
+                        continue;
+                    }
+                    // 认证方式：免密优先，其次已存密码，否则跳过。
+                    // 跳过时不记录指纹，这样用户补存密码后下一轮（5 分钟内）自动生效。
+                    let result = if codex::ssh::is_passwordless(host) {
+                        codex::ssh::push_auth_json(host, None)
+                    } else if let Some(pw) = codex::ssh::read_ssh_password(host) {
+                        codex::ssh::push_auth_json(host, Some(&pw))
+                    } else {
+                        eprintln!(
+                            "SSH auto-override skip {host}: 非免密且未存储密码，不做自动覆盖"
+                        );
+                        continue;
+                    };
+                    match result {
+                        Ok(()) => {
+                            eprintln!("SSH auto-override ok: {host} 已覆盖 auth.json");
+                            last_signatures.insert(host.clone(), sig.clone());
+                        }
+                        Err(e) => {
+                            eprintln!("SSH auto-override failed for {host}: {e}");
+                        }
+                    }
+                }
+            }
+        }
+
+        std::thread::sleep(Duration::from_secs(300)); // 5 分钟检测一次
+    }
+}
+
 /// 把 auto-sync 日志追加到 app_data_dir/codex_auto_sync.log
 /// （GUI release build 无 stderr console，后台线程日志只能落文件）
 fn log_auto_sync(msg: &str) {
@@ -1038,8 +1223,17 @@ fn log_auto_sync(msg: &str) {
     let dir = base.join("com.ngaizean.glm-quota-monitor");
     let path = dir.join("codex_auto_sync.log");
     let _ = std::fs::create_dir_all(&dir);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = writeln!(f, "[{}] {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"), msg);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(
+            f,
+            "[{}] {}",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"),
+            msg
+        );
     }
 }
 
@@ -1068,7 +1262,9 @@ fn run_codex_auto_sync(app: &tauri::AppHandle) {
                 .unwrap_or_else(|| "owner".to_string());
 
             if role != "consumer" {
-                log_auto_sync(&format!("skip: role={role} (auto-sync only runs for consumer)"));
+                log_auto_sync(&format!(
+                    "skip: role={role} (auto-sync only runs for consumer)"
+                ));
                 std::thread::sleep(Duration::from_secs(300));
                 continue;
             }
@@ -1114,9 +1310,9 @@ fn run_codex_auto_sync(app: &tauri::AppHandle) {
                     if last_signature.as_deref() != Some(fingerprint.as_str()) {
                         // 内容变化（或首次）→ 解密应用
                         log_auto_sync("content changed (or first run), applying...");
-                        match tauri::async_runtime::block_on(
-                            commands::codex::apply_codex_auth(&enc, &db),
-                        ) {
+                        match tauri::async_runtime::block_on(commands::codex::apply_codex_auth(
+                            &enc, &db,
+                        )) {
                             Ok(()) => {
                                 log_auto_sync("applied successfully");
                                 last_signature = Some(fingerprint);
@@ -1185,8 +1381,8 @@ fn fit_window_size(app: tauri::AppHandle, height: f64) {
             Err(_) => return,
         };
         let scale = window.scale_factor().unwrap_or(1.0);
-        let new_w = (360.0 * scale as f64) as u32;
-        let new_h = (height * scale as f64) as u32;
+        let new_w = (360.0 * scale) as u32;
+        let new_h = (height * scale) as u32;
         let _ = window.set_size(tauri::PhysicalSize::new(new_w, new_h));
         let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
     }
@@ -1216,8 +1412,7 @@ pub fn run() {
         .setup(|app| {
             platform::init_app(app);
 
-            let db = Database::new(&get_db_path(app))
-                .expect("Failed to initialize database");
+            let db = Database::new(&get_db_path(app)).expect("Failed to initialize database");
             db.init_tables().expect("Failed to create tables");
             // 把老版本残留的明文 api_key 批量迁移到 Keychain 并清空
             let _ = db.migrate_legacy_api_keys();
@@ -1251,9 +1446,9 @@ pub fn run() {
             }
 
             // Codex 雷达缓存 state（后台线程写，popover 读）
-            app.manage(commands::codex_radar::CodexRadarState(std::sync::Mutex::new(
-                None,
-            )));
+            app.manage(commands::codex_radar::CodexRadarState(
+                std::sync::Mutex::new(None),
+            ));
 
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
             let refresh_item = MenuItemBuilder::with_id("refresh", "立即刷新").build(app)?;
@@ -1327,6 +1522,12 @@ pub fn run() {
             let codex_sync_handle = app.handle().clone();
             std::thread::spawn(move || {
                 run_codex_auto_sync(&codex_sync_handle);
+            });
+
+            // SSH 远程自动覆盖线程：对开启自动覆盖的主机定时推送 auth.json
+            let ssh_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                run_ssh_auto_override(&ssh_handle);
             });
 
             // Codex 雷达刷新线程：定时拉取 codexradar.com 公开摘要缓存到 state。
@@ -1404,6 +1605,18 @@ pub fn run() {
             commands::codex::get_codex_auto_sync,
             commands::codex::set_codex_proxy,
             commands::codex::get_codex_proxy,
+            commands::codex::scan_ssh_hosts,
+            commands::codex::check_ssh_passwordless,
+            commands::codex::ssh_push_auth,
+            commands::codex::get_ssh_override_state,
+            commands::codex::set_ssh_auto_override,
+            commands::codex::get_ssh_auto_override,
+            commands::codex::set_ssh_password,
+            commands::codex::has_ssh_password,
+            commands::codex::delete_ssh_password,
+            commands::codex::ssh_check_claude_code,
+            commands::codex::ssh_bind_claude_code,
+            commands::codex::ssh_unbind_claude_code,
             commands::deepseek::add_deepseek_account,
             commands::deepseek::get_deepseek_balance,
             commands::deepseek::get_deepseek_models,
@@ -1421,4 +1634,31 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_refresh_interval_secs, DEFAULT_REFRESH_INTERVAL_SECS};
+
+    #[test]
+    fn refresh_interval_accepts_only_one_to_thirty_minutes() {
+        assert_eq!(parse_refresh_interval_secs(Some("1")), 60);
+        assert_eq!(parse_refresh_interval_secs(Some("30")), 1_800);
+        assert_eq!(
+            parse_refresh_interval_secs(Some("0")),
+            DEFAULT_REFRESH_INTERVAL_SECS
+        );
+        assert_eq!(
+            parse_refresh_interval_secs(Some("31")),
+            DEFAULT_REFRESH_INTERVAL_SECS
+        );
+        assert_eq!(
+            parse_refresh_interval_secs(Some("invalid")),
+            DEFAULT_REFRESH_INTERVAL_SECS
+        );
+        assert_eq!(
+            parse_refresh_interval_secs(None),
+            DEFAULT_REFRESH_INTERVAL_SECS
+        );
+    }
 }

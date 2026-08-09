@@ -1,9 +1,9 @@
 use crate::db::models::Account;
 use crate::db::Database;
+use crate::deepseek::client::{DeepSeekApiError, DeepSeekClient};
 use crate::deepseek::{
     self, balance_view_entries, DeepSeekBalanceEntry, DeepSeekBalancePoint, DeepSeekBalanceView,
 };
-use crate::deepseek::client::{DeepSeekApiError, DeepSeekClient};
 use chrono::Utc;
 use rusqlite::Connection;
 use tauri::{Emitter, State};
@@ -108,10 +108,14 @@ pub fn add_deepseek_account(
 
     // 3. Keychain
     if let Err(e) = deepseek::auth::store_api_key(&id, &api_key) {
-        // 回滚：删库行 + 已写 snapshot（snapshot 留着无害，但保持干净）
-        let _ = db.conn.lock().map(|c| {
-            c.execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![id])
-        });
+        // 快照有外键，必须先删快照再删账号，否则 accounts 删除会被约束拒绝。
+        if let Ok(conn) = db.conn.lock() {
+            let _ = conn.execute(
+                "DELETE FROM deepseek_snapshots WHERE account_id = ?1",
+                rusqlite::params![id],
+            );
+            let _ = conn.execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![id]);
+        }
         return Err(format!("凭据存储失败: {}", e));
     }
 
@@ -142,8 +146,7 @@ pub fn get_deepseek_balance(
     let api_key = deepseek::auth::get_api_key(&account_id)?;
     let http = &crate::HTTP_CLIENT;
 
-    let balance =
-        tauri::async_runtime::block_on(DeepSeekClient::get_balance(http, &api_key));
+    let balance = tauri::async_runtime::block_on(DeepSeekClient::get_balance(http, &api_key));
 
     match balance {
         Ok(b) => {
@@ -152,16 +155,17 @@ pub fn get_deepseek_balance(
                 let _ = crate::db::record_deepseek_snapshot(&conn, &account_id, &b);
             }
             // 模型列表：失败不致命，置空即可
-            let models: Vec<String> = tauri::async_runtime::block_on(DeepSeekClient::get_models(http, &api_key))
-                .ok()
-                .map(|m| {
-                    m.data
-                        .into_iter()
-                        .map(|e| e.id)
-                        .filter(|s| !s.is_empty())
-                        .collect()
-                })
-                .unwrap_or_default();
+            let models: Vec<String> =
+                tauri::async_runtime::block_on(DeepSeekClient::get_models(http, &api_key))
+                    .ok()
+                    .map(|m| {
+                        m.data
+                            .into_iter()
+                            .map(|e| e.id)
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
 
             Ok(DeepSeekBalanceView {
                 is_available: b.is_available,
@@ -198,7 +202,9 @@ pub fn get_deepseek_balance(
 
 /// 仅拉取模型列表（DeepSeekModelList 展开时实时刷新用）。返回原始 ModelsResponse，最大化信息。
 #[tauri::command]
-pub fn get_deepseek_models(account_id: String) -> Result<crate::deepseek::types::ModelsResponse, String> {
+pub fn get_deepseek_models(
+    account_id: String,
+) -> Result<crate::deepseek::types::ModelsResponse, String> {
     let api_key = deepseek::auth::get_api_key(&account_id)?;
     let resp =
         tauri::async_runtime::block_on(DeepSeekClient::get_models(&crate::HTTP_CLIENT, &api_key))
@@ -256,16 +262,15 @@ pub fn validate_deepseek_api_key(api_key: String) -> Result<String, String> {
 /// DeepSeek 账号 API Key 脱敏（与 GLM mask_api_key 同形）。
 #[tauri::command]
 pub fn mask_deepseek_api_key(account_id: String) -> Result<String, String> {
-    let api_key = deepseek::auth::get_api_key(&account_id)
-        .map_err(|e| format!("API Key 读取失败: {}", e))?;
+    let api_key =
+        deepseek::auth::get_api_key(&account_id).map_err(|e| format!("API Key 读取失败: {}", e))?;
     Ok(crate::crypto::mask_key(&api_key))
 }
 
 /// 获取 DeepSeek 账号明文 API Key（复制到剪贴板用）。
 #[tauri::command]
 pub fn get_deepseek_api_key_raw(account_id: String) -> Result<String, String> {
-    deepseek::auth::get_api_key(&account_id)
-        .map_err(|e| format!("API Key 读取失败: {}", e))
+    deepseek::auth::get_api_key(&account_id).map_err(|e| format!("API Key 读取失败: {}", e))
 }
 
 /// 修改 DeepSeek 账号 API Key：先验证新 Key，通过后覆盖 Keychain 记录。
@@ -277,9 +282,11 @@ pub fn update_deepseek_api_key(
     new_api_key: String,
 ) -> Result<(), String> {
     // 1. 验证新 Key
-    let balance =
-        tauri::async_runtime::block_on(DeepSeekClient::get_balance(&crate::HTTP_CLIENT, &new_api_key))
-            .map_err(|e| format!("API Key 验证失败: {}", deepseek_error_msg(&e)))?;
+    let balance = tauri::async_runtime::block_on(DeepSeekClient::get_balance(
+        &crate::HTTP_CLIENT,
+        &new_api_key,
+    ))
+    .map_err(|e| format!("API Key 验证失败: {}", deepseek_error_msg(&e)))?;
 
     // 2. 覆盖 Keychain
     deepseek::auth::store_api_key(&account_id, &new_api_key)

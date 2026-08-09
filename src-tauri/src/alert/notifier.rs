@@ -1,19 +1,8 @@
-use crate::api::types::QuotaData;
 use crate::alert::rules::{has_fired_this_period, record_alert};
+use crate::api::types::QuotaData;
 use crate::db::Database;
 use serde_json::json;
 use std::collections::HashMap;
-
-/// 检查额度数据是否触发提醒，如果触发则发送系统通知
-pub fn check_and_notify(
-    db: &Database,
-    account_id: &str,
-    account_alias: &str,
-    quota: &QuotaData,
-    notify_fn: impl Fn(&str),
-) {
-    check_and_notify_with_webhook(db, account_id, account_alias, quota, notify_fn, None)
-}
 
 /// 读取全局静音开关
 fn is_muted(conn: &rusqlite::Connection) -> bool {
@@ -82,9 +71,7 @@ pub fn check_and_notify_with_webhook(
             match rule_type.as_str() {
                 "token_5h" => {
                     let pct = quota
-                        .limits
-                        .iter()
-                        .find(|l| l.limit_type == "TOKENS_LIMIT")
+                        .preferred_token_limit()
                         .map(|l| l.percentage)
                         .unwrap_or(0.0);
 
@@ -123,9 +110,7 @@ pub fn check_and_notify_with_webhook(
                 "reset_soon" => {
                     // threshold 单位=分钟：额度重置前 N 分钟提醒
                     let next_reset = quota
-                        .limits
-                        .iter()
-                        .find(|l| l.limit_type == "TOKENS_LIMIT")
+                        .preferred_token_limit()
                         .filter(|l| l.next_reset_time > 0)
                         .map(|l| l.next_reset_time);
 
@@ -161,14 +146,11 @@ pub fn check_and_notify_with_webhook(
 
                     if let Some(ts) = last_active_str {
                         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&ts) {
-                            let idle_mins = (chrono::Utc::now()
-                                - dt.with_timezone(&chrono::Utc))
+                            let idle_mins = (chrono::Utc::now() - dt.with_timezone(&chrono::Utc))
                                 .num_minutes() as f64;
                             if idle_mins >= *threshold {
                                 let token_pct = quota
-                                    .limits
-                                    .iter()
-                                    .find(|l| l.limit_type == "TOKENS_LIMIT")
+                                    .preferred_token_limit()
                                     .map(|l| l.percentage)
                                     .unwrap_or(100.0);
                                 if token_pct >= 95.0 {

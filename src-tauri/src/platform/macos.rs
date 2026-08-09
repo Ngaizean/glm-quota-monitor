@@ -1,5 +1,5 @@
+use objc::runtime::{Object, NO, YES};
 use objc::{class, msg_send, sel, sel_impl};
-use objc::runtime::{Object, YES, NO};
 use tauri::WebviewWindow;
 
 /// NSStatusWindowLevel = 25，浮在 Spotlight 和其他 floating 窗口之上
@@ -51,10 +51,20 @@ pub fn update_tray(
     };
 
     // 有效雷达模型（非空非「?」）-> 类型（如 "Sol max"，去掉版本前缀 GPT-5.6）
-    let radar_ok = radar_model.map(|m| !m.is_empty() && m != "?").unwrap_or(false);
-    let mtype = if radar_ok { Some(model_type(radar_model.unwrap())) } else { None };
+    let radar_ok = radar_model
+        .map(|m| !m.is_empty() && m != "?")
+        .unwrap_or(false);
+    let mtype = if radar_ok {
+        Some(model_type(radar_model.unwrap()))
+    } else {
+        None
+    };
     // 彩色圆点 emoji：颜色=24h 重置概率（仅雷达就绪时显示，放在 title 末尾=Codex 额度之后）
-    let dot = if radar_ok { Some(prob_emoji(radar_prob.unwrap_or(0.0))) } else { None };
+    let dot = if radar_ok {
+        Some(prob_emoji(radar_prob.unwrap_or(0.0)))
+    } else {
+        None
+    };
 
     // title：「百分比 模型类型 彩色圆点」——emoji 在 macOS title 中彩色渲染
     let mut parts: Vec<String> = Vec::new();
@@ -68,7 +78,11 @@ pub fn update_tray(
         parts.push(d.to_string());
     }
     let title = parts.join(" ");
-    let _ = tray.set_title(if title.is_empty() { None } else { Some(title.as_str()) });
+    let _ = tray.set_title(if title.is_empty() {
+        None
+    } else {
+        Some(title.as_str())
+    });
 
     // 图标恢复为应用原 logo（彩色指示改为 title 内的圆点 emoji，不再替代软件图标）
     let app = tray.app_handle();

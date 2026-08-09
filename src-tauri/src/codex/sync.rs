@@ -1,5 +1,8 @@
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+const SYNC_FILENAME: &str = "codex-auth.enc";
 
 /// 从 Gist raw URL 拉取加密内容
 /// 私密 Gist 的 raw URL 匿名可访问（"未列出"特性），内容已 AES 加密
@@ -15,7 +18,10 @@ pub async fn fetch_from_gist(http: &reqwest::Client, raw_url: &str) -> Result<St
         return Err(format!("Gist 返回 HTTP {}", resp.status()));
     }
 
-    let text = resp.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))?;
     Ok(text.trim().to_string())
 }
 
@@ -31,11 +37,28 @@ struct GistFile {
 /// Gist API 响应结构
 #[derive(Debug, Deserialize)]
 struct Gist {
-    id: String,
-    files: std::collections::HashMap<String, GistFile>,
+    files: HashMap<String, GistFile>,
 }
 
-/// 从 Gist ID 解析出第一个文件的 raw_url
+fn select_sync_file(files: &HashMap<String, GistFile>) -> Result<&GistFile, String> {
+    if let Some(file) = files.get(SYNC_FILENAME) {
+        return Ok(file);
+    }
+    if files.len() == 1 {
+        return files
+            .values()
+            .next()
+            .ok_or_else(|| "Gist 中没有文件".to_string());
+    }
+    if files.is_empty() {
+        return Err("Gist 中没有文件".to_string());
+    }
+    Err(format!(
+        "Gist 中包含多个文件，请将同步文件命名为 {SYNC_FILENAME}"
+    ))
+}
+
+/// 从 Gist ID 解析出同步文件的 raw_url
 /// 需要 GitHub token（私密 gist REST API 需要认证）
 pub async fn resolve_gist_raw_url(
     http: &reqwest::Client,
@@ -47,7 +70,10 @@ pub async fn resolve_gist_raw_url(
 
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static("glm-quota-monitor"));
-    headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github+json"),
+    );
     // Token 可选：gist 是 unlisted，匿名也能访问单个 gist；
     // 有 token 时携带（提升 GitHub API 速率限制），为空时匿名请求
     if !github_token.is_empty() {
@@ -77,13 +103,11 @@ pub async fn resolve_gist_raw_url(
         .await
         .map_err(|e| format!("解析 Gist 响应失败: {}", e))?;
 
-    let file = gist
-        .files
-        .into_values()
-        .next()
-        .ok_or("Gist 中没有文件")?;
+    let file = select_sync_file(&gist.files)?;
 
-    file.raw_url.ok_or("Gist 文件缺少 raw_url".to_string())
+    file.raw_url
+        .clone()
+        .ok_or("Gist 文件缺少 raw_url".to_string())
 }
 
 const ACCEPT: &str = "accept";
@@ -104,11 +128,7 @@ fn extract_gist_id(input: &str) -> Result<String, String> {
     // gist URL 格式：.../{gist_id}[/...]，gist ID 通常是倒数第二或最后一段
     for seg in segments.iter().rev() {
         // Gist ID 通常 20-32 位十六进制/字母数字
-        if seg.len() >= 20
-            && seg
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric())
-        {
+        if seg.len() >= 20 && seg.chars().all(|c| c.is_ascii_alphanumeric()) {
             return Ok(seg.to_string());
         }
     }
@@ -138,7 +158,10 @@ pub async fn push_to_gist(
             .map_err(|_| "无效的 GitHub Token".to_string())?,
     );
     headers.insert(USER_AGENT, HeaderValue::from_static("glm-quota-monitor"));
-    headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github+json"),
+    );
 
     let get_resp = http
         .get(&url)
@@ -156,24 +179,19 @@ pub async fn push_to_gist(
         .await
         .map_err(|e| format!("解析 Gist 失败: {}", e))?;
 
-    let filename = gist
-        .files
-        .keys()
-        .next()
-        .cloned()
-        .ok_or("Gist 中没有文件")?;
+    let filename = select_sync_file(&gist.files)?.filename.clone();
 
     // PATCH 更新文件内容
     #[derive(Serialize)]
     struct UpdatePayload {
-        files: std::collections::HashMap<String, FileUpdate>,
+        files: HashMap<String, FileUpdate>,
     }
     #[derive(Serialize)]
     struct FileUpdate {
         content: String,
     }
 
-    let mut files = std::collections::HashMap::new();
+    let mut files = HashMap::new();
     files.insert(
         filename,
         FileUpdate {
@@ -197,4 +215,43 @@ pub async fn push_to_gist(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file(filename: &str) -> GistFile {
+        GistFile {
+            filename: filename.to_string(),
+            raw_url: Some(format!("https://example.com/{filename}")),
+            content: None,
+        }
+    }
+
+    #[test]
+    fn selects_the_only_file_for_legacy_gists() {
+        let files = HashMap::from([("legacy.txt".to_string(), file("legacy.txt"))]);
+        assert_eq!(select_sync_file(&files).unwrap().filename, "legacy.txt");
+    }
+
+    #[test]
+    fn prefers_named_sync_file_in_multi_file_gists() {
+        let files = HashMap::from([
+            ("notes.md".to_string(), file("notes.md")),
+            (SYNC_FILENAME.to_string(), file(SYNC_FILENAME)),
+        ]);
+        assert_eq!(select_sync_file(&files).unwrap().filename, SYNC_FILENAME);
+    }
+
+    #[test]
+    fn rejects_ambiguous_multi_file_gists() {
+        let files = HashMap::from([
+            ("one.txt".to_string(), file("one.txt")),
+            ("two.txt".to_string(), file("two.txt")),
+        ]);
+        assert!(select_sync_file(&files)
+            .unwrap_err()
+            .contains(SYNC_FILENAME));
+    }
 }

@@ -28,6 +28,40 @@ pub struct QuotaData {
     pub is_offline: bool,
 }
 
+impl QuotaData {
+    pub fn token_limit_with_unit(&self, unit: f64) -> Option<&QuotaLimit> {
+        self.limits
+            .iter()
+            .find(|limit| limit.limit_type == "TOKENS_LIMIT" && limit.unit == Some(unit))
+    }
+
+    pub fn five_hour_token_limit(&self) -> Option<&QuotaLimit> {
+        self.token_limit_with_unit(3.0)
+    }
+
+    pub fn weekly_token_limit(&self) -> Option<&QuotaLimit> {
+        self.token_limit_with_unit(6.0)
+    }
+
+    pub fn legacy_token_limit(&self) -> Option<&QuotaLimit> {
+        self.limits
+            .iter()
+            .find(|limit| limit.limit_type == "TOKENS_LIMIT" && limit.unit.is_none())
+    }
+
+    /// 优先返回 5 小时 Token 窗口（unit=3）；旧数据或仅有周窗口时回退到首个
+    /// TOKENS_LIMIT，兼容缺少 unit 的历史快照和 Codex 周额度。
+    pub fn preferred_token_limit(&self) -> Option<&QuotaLimit> {
+        self.five_hour_token_limit()
+            .or_else(|| self.legacy_token_limit())
+            .or_else(|| {
+                self.limits
+                    .iter()
+                    .find(|limit| limit.limit_type == "TOKENS_LIMIT")
+            })
+    }
+}
+
 /// 兼容 API 返回 null / 缺失字段时默认为空字符串
 fn deserialize_string_or_null<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
@@ -142,3 +176,51 @@ pub struct ModelInfo {
     pub id: String,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{QuotaData, QuotaLimit};
+
+    fn token_limit(percentage: f64, unit: Option<f64>) -> QuotaLimit {
+        QuotaLimit {
+            limit_type: "TOKENS_LIMIT".to_string(),
+            percentage,
+            next_reset_time: 0,
+            unit,
+            number: None,
+            usage: None,
+            current_value: None,
+            remaining: None,
+            usage_details: None,
+        }
+    }
+
+    #[test]
+    fn preferred_token_limit_uses_five_hour_window_regardless_of_order() {
+        let quota = QuotaData {
+            limits: vec![token_limit(70.0, Some(6.0)), token_limit(20.0, Some(3.0))],
+            ..Default::default()
+        };
+
+        assert_eq!(quota.preferred_token_limit().unwrap().percentage, 20.0);
+    }
+
+    #[test]
+    fn preferred_token_limit_falls_back_for_legacy_or_weekly_only_data() {
+        let quota = QuotaData {
+            limits: vec![token_limit(45.0, Some(6.0))],
+            ..Default::default()
+        };
+
+        assert_eq!(quota.preferred_token_limit().unwrap().percentage, 45.0);
+    }
+
+    #[test]
+    fn preferred_token_limit_uses_legacy_window_before_weekly_window() {
+        let quota = QuotaData {
+            limits: vec![token_limit(80.0, Some(6.0)), token_limit(25.0, None)],
+            ..Default::default()
+        };
+
+        assert_eq!(quota.preferred_token_limit().unwrap().percentage, 25.0);
+    }
+}

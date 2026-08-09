@@ -4,7 +4,7 @@
 
 set -e
 
-PROJECT_DIR="/Volumes/Zean/Users/ngaizean/Desktop/agent/glm-quota-monitor"
+PROJECT_DIR="/Volumes/NZeanData/Users/ngaizean/Desktop/Agent/glm-quota-monitor"
 APP_NAME="GLM Quota Monitor"
 
 cd "$PROJECT_DIR"
@@ -43,21 +43,26 @@ find src-tauri/target/release/.fingerprint -name "*glm_quota_monitor*" -type d -
 echo "  ✓ 缓存已刷新"
 
 # 4. Tauri 构建 (release)
-#    忽略 updater 签名密钥错误（本地自用不需要自动更新签名）
 APP_BUNDLE="$PROJECT_DIR/src-tauri/target/release/bundle/macos/$APP_NAME.app"
 echo ""
 echo "[4/6] 构建 Tauri 应用 (release)..."
-npx tauri build || true
+# 先清除精确的旧产物，确保构建失败时绝不会误装陈旧应用。
+rm -rf "$APP_BUNDLE"
+# 本地安装关闭 updater 产物，不依赖正式发布使用的签名私钥。
+npx tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
 if [ ! -d "$APP_BUNDLE" ]; then
   echo "  ✗ 错误: .app 未生成，构建失败"
   exit 1
 fi
 echo "  ✓ Tauri 构建完成"
 
-# 5. 验证前端已嵌入 + 清除隔离属性
+# 5. 验证前端已嵌入 + 本地临时签名 + 清除隔离属性
 echo ""
 echo "[5/6] 验证 + 清除隔离属性..."
-EMBEDDED=$(strings "$APP_BUNDLE/Contents/MacOS/glm-quota-monitor" | grep -c "groupGlm" || true)
+# 用嵌入后 index.html 里的 `/assets/index-*` 引用判断前端是否已嵌入二进制。
+# （旧标记 groupGlm 是早期 CSS 类名，重构后已不存在；直接 grep 二进制对 NUL 字节处理不可靠，
+#  故用 strings 提取可打印串再匹配。assets/index- 不依赖具体 hash，跨构建稳定。）
+EMBEDDED=$(strings "$APP_BUNDLE/Contents/MacOS/glm-quota-monitor" | grep -c "assets/index-" || true)
 if [ "$EMBEDDED" -eq 0 ]; then
   echo "  ⚠ 警告: 前端可能未正确嵌入"
 else
@@ -65,6 +70,9 @@ else
 fi
 xattr -cr "$APP_BUNDLE"
 echo "  ✓ 隔离属性已清除"
+codesign --force --deep --sign - "$APP_BUNDLE"
+codesign --verify --deep --strict "$APP_BUNDLE"
+echo "  ✓ 本地临时签名验证通过"
 
 # 6. 安装 + 启动
 INSTALL_PATH="/Applications/$APP_NAME.app"

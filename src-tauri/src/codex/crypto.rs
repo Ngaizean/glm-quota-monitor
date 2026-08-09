@@ -8,20 +8,18 @@ use std::sync::LazyLock;
 /// 编译期从 CODEX_AES_KEY 环境变量注入（32 字节 ASCII）。未设置或长度不符时回退到内置 key，
 /// 保证旧版本/未配置环境仍可编译使用（向后兼容）。
 /// 设置环境变量后，key 不存在于源码，即使源码 + Gist ID 泄露也无法解密（防御纵深）。
-static ENCRYPTION_KEY: LazyLock<[u8; 32]> = LazyLock::new(|| {
-    match option_env!("CODEX_AES_KEY") {
-        Some(k) if k.len() == 32 => {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(k.as_bytes());
-            arr
-        }
-        _ => {
-            eprintln!(
-                "warn: CODEX_AES_KEY 未设置或长度非 32 字节，回退到内置 key。\
+static ENCRYPTION_KEY: LazyLock<[u8; 32]> = LazyLock::new(|| match option_env!("CODEX_AES_KEY") {
+    Some(k) if k.len() == 32 => {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(k.as_bytes());
+        arr
+    }
+    _ => {
+        eprintln!(
+            "warn: CODEX_AES_KEY 未设置或长度非 32 字节，回退到内置 key。\
                  设置 CODEX_AES_KEY 环境变量（32 字节 ASCII）以启用防御纵深。"
-            );
-            *b"gLmQu0t4C0d3xSyNcK3y256b1t5SeCr3"
-        }
+        );
+        *b"gLmQu0t4C0d3xSyNcK3y256b1t5SeCr3"
     }
 });
 

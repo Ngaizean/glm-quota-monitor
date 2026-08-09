@@ -85,7 +85,11 @@ impl DeepSeekClient {
         }
         let text = resp.text().await?;
         serde_json::from_str(&text).map_err(|e| {
-            DeepSeekApiError::Parse(format!("{} | 原始响应: {}", e, &text[..text.len().min(300)]))
+            DeepSeekApiError::Parse(format!(
+                "{} | 原始响应: {}",
+                e,
+                &text[..text.len().min(300)]
+            ))
         })
     }
 }

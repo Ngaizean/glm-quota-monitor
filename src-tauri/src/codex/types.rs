@@ -63,7 +63,7 @@ pub struct Window {
 }
 
 /// ~/.codex/auth.json 的结构
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct AuthJson {
     #[serde(default, rename = "OPENAI_API_KEY")]
     pub openai_api_key: Option<serde_json::Value>,
@@ -71,16 +71,6 @@ pub struct AuthJson {
     pub last_refresh: Option<String>,
     #[serde(default)]
     pub tokens: Tokens,
-}
-
-impl Default for AuthJson {
-    fn default() -> Self {
-        Self {
-            openai_api_key: None,
-            last_refresh: None,
-            tokens: Tokens::default(),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]

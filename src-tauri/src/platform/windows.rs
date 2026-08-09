@@ -2,7 +2,6 @@
 ///
 /// Win11 22H2+ 使用 DWM API 实现原生圆角，
 /// Win10 依赖 CSS border-radius + 窗口透明背景。
-
 use tauri::WebviewWindow;
 
 pub fn apply_window_decoration(window: &WebviewWindow) {
@@ -113,7 +112,7 @@ fn generate_tray_icon(percentage: i32) -> Option<tauri::image::Image<'static>> {
     let mut rgba = vec![0u8; (size * size * 4) as usize];
 
     let color = if percentage >= 85 {
-        [239, 68, 68]  // 红
+        [239, 68, 68] // 红
     } else if percentage >= 60 {
         [245, 158, 11] // 黄
     } else {

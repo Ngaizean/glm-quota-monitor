@@ -1,6 +1,51 @@
 use super::types::{AuthJson, AuthSummary};
 use std::path::PathBuf;
 
+/// 写入含凭据的本地文件，并在 Unix/macOS 上强制限制为仅当前用户可读写。
+pub(crate) fn write_sensitive_file(path: &std::path::Path, content: &[u8]) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let parent = path
+            .parent()
+            .ok_or_else(|| "文件路径缺少父目录".to_string())?;
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "文件名不是有效 UTF-8".to_string())?;
+        let temp_path = parent.join(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temp_path)
+            .map_err(|e| format!("创建临时文件失败: {}", e))?;
+        let write_result = file
+            .write_all(content)
+            .and_then(|_| file.sync_all())
+            .map_err(|e| format!("写入临时文件失败: {}", e));
+        drop(file);
+        if let Err(error) = write_result {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(error);
+        }
+        if let Err(error) = std::fs::rename(&temp_path, path) {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(format!("原子替换文件失败: {}", error));
+        }
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("收紧文件权限失败: {}", e))?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, content).map_err(|e| format!("写入文件失败: {}", e))
+    }
+}
+
 /// 返回 ~/.codex/auth.json 路径
 pub fn auth_json_path() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("无法获取 home 目录")?;
@@ -24,12 +69,19 @@ pub fn write_local_auth_json(auth: &AuthJson) -> Result<(), String> {
     // 备份现有文件
     if path.exists() {
         let bak = path.with_extension("json.bak");
-        let _ = std::fs::copy(&path, &bak);
+        if std::fs::copy(&path, &bak).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&bak, std::fs::Permissions::from_mode(0o600));
+            }
+        }
     }
 
     let content =
         serde_json::to_string_pretty(auth).map_err(|e| format!("序列化 auth.json 失败: {}", e))?;
-    std::fs::write(&path, content).map_err(|e| format!("写入 auth.json 失败: {}", e))?;
+    write_sensitive_file(&path, content.as_bytes())
+        .map_err(|e| format!("写入 auth.json 失败: {}", e))?;
     Ok(())
 }
 
@@ -129,7 +181,7 @@ pub fn refresh_access_token(http: &reqwest::Client, auth: &AuthJson) -> Result<A
         return Err(format!(
             "刷新失败 HTTP {}: {}",
             status,
-            &body[..body.len().min(200)]
+            crate::api::client::truncate_response(&body, 200)
         ));
     }
 
@@ -214,5 +266,29 @@ pub fn refresh_and_sync_with_fallback(
             refresh_and_sync(fallback, auth, account_id)
         }
         result => result,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::write_sensitive_file;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn sensitive_file_writer_restricts_existing_file_permissions() {
+        let path = std::env::temp_dir().join(format!(
+            "glm-quota-monitor-sensitive-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_sensitive_file(&path, b"new").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(mode, 0o600);
+        assert_eq!(content, "new");
     }
 }

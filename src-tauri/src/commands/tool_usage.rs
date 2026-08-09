@@ -4,8 +4,8 @@ use crate::crypto;
 
 #[tauri::command]
 pub async fn get_tool_usage(account_id: String) -> Result<ToolUsageData, String> {
-    let api_key = crypto::get_api_key(&account_id)
-        .map_err(|e| format!("API Key 读取失败: {}", e))?;
+    let api_key =
+        crypto::get_api_key(&account_id).map_err(|e| format!("API Key 读取失败: {}", e))?;
 
     let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
     let now = chrono::Local::now();

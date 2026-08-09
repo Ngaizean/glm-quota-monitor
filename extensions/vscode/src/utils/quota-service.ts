@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ZhipuClient, ApiError } from '../api/client';
 import { Config, UsageSnapshot } from '../utils/config';
-import type { AccountInfo, QuotaData, RefreshResult } from '../api/types';
+import { preferredTokenLimit, type AccountInfo, type QuotaData, type RefreshResult } from '../api/types';
 
 export class QuotaService {
   private refreshing = false;
@@ -49,7 +49,7 @@ export class QuotaService {
           const client = new ZhipuClient(account.apiKey);
           const quota = await client.getQuotaLimit();
 
-          const tokenPct = quota.limits.find((l) => l.type === 'TOKENS_LIMIT');
+          const tokenPct = preferredTokenLimit(quota);
           const pct = tokenPct?.percentage ?? 0;
           if (pct > maxPct) {
             maxPct = pct;

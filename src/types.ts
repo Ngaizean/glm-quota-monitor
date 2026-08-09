@@ -21,7 +21,7 @@ export interface QuotaLimit {
   /** 剩余量 */
   remaining?: number;
   /** 单位（如次数/token） */
-  unit?: number;
+  unit?: number | null;
   /** 当前值（部分额度返回） */
   currentValue?: number;
 }
@@ -37,6 +37,7 @@ export interface QuotaData {
 export interface TokenHistoryPoint {
   timestamp: string;
   token_pct: number;
+  weekly_pct: number;
   time_pct: number;
   mcp_pct: number;
   tokens_24h: number | null;
@@ -87,6 +88,18 @@ export interface AgentBinding {
   agent: "claude_code" | "openclaw";
   account_id: string | null;
   label: string;
+}
+
+/** 远程 Claude Code 状态（SSH 主机检测结果）*/
+export interface RemoteCcState {
+  /** claude CLI 是否存在于远程 PATH */
+  installed: boolean;
+  /** 远程 ~/.claude/settings.json 的 env.ANTHROPIC_BASE_URL */
+  base_url: string | null;
+  /** 远程 env.ANTHROPIC_MODEL */
+  model: string | null;
+  /** 由 base_url 推断的平台：glm / deepseek / unknown */
+  platform: string;
 }
 
 export interface CostEstimate {

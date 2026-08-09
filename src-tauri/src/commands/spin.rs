@@ -114,7 +114,8 @@ impl SpinConfig {
         }
 
         self.peak_periods.retain(|p| parse_time(&p.start).is_some());
-        self.peak_periods.sort_by_key(|p| time_to_minutes(&p.start).unwrap_or(u32::MAX));
+        self.peak_periods
+            .sort_by_key(|p| time_to_minutes(&p.start).unwrap_or(u32::MAX));
         self.peak_periods.dedup_by(|a, b| a.start == b.start);
 
         if self.peak_periods.is_empty() {
@@ -208,8 +209,12 @@ fn get_token_limit_state(conn: &rusqlite::Connection, account_id: &str) -> (f64,
         rusqlite::params![account_id],
         |row| {
             Ok((
-                row.get::<_, Option<f64>>(0).unwrap_or_default().unwrap_or(0.0),
-                row.get::<_, Option<i64>>(1).unwrap_or_default().unwrap_or(0),
+                row.get::<_, Option<f64>>(0)
+                    .unwrap_or_default()
+                    .unwrap_or(0.0),
+                row.get::<_, Option<i64>>(1)
+                    .unwrap_or_default()
+                    .unwrap_or(0),
             ))
         },
     )
@@ -232,17 +237,23 @@ pub fn read_spin_model(conn: &rusqlite::Connection) -> String {
         [],
         |row| row.get::<_, String>(0),
     )
-    .unwrap_or_else(|_| "glm-5.1".to_string())
+    .unwrap_or_else(|_| "glm-5.2".to_string())
 }
 
 pub fn send_spin_request(account_id: &str, model: &str) -> Result<(), String> {
-    let api_key = crypto::get_api_key(account_id).map_err(|e| format!("获取 API Key 失败: {}", e))?;
+    let api_key =
+        crypto::get_api_key(account_id).map_err(|e| format!("获取 API Key 失败: {}", e))?;
     let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
     tauri::async_runtime::block_on(client.spin_with_model(model))
         .map_err(|e| format!("空转请求失败: {}", e))
 }
 
-fn current_peak_slot(config: &SpinConfig, history: &[String], now_mins: u32, today: &str) -> Option<String> {
+fn current_peak_slot(
+    config: &SpinConfig,
+    history: &[String],
+    now_mins: u32,
+    today: &str,
+) -> Option<String> {
     for period in &config.peak_periods {
         let Some(start_mins) = time_to_minutes(&period.start) else {
             continue;
@@ -259,7 +270,12 @@ fn current_peak_slot(config: &SpinConfig, history: &[String], now_mins: u32, tod
     None
 }
 
-fn next_peak_slot(config: &SpinConfig, history: &[String], now_mins: u32, today: &str) -> Option<String> {
+fn next_peak_slot(
+    config: &SpinConfig,
+    history: &[String],
+    now_mins: u32,
+    today: &str,
+) -> Option<String> {
     for period in &config.peak_periods {
         let Some(start_mins) = time_to_minutes(&period.start) else {
             continue;
@@ -286,9 +302,7 @@ pub fn calc_next_spin(
     if !config.enabled {
         return None;
     }
-    let Some(ref account_id) = config.account_id else {
-        return None;
-    };
+    let account_id = config.account_id.as_ref()?;
     if !token_window_idle(conn, account_id) {
         return None;
     }
@@ -323,9 +337,7 @@ pub fn should_spin(
     if !config.enabled {
         return None;
     }
-    let Some(ref account_id) = config.account_id else {
-        return None;
-    };
+    let account_id = config.account_id.as_ref()?;
     if !token_window_idle(conn, account_id) {
         return None;
     }
@@ -381,7 +393,10 @@ pub fn spin_now(db: State<'_, Database>, account_id: String) -> Result<SpinNowRe
 
     let conn2 = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
     let history_key = matched_key.unwrap_or_else(|| {
-        format!("{}#manual", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"))
+        format!(
+            "{}#manual",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        )
     });
     record_spin_history(&conn2, &history_key)?;
 
@@ -449,8 +464,8 @@ pub fn spin_status_detail(db: State<'_, Database>) -> Result<SpinStatusDetail, S
             "TOKENS_LIMIT 计时器已在运行，无需空转".to_string()
         } else if should_spin(&config, &history, &conn).is_some() {
             "当前处于空转窗口，应该触发".to_string()
-        } else if next_spin.is_some() {
-            format!("下一窗口: {}", next_spin.as_ref().unwrap())
+        } else if let Some(next_spin) = &next_spin {
+            format!("下一窗口: {next_spin}")
         } else {
             "今日空转已完成或无可用窗口".to_string()
         }

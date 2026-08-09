@@ -1,6 +1,6 @@
 //! Codex 雷达 —— codexradar.com 公开摘要接入
 //!
-//! 显示当前「智能度最高」的模型及其 IQ 分数；前端按 prediction.probability_24h
+//! 显示站点当前头条模型及其 IQ 分数；前端按 prediction.probability_24h
 //! （24h 硬重置概率）做颜色编码。归属要求：数据来自 Codex 雷达 codexradar.com。
 //!
 //! 策略：后台线程定时拉取（数据源响应慢 ~10s），缓存到 app state，
@@ -16,7 +16,7 @@ const RADAR_URL: &str = "https://codexradar.com/current.json";
 /// 缓存的雷达摘要（前端渲染所需的最小字段集）
 #[derive(Serialize, Clone, Default)]
 pub struct CodexRadarData {
-    /// 智能度最高模型的可读名，如 "GPT-5.6 Sol max"
+    /// 站点头条模型的可读名，如 "GPT-5.6 Sol max"
     pub best_model: String,
     /// 对应 IQ 分数
     pub best_score: f64,
@@ -41,14 +41,18 @@ fn pretty_model(model: &str, effort: &str) -> String {
         }
         if w.eq_ignore_ascii_case("gpt") {
             parts.push("GPT".to_string());
-        } else if w.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        } else if w
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+        {
             parts.push(w.to_string()); // 版本号原样
         } else {
             // 首字母大写
             let mut chars = w.chars();
-            match chars.next() {
-                Some(first) => parts.push(format!("{}{}", first.to_ascii_uppercase(), chars.as_str())),
-                None => {}
+            if let Some(first) = chars.next() {
+                parts.push(format!("{}{}", first.to_ascii_uppercase(), chars.as_str()))
             }
         }
     }
@@ -65,42 +69,62 @@ fn pretty_model(model: &str, effort: &str) -> String {
     }
 }
 
-/// 从 current.json 解析出「分数最高」的模型 + 重置概率。
+/// 从 current.json 解析出「站点头条」模型 + 重置概率。
+///
+/// 口径说明：网站头部展示的是 `model_iq.latest`（默认档的实时 IQ 分），
+/// 而 `model_iq.comparisons.*` 是各推理强度档位的横向对比——不同档位（xhigh/high/…）
+/// 的得分可以高于 headline，直接跨 comparisons 取 max 会让 app 显示的分值/模型与网站
+/// 头条对不上（例如网站头条 GPT-5.6 Sol 104.9，comparisons 里 xhigh 是 113.0）。
+/// 因此这里以 `latest` 为唯一口径（跟随网站最新消息）；仅当 latest 缺失时才回退
+/// comparisons 取最高档，保证显示与网站一致。
 fn parse_best(v: &serde_json::Value) -> CodexRadarData {
-    let mut cands: Vec<(f64, String)> = Vec::new();
+    let mut best_score: f64 = 0.0;
+    let mut best_model: String = "?".to_string();
 
     if let Some(iq) = v.get("model_iq") {
-        // latest
+        // 主口径：model_iq.latest（站点头条）
         if let Some(latest) = iq.get("latest") {
             if let Some(score) = latest.get("score").and_then(|s| s.as_f64()) {
                 let model = latest.get("model").and_then(|m| m.as_str()).unwrap_or("?");
-                let effort = latest.get("reasoning_effort").and_then(|e| e.as_str()).unwrap_or("");
-                cands.push((score, pretty_model(model, effort)));
+                let effort = latest
+                    .get("reasoning_effort")
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("");
+                best_score = score;
+                best_model = pretty_model(model, effort);
             }
         }
-        // comparisons.*.latest（label 优先）
-        if let Some(comp) = iq.get("comparisons").and_then(|c| c.as_object()) {
-            for (_, cv) in comp {
-                let Some(lv) = cv.get("latest") else { continue };
-                let Some(score) = lv.get("score").and_then(|s| s.as_f64()) else { continue };
-                let name = match cv.get("label").and_then(|l| l.as_str()) {
-                    Some(lbl) if !lbl.is_empty() => lbl.to_string(),
-                    _ => {
-                        let model = lv.get("model").and_then(|m| m.as_str()).unwrap_or("?");
-                        let effort = lv.get("reasoning_effort").and_then(|e| e.as_str()).unwrap_or("");
-                        pretty_model(model, effort)
-                    }
-                };
-                cands.push((score, name));
+
+        // 兜底：latest 缺失时，从 comparisons.*.latest 取最高分（label 优先）
+        if best_model == "?" {
+            let mut cands: Vec<(f64, String)> = Vec::new();
+            if let Some(comp) = iq.get("comparisons").and_then(|c| c.as_object()) {
+                for (_, cv) in comp {
+                    let Some(lv) = cv.get("latest") else { continue };
+                    let Some(score) = lv.get("score").and_then(|s| s.as_f64()) else {
+                        continue;
+                    };
+                    let name = match cv.get("label").and_then(|l| l.as_str()) {
+                        Some(lbl) if !lbl.is_empty() => lbl.to_string(),
+                        _ => {
+                            let model = lv.get("model").and_then(|m| m.as_str()).unwrap_or("?");
+                            let effort = lv
+                                .get("reasoning_effort")
+                                .and_then(|e| e.as_str())
+                                .unwrap_or("");
+                            pretty_model(model, effort)
+                        }
+                    };
+                    cands.push((score, name));
+                }
+            }
+            cands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            if let Some((score, name)) = cands.first() {
+                best_score = *score;
+                best_model = name.clone();
             }
         }
     }
-
-    cands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    let (best_score, best_model) = cands
-        .first()
-        .cloned()
-        .unwrap_or((0.0, "?".to_string()));
 
     let pred = v.get("prediction");
     let p24 = pred
@@ -122,13 +146,60 @@ fn parse_best(v: &serde_json::Value) -> CodexRadarData {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::parse_best;
+
+    #[test]
+    fn headline_latest_wins_over_higher_comparison_score() {
+        let value = serde_json::json!({
+            "model_iq": {
+                "latest": {
+                    "score": 104.9,
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "max"
+                },
+                "comparisons": {
+                    "xhigh": {
+                        "label": "Comparison xhigh",
+                        "latest": { "score": 113.0 }
+                    }
+                }
+            }
+        });
+
+        let result = parse_best(&value);
+        assert_eq!(result.best_model, "GPT-5.6 Sol max");
+        assert_eq!(result.best_score, 104.9);
+    }
+
+    #[test]
+    fn comparisons_are_used_when_headline_is_missing() {
+        let value = serde_json::json!({
+            "model_iq": {
+                "comparisons": {
+                    "low": { "label": "Low", "latest": { "score": 90.0 } },
+                    "high": { "label": "High", "latest": { "score": 110.0 } }
+                }
+            }
+        });
+
+        let result = parse_best(&value);
+        assert_eq!(result.best_model, "High");
+        assert_eq!(result.best_score, 110.0);
+    }
+}
+
 /// 拉取一次 codexradar.com/current.json 并解析。走代理 client（境外 Cloudflare 站点）。
 async fn fetch_radar() -> Result<CodexRadarData, String> {
     let client = crate::proxy_http_client();
     let resp = client
         .get(RADAR_URL)
         .header(reqwest::header::ACCEPT, "application/json")
-        .header(reqwest::header::USER_AGENT, "glm-quota-monitor/6.2")
+        .header(
+            reqwest::header::USER_AGENT,
+            concat!("glm-quota-monitor/", env!("CARGO_PKG_VERSION")),
+        )
         .timeout(Duration::from_secs(20))
         .send()
         .await

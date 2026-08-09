@@ -23,6 +23,8 @@ pub struct UsageSnapshot {
     pub time_limit_reset: Option<i64>,
     pub token_limit_pct: Option<f64>,
     pub token_limit_reset: Option<i64>,
+    pub weekly_limit_pct: Option<f64>,
+    pub weekly_limit_reset: Option<i64>,
     pub mcp_limit_pct: Option<f64>,
     pub mcp_limit_reset: Option<i64>,
     pub total_tokens_24h: Option<f64>,
@@ -38,4 +40,3 @@ pub struct AlertRule {
     pub account_id: Option<String>,
     pub dedupe_window_mins: i64,
 }
-

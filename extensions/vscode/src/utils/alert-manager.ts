@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Config } from './config';
-import type { QuotaData, AlertState } from '../api/types';
+import { preferredTokenLimit, type QuotaData, type AlertState } from '../api/types';
 
 export class AlertManager {
   constructor(private config: Config) {}
@@ -15,7 +15,7 @@ export class AlertManager {
     }
 
     const thresholds = this.config.alertThresholds.sort((a, b) => a - b);
-    const tokenPct = quota.limits.find((l) => l.type === 'TOKENS_LIMIT');
+    const tokenPct = preferredTokenLimit(quota);
     if (!tokenPct) {
       return;
     }

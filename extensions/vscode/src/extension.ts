@@ -5,7 +5,7 @@ import { StatusBar } from './utils/status-bar';
 import { AlertManager } from './utils/alert-manager';
 import { SpinScheduler } from './utils/spin-scheduler';
 import { SidebarProvider } from './sidebar/SidebarProvider';
-import type { AccountInfo } from './api/types';
+import { preferredTokenLimit, type AccountInfo } from './api/types';
 
 let config: Config;
 let quotaService: QuotaService;
@@ -54,7 +54,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
           // 告警检查
           if (acc && !q.error) {
-            const tokenPct = q.limits.find((l) => l.type === 'TOKENS_LIMIT');
+            const tokenPct = preferredTokenLimit(q);
             if (tokenPct) {
               alertManager.resetIfLowered(id, Math.round(tokenPct.percentage));
               alertManager.checkAndNotify(id, acc.alias, q);

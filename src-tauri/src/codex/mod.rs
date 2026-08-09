@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod client;
 pub mod crypto;
+pub mod ssh;
 pub mod sync;
 pub mod types;
 
@@ -14,15 +15,25 @@ use types::{UsageResponse, Window};
 ///   更长（如 604800s/7d）→ TOKENS_LIMIT + unit=6（前端归类为周额度）
 /// Codex 已取消 5h 额度，两窗口通常都是周额度；前端按 category 去重只显示一条。
 pub fn usage_to_quota_data(usage: &UsageResponse) -> QuotaData {
-    let mut quota = QuotaData::default();
-    quota.level = usage.plan_type.clone().unwrap_or_default();
+    let mut quota = QuotaData {
+        level: usage.plan_type.clone().unwrap_or_default(),
+        ..Default::default()
+    };
 
     if let Some(ref rate_limit) = usage.rate_limit {
         if let Some(ref window) = rate_limit.primary_window {
-            quota.limits.push(window_to_quota_limit(window, "TOKENS_LIMIT", classify_window_unit(window)));
+            quota.limits.push(window_to_quota_limit(
+                window,
+                "TOKENS_LIMIT",
+                classify_window_unit(window),
+            ));
         }
         if let Some(ref window) = rate_limit.secondary_window {
-            quota.limits.push(window_to_quota_limit(window, "TOKENS_LIMIT", classify_window_unit(window)));
+            quota.limits.push(window_to_quota_limit(
+                window,
+                "TOKENS_LIMIT",
+                classify_window_unit(window),
+            ));
         }
     }
 
@@ -30,10 +41,14 @@ pub fn usage_to_quota_data(usage: &UsageResponse) -> QuotaData {
     // 用 SPARK_5H / SPARK_WEEKLY 作为 limit_type，前端据此单独分类展示
     for additional in &usage.additional_rate_limits {
         if let Some(ref rl) = additional.rate_limit.primary_window {
-            quota.limits.push(window_to_quota_limit(rl, "SPARK_5H", None));
+            quota
+                .limits
+                .push(window_to_quota_limit(rl, "SPARK_5H", None));
         }
         if let Some(ref rl) = additional.rate_limit.secondary_window {
-            quota.limits.push(window_to_quota_limit(rl, "SPARK_WEEKLY", None));
+            quota
+                .limits
+                .push(window_to_quota_limit(rl, "SPARK_WEEKLY", None));
         }
     }
 

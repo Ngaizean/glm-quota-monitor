@@ -3,6 +3,17 @@ use thiserror::Error;
 
 const BASE_URL: &str = "https://open.bigmodel.cn";
 
+/// 生成安全的错误响应预览；按 Unicode 字符截断，避免在中文等多字节文本中间切片。
+pub(crate) fn truncate_response(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{}...(truncated)", preview)
+    } else {
+        preview
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum ApiError {
     #[error("HTTP request failed: {0}")]
@@ -42,11 +53,7 @@ impl ZhipuClient {
         // 先读取文本，解析失败时给出有意义的错误信息
         let text = resp.text().await?;
         let body: ApiResponse<T> = serde_json::from_str(&text).map_err(|e| {
-            let preview = if text.len() > 300 {
-                format!("{}...(truncated)", &text[..300])
-            } else {
-                text.clone()
-            };
+            let preview = truncate_response(&text, 300);
             ApiError::Api {
                 code: -1,
                 msg: format!("响应解析失败: {} | 原始响应: {}", e, preview),
@@ -165,5 +172,24 @@ impl ZhipuClient {
                 text
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_response;
+
+    #[test]
+    fn truncates_multibyte_responses_on_character_boundaries() {
+        let response = "错".repeat(301);
+        let preview = truncate_response(&response, 300);
+
+        assert_eq!(preview.chars().filter(|c| *c == '错').count(), 300);
+        assert!(preview.ends_with("...(truncated)"));
+    }
+
+    #[test]
+    fn keeps_short_responses_unchanged() {
+        assert_eq!(truncate_response("错误详情", 300), "错误详情");
     }
 }

@@ -68,27 +68,38 @@ fn set_setting(db: &Database, key: &str, value: &str) -> Result<(), String> {
 }
 
 fn get_account_level(db: &Database, account_id: &str) -> String {
-    db.conn.lock().ok()
-        .and_then(|conn| conn.query_row(
-            "SELECT COALESCE(level, '') FROM accounts WHERE id = ?1",
-            rusqlite::params![account_id],
-            |row| row.get::<_, String>(0),
-        ).ok())
+    db.conn
+        .lock()
+        .ok()
+        .and_then(|conn| {
+            conn.query_row(
+                "SELECT COALESCE(level, '') FROM accounts WHERE id = ?1",
+                rusqlite::params![account_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        })
         .unwrap_or_default()
 }
 
 #[tauri::command]
-pub async fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> Result<CostEstimate, String> {
+pub async fn get_cost_estimate(
+    db: State<'_, Database>,
+    account_id: String,
+) -> Result<CostEstimate, String> {
     let level = get_account_level(&db, &account_id);
-    let api_key = crypto::get_api_key(&account_id)
-        .map_err(|e| format!("API Key 读取失败: {}", e))?;
+    let api_key =
+        crypto::get_api_key(&account_id).map_err(|e| format!("API Key 读取失败: {}", e))?;
 
     let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
     let now = chrono::Local::now();
     let today_start = now
-        .with_hour(0).unwrap()
-        .with_minute(0).unwrap()
-        .with_second(0).unwrap();
+        .with_hour(0)
+        .unwrap()
+        .with_minute(0)
+        .unwrap()
+        .with_second(0)
+        .unwrap();
     let seven_days_ago = now - chrono::Duration::days(7);
     let thirty_days_ago = now - chrono::Duration::days(30);
 
@@ -105,9 +116,18 @@ pub async fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> R
         client.get_quota_limit(),
     );
 
-    let today_tokens = today_res.map_err(|e| e.to_string())?.total_usage.total_tokens_usage;
-    let tokens_7d = seven_res.map_err(|e| e.to_string())?.total_usage.total_tokens_usage;
-    let tokens_30d = thirty_res.map_err(|e| e.to_string())?.total_usage.total_tokens_usage;
+    let today_tokens = today_res
+        .map_err(|e| e.to_string())?
+        .total_usage
+        .total_tokens_usage;
+    let tokens_7d = seven_res
+        .map_err(|e| e.to_string())?
+        .total_usage
+        .total_tokens_usage;
+    let tokens_30d = thirty_res
+        .map_err(|e| e.to_string())?
+        .total_usage
+        .total_tokens_usage;
 
     let price_key = format!("unit_price_{}", account_id);
     let fallback_price = get_setting_f64(&db, &price_key).unwrap_or(DEFAULT_UNIT_PRICE);
@@ -121,11 +141,15 @@ pub async fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> R
     let cost_30d = tokens_30d / 1_000_000.0 * unit_price;
 
     let plan_key = format!("plan_price_{}", account_id);
-    let plan_price = get_setting_f64(&db, &plan_key)
-        .unwrap_or_else(|| plan_price_for_level(&level));
+    let plan_price =
+        get_setting_f64(&db, &plan_key).unwrap_or_else(|| plan_price_for_level(&level));
 
     let daily_avg = if cost_30d > 0.0 { cost_30d / 30.0 } else { 0.0 };
-    let ratio = if plan_price > 0.0 { cost_30d / plan_price } else { 0.0 };
+    let ratio = if plan_price > 0.0 {
+        cost_30d / plan_price
+    } else {
+        0.0
+    };
 
     Ok(CostEstimate {
         today_cost,
@@ -140,8 +164,16 @@ pub async fn get_cost_estimate(db: State<'_, Database>, account_id: String) -> R
 }
 
 #[tauri::command]
-pub fn set_plan_price(db: State<'_, Database>, account_id: String, price: f64) -> Result<(), String> {
-    set_setting(&db, &format!("plan_price_{}", account_id), &price.to_string())
+pub fn set_plan_price(
+    db: State<'_, Database>,
+    account_id: String,
+    price: f64,
+) -> Result<(), String> {
+    set_setting(
+        &db,
+        &format!("plan_price_{}", account_id),
+        &price.to_string(),
+    )
 }
 
 #[tauri::command]
@@ -152,8 +184,16 @@ pub fn get_plan_price(db: State<'_, Database>, account_id: String) -> f64 {
 }
 
 #[tauri::command]
-pub fn set_unit_price(db: State<'_, Database>, account_id: String, price: f64) -> Result<(), String> {
-    set_setting(&db, &format!("unit_price_{}", account_id), &price.to_string())
+pub fn set_unit_price(
+    db: State<'_, Database>,
+    account_id: String,
+    price: f64,
+) -> Result<(), String> {
+    set_setting(
+        &db,
+        &format!("unit_price_{}", account_id),
+        &price.to_string(),
+    )
 }
 
 #[tauri::command]

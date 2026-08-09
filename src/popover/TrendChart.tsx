@@ -14,6 +14,7 @@ import {
 interface HistoryPoint {
   timestamp: string;
   token_pct: number;
+  weekly_pct: number;
   time_pct: number;
   mcp_pct: number;
   tokens_24h: number | null;
@@ -50,6 +51,8 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
         const labelKey =
           entry.dataKey === "token_pct"
             ? "trendChart.tokenLabel"
+            : entry.dataKey === "weekly_pct"
+            ? "trendChart.weeklyLabel"
             : entry.dataKey === "time_pct"
             ? "trendChart.timeLabel"
             : "trendChart.mcpLabel";
@@ -99,6 +102,8 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
   const timeValues = data.map((p) => p.time_pct);
   const allSame = timeValues.every((v) => v === timeValues[0]);
   const showTimeLine = !allSame;
+  const showTokenLine = data.some((p) => p.token_pct > 0);
+  const showWeeklyLine = data.some((p) => p.weekly_pct > 0);
   // MCP 线仅当存在非零数据时显示
   const showMcpLine = data.some((p) => p.mcp_pct > 0);
 
@@ -144,14 +149,26 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
               tickFormatter={(v: number) => `${v}%`}
             />
             <Tooltip content={<CustomTooltip />} />
-            <Line
-              type="monotone"
-              dataKey="token_pct"
-              stroke="var(--color-accent)"
-              strokeWidth={1.5}
-              dot={false}
-              activeDot={{ r: 3, fill: "var(--color-accent)" }}
-            />
+            {showTokenLine && (
+              <Line
+                type="monotone"
+                dataKey="token_pct"
+                stroke="var(--color-accent)"
+                strokeWidth={1.5}
+                dot={false}
+                activeDot={{ r: 3, fill: "var(--color-accent)" }}
+              />
+            )}
+            {showWeeklyLine && (
+              <Line
+                type="monotone"
+                dataKey="weekly_pct"
+                stroke="var(--color-warning, #f59e0b)"
+                strokeWidth={1.25}
+                dot={false}
+                activeDot={{ r: 2, fill: "var(--color-warning, #f59e0b)" }}
+              />
+            )}
             {showTimeLine && (
               <Line
                 type="monotone"
@@ -178,10 +195,18 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
         </ResponsiveContainer>
       </div>
       <div className="flex items-center gap-3 mt-1">
-        <div className="flex items-center gap-1">
-          <div className="w-2.5 h-0.5 rounded bg-[var(--color-accent)]" />
-          <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.tokenUsage")}</span>
-        </div>
+        {showTokenLine && (
+          <div className="flex items-center gap-1">
+            <div className="w-2.5 h-0.5 rounded bg-[var(--color-accent)]" />
+            <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.tokenUsage")}</span>
+          </div>
+        )}
+        {showWeeklyLine && (
+          <div className="flex items-center gap-1">
+            <div className="w-2.5 h-0.5 rounded" style={{ backgroundColor: "var(--color-warning, #f59e0b)" }} />
+            <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.weeklyUsage")}</span>
+          </div>
+        )}
         {showTimeLine && (
           <div className="flex items-center gap-1">
             <div className="w-2.5 h-0.5 rounded opacity-60" style={{ backgroundColor: "var(--color-chart-secondary)", borderStyle: "dashed" }} />

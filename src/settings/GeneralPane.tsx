@@ -179,7 +179,7 @@ export default function GeneralPane() {
             </span>
           </div>
           <span className="text-[11px] font-bold font-mono text-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-2 py-0.5 rounded-md">
-            {defaultModel || "glm-5.1"}
+            {defaultModel || "glm-5.2"}
           </span>
         </div>
         <div className="space-y-2" ref={dropdownRef}>

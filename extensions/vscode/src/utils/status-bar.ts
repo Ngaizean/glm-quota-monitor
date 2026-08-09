@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { QuotaData } from '../api/types';
+import { preferredTokenLimit, type QuotaData } from '../api/types';
 
 export class StatusBar {
   private statusItem: vscode.StatusBarItem;
@@ -42,7 +42,7 @@ export class StatusBar {
         lines.push(`\n  ⚠ ${id}: ${quota.error}`);
         continue;
       }
-      const token = quota.limits.find((l) => l.type === 'TOKENS_LIMIT');
+      const token = preferredTokenLimit(quota);
       const time = quota.limits.find((l) => l.type === 'TIME_LIMIT');
       lines.push(`\n  账号 ${id}:`);
       if (token) {

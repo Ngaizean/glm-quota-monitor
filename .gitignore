@@ -6,6 +6,7 @@ src-tauri/gen/schemas/
 *.dmg
 CLAUDE.md
 /.claude
+/.agents/scratchpad/
 
 # 临时测试产物 / 凭据文件(禁止入库)
 gist_meta.json
@@ -20,4 +21,3 @@ secrets/
 # 对话/调试笔记（含诊断细节与端点信息，禁止入库）
 ANSWER.md
 *_ANSWER.md
-

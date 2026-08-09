@@ -13,7 +13,7 @@ export interface QuotaLimit {
   type: string;
   percentage: number;
   nextResetTime: number;
-  unit?: number;
+  unit?: number | null;
   number?: number;
   usage?: number;
   currentValue?: number;
@@ -32,6 +32,13 @@ export interface QuotaData {
   last_active?: string;
   error?: string;
   is_offline?: boolean;
+}
+
+/** 与桌面端一致：优先 5 小时窗口（unit=3），旧数据/仅周额度时回退首个 Token 窗口。 */
+export function preferredTokenLimit(quota: QuotaData): QuotaLimit | undefined {
+  return quota.limits.find((limit) => limit.type === 'TOKENS_LIMIT' && limit.unit === 3)
+    ?? quota.limits.find((limit) => limit.type === 'TOKENS_LIMIT' && limit.unit == null)
+    ?? quota.limits.find((limit) => limit.type === 'TOKENS_LIMIT');
 }
 
 // ========== 模型用量 ==========

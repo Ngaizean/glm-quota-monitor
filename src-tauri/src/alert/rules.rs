@@ -4,8 +4,8 @@ use rusqlite::{params, Connection};
 pub const DEFAULT_RULES: &[(&str, f64)] = &[
     ("token_5h", 80.0),
     ("mcp_monthly", 90.0),
-    ("reset_soon", 10.0),    // 分钟：额度重置前 10 分钟提醒
-    ("idle_account", 120.0), // 分钟
+    ("reset_soon", 10.0),           // 分钟：额度重置前 10 分钟提醒
+    ("idle_account", 120.0),        // 分钟
     ("deepseek_low_balance", 10.0), // 货币单位（CNY）：余额 ≤ 10 提醒
 ];
 
@@ -98,12 +98,7 @@ pub fn has_fired_this_period(
 }
 
 /// 记录预警触发
-pub fn record_alert(
-    conn: &Connection,
-    account_id: &str,
-    rule_type: &str,
-    value: f64,
-) {
+pub fn record_alert(conn: &Connection, account_id: &str, rule_type: &str, value: f64) {
     let now = chrono::Utc::now().to_rfc3339();
     let _ = conn.execute(
         "INSERT INTO alert_history (account_id, rule_type, value, triggered_at) VALUES (?1, ?2, ?3, ?4)",

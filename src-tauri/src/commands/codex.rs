@@ -23,6 +23,36 @@ fn read_setting(db: &Database, key: &str) -> Option<String> {
     .ok()
 }
 
+fn delete_setting(db: &Database, key: &str) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {e}"))?;
+    conn.execute(
+        "DELETE FROM app_settings WHERE key = ?1",
+        rusqlite::params![key],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 从系统 Keychain 读取 GitHub Token；首次读取时自动迁移旧版 SQLite 明文。
+pub(crate) fn read_github_token(db: &Database) -> Option<String> {
+    if let Ok(token) = crate::crypto::get_api_key(GITHUB_TOKEN_KEY) {
+        if !token.trim().is_empty() {
+            return Some(token);
+        }
+    }
+
+    let legacy = read_setting(db, GITHUB_TOKEN_KEY)?;
+    if legacy.trim().is_empty() {
+        let _ = delete_setting(db, GITHUB_TOKEN_KEY);
+        return None;
+    }
+
+    if crate::crypto::store_api_key(GITHUB_TOKEN_KEY, &legacy).is_ok() {
+        let _ = delete_setting(db, GITHUB_TOKEN_KEY);
+    }
+    Some(legacy)
+}
+
 /// 从 Keychain 读取 codex 凭证并查询额度，返回统一 QuotaData
 fn fetch_codex_usage(_db: &Database, account_id: &str) -> Result<QuotaData, String> {
     let auth = codex::auth::read_auth_from_keychain(account_id)?;
@@ -113,7 +143,13 @@ pub async fn add_codex_account(
     }
 
     // 4. 凭证存 Keychain
-    codex::auth::store_auth_to_keychain(&id, &auth).map_err(|e| format!("凭证存储失败: {}", e))?;
+    if let Err(e) = codex::auth::store_auth_to_keychain(&id, &auth) {
+        let _ = db
+            .conn
+            .lock()
+            .map(|conn| conn.execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![id]));
+        return Err(format!("凭证存储失败: {}", e));
+    }
 
     let _ = app.emit("accounts-changed", ());
 
@@ -160,8 +196,7 @@ pub async fn upload_codex_auth(db: State<'_, Database>) -> Result<(), String> {
 
     // 3. 读 Gist URL + GitHub Token
     let gist_url = read_setting(&db, GIST_URL_KEY).ok_or("未配置 Gist URL，请在设置中填写")?;
-    let github_token =
-        read_setting(&db, GITHUB_TOKEN_KEY).ok_or("未配置 GitHub Token，请在设置中填写")?;
+    let github_token = read_github_token(&db).ok_or("未配置 GitHub Token，请在设置中填写")?;
 
     // 4. 推送
     let proxy = crate::proxy_http_client();
@@ -184,10 +219,9 @@ pub async fn upload_codex_auth(db: State<'_, Database>) -> Result<(), String> {
 /// - raw URL (gistusercontent.com)：直接匿名 fetch
 /// - 网页 URL / API URL：用 GitHub Token 解析出 raw URL 后再 fetch
 ///   （旧实现的“先试 raw、失败再 resolve”无效：网页/API URL 都返回 HTTP 200，
-///    永远不会触发 fallback，导致 HTML/JSON 被当成 base64 送进 decrypt）
+///   永远不会触发 fallback，导致 HTML/JSON 被当成 base64 送进 decrypt）
 pub async fn fetch_codex_gist_encrypted(db: &Database) -> Result<String, String> {
-    let gist_url = read_setting(db, GIST_URL_KEY)
-        .ok_or("未配置 Gist URL，请在设置中填写")?;
+    let gist_url = read_setting(db, GIST_URL_KEY).ok_or("未配置 Gist URL，请在设置中填写")?;
     let proxy = crate::proxy_http_client();
     if gist_url.contains("gistusercontent.com") {
         codex::sync::fetch_from_gist(&proxy, &gist_url).await
@@ -195,9 +229,8 @@ pub async fn fetch_codex_gist_encrypted(db: &Database) -> Result<String, String>
         // 网页 URL / API URL → resolve 出 raw URL
         // consumer 角色无 token 字段，但 gist 是 unlisted，匿名 resolve 也能工作；
         // 有 token 时携带，提升 GitHub API 速率限制
-        let token = read_setting(db, GITHUB_TOKEN_KEY).unwrap_or_default();
-        let raw_url =
-            codex::sync::resolve_gist_raw_url(&proxy, &gist_url, &token).await?;
+        let token = read_github_token(db).unwrap_or_default();
+        let raw_url = codex::sync::resolve_gist_raw_url(&proxy, &gist_url, &token).await?;
         codex::sync::fetch_from_gist(&proxy, &raw_url).await
     }
 }
@@ -289,18 +322,19 @@ pub fn get_codex_gist_url(db: State<'_, Database>) -> Result<Option<String>, Str
 
 #[tauri::command]
 pub fn set_codex_github_token(db: State<'_, Database>, token: String) -> Result<(), String> {
-    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-    conn.execute(
-        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
-        rusqlite::params![GITHUB_TOKEN_KEY, token],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    if token.trim().is_empty() {
+        let _ = crate::crypto::delete_api_key(GITHUB_TOKEN_KEY);
+        return delete_setting(&db, GITHUB_TOKEN_KEY);
+    }
+
+    crate::crypto::store_api_key(GITHUB_TOKEN_KEY, &token)
+        .map_err(|e| format!("GitHub Token 存入 Keychain 失败: {e}"))?;
+    delete_setting(&db, GITHUB_TOKEN_KEY)
 }
 
 #[tauri::command]
 pub fn get_codex_github_token(db: State<'_, Database>) -> Result<Option<String>, String> {
-    Ok(read_setting(&db, GITHUB_TOKEN_KEY))
+    Ok(read_github_token(&db))
 }
 
 #[tauri::command]
@@ -410,4 +444,181 @@ pub fn set_codex_proxy(db: State<'_, Database>, url: String) -> Result<(), Strin
 #[tauri::command]
 pub fn get_codex_proxy(db: State<'_, Database>) -> Result<Option<String>, String> {
     Ok(read_setting(&db, PROXY_KEY))
+}
+
+// ========== SSH 远程覆盖 ==========
+
+/// 扫描本机 ~/.ssh/config，返回可用主机列表
+#[tauri::command]
+pub fn scan_ssh_hosts() -> Vec<codex::ssh::SshHost> {
+    codex::ssh::scan_ssh_hosts()
+}
+
+/// 检查主机是否免密（key-based）登录
+#[tauri::command]
+pub fn check_ssh_passwordless(host: String) -> bool {
+    codex::ssh::is_passwordless(&host)
+}
+
+/// 手动推送本机 auth.json 到远程覆盖
+/// password: Some = 密码登录；None = 免密
+#[tauri::command]
+pub fn ssh_push_auth(host: String, password: Option<String>) -> Result<(), String> {
+    codex::ssh::push_auth_json(&host, password.as_deref())
+}
+
+/// 单个主机的 SSH 覆盖状态（前端展示用）
+#[derive(Debug, Serialize)]
+pub struct SshOverrideState {
+    pub host: String,
+    pub auto_enabled: bool,
+    pub has_password: bool,
+}
+
+/// 获取所有已开启自动覆盖主机的状态
+#[tauri::command]
+pub fn get_ssh_override_state(db: State<'_, Database>) -> Vec<SshOverrideState> {
+    let conn = match db.conn.lock() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let mut stmt = match conn
+        .prepare("SELECT key, value FROM app_settings WHERE key LIKE 'ssh_auto_override_%'")
+    {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    });
+    if let Ok(rows) = rows {
+        for r in rows.flatten() {
+            if r.1 != "true" {
+                continue;
+            }
+            if let Some(alias) = r.0.strip_prefix("ssh_auto_override_") {
+                out.push(SshOverrideState {
+                    host: alias.to_string(),
+                    auto_enabled: true,
+                    has_password: codex::ssh::has_ssh_password(alias),
+                });
+            }
+        }
+    }
+    out
+}
+
+const SSH_AUTO_OVERRIDE_PREFIX: &str = "ssh_auto_override_";
+
+#[tauri::command]
+pub fn set_ssh_auto_override(
+    db: State<'_, Database>,
+    host: String,
+    enabled: bool,
+) -> Result<(), String> {
+    codex::ssh::validate_ssh_alias(&host)?;
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {e}"))?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+        rusqlite::params![
+            format!("{SSH_AUTO_OVERRIDE_PREFIX}{host}"),
+            enabled.to_string()
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_ssh_auto_override(db: State<'_, Database>, host: String) -> Result<bool, String> {
+    codex::ssh::validate_ssh_alias(&host)?;
+    Ok(
+        read_setting(&db, &format!("{SSH_AUTO_OVERRIDE_PREFIX}{host}"))
+            .map(|v| v == "true")
+            .unwrap_or(false),
+    )
+}
+
+/// 保存 SSH 密码到 Keychain（供自动覆盖使用）
+#[tauri::command]
+pub fn set_ssh_password(host: String, password: String) -> Result<(), String> {
+    codex::ssh::store_ssh_password(&host, &password)
+}
+
+#[tauri::command]
+pub fn has_ssh_password(host: String) -> bool {
+    codex::ssh::has_ssh_password(&host)
+}
+
+#[tauri::command]
+pub fn delete_ssh_password(host: String) -> Result<(), String> {
+    codex::ssh::delete_ssh_password(&host)
+}
+
+// ========== 远程 Claude Code 切换 ==========
+//
+// 把本机「Claude Code 切换 GLM/DeepSeek」能力通过 SSH 复用到远程主机：
+// 检测远程 claude CLI → 读现有 env → 用本机账号凭证重新生成 env 块推过去。
+// 远程独立模型：远程与本机可绑不同账号/模型，互不影响。
+//
+// 密码策略：password=Some 直接用；password=None 时按免密处理，失败再回退到 keychain
+// 已存密码（与 run_ssh_auto_override 调度逻辑一致），避免明文密码到前端。
+
+/// 把命令传入的 password 标准化为「最终用于 ssh 的密码」。
+/// None → 先尝试免密；非免密且 keychain 有密码则返回该密码；都没有则 None（让 ssh 报错）。
+fn resolve_ssh_password(host: &str, password: &Option<String>) -> Option<String> {
+    if let Some(p) = password {
+        return Some(p.clone());
+    }
+    // 免密优先：若可免密则不需要密码
+    if codex::ssh::is_passwordless(host) {
+        return None;
+    }
+    // 非免密：取 keychain 已存密码（codex auth 推送时存入的）
+    codex::ssh::read_ssh_password(host)
+}
+
+/// 检测远程 Claude Code 状态：CLI 是否安装 + 当前 settings.json 的 base_url/model。
+#[tauri::command]
+pub fn ssh_check_claude_code(
+    host: String,
+    password: Option<String>,
+) -> Result<codex::ssh::RemoteCcState, String> {
+    let pw = resolve_ssh_password(&host, &password);
+    let installed = codex::ssh::remote_has_claude_code(&host, pw.as_deref())?;
+    // settings 读取失败（无文件/解析错）不应阻断检测，降级为空状态
+    let mut state =
+        codex::ssh::read_remote_cc_settings(&host, pw.as_deref()).unwrap_or_else(|_| {
+            codex::ssh::RemoteCcState {
+                installed: false,
+                base_url: None,
+                model: None,
+                platform: "unknown".to_string(),
+            }
+        });
+    state.installed = installed;
+    Ok(state)
+}
+
+/// 远程切换 Claude Code 端点：按本机账号 platform 解析 api_key/model/base_url，写入远程 settings.json。
+#[tauri::command]
+pub fn ssh_bind_claude_code(
+    db: State<'_, Database>,
+    host: String,
+    password: Option<String>,
+    account_id: String,
+    model: Option<String>,
+) -> Result<(), String> {
+    let pw = resolve_ssh_password(&host, &password);
+    let (api_key, model_val, base_url) =
+        super::agent::resolve_cc_bind_params(&db, &account_id, model.as_deref())?;
+    codex::ssh::write_remote_cc_env(&host, pw.as_deref(), &api_key, &model_val, &base_url)
+}
+
+/// 远程解绑：清除 settings.json 中所有 ANTHROPIC_* 字段。
+#[tauri::command]
+pub fn ssh_unbind_claude_code(host: String, password: Option<String>) -> Result<(), String> {
+    let pw = resolve_ssh_password(&host, &password);
+    codex::ssh::unbind_remote_cc_env(&host, pw.as_deref())
 }

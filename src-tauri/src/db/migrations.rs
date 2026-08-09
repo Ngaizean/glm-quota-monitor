@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS usage_snapshots (
     time_limit_reset    INTEGER,
     token_limit_pct     REAL,
     token_limit_reset   INTEGER,
+    weekly_limit_pct    REAL,
+    weekly_limit_reset  INTEGER,
     mcp_limit_pct       REAL,
     mcp_limit_reset     INTEGER,
     total_tokens_24h    REAL,

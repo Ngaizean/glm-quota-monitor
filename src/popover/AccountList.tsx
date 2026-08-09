@@ -99,31 +99,34 @@ function StarButton({ isPrimary, onClick }: { isPrimary: boolean; onClick: () =>
 }
 
 function Expandable({ open, children }: { open: boolean; children: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const outerRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
   const [maxHeight, setMaxHeight] = useState(open ? "none" : "0px");
 
-  // 用 ResizeObserver 测量内容真实高度，替代 render 时读 scrollHeight 的脆弱方案
+  // 测量内容真实高度。外层容器有 overflow-hidden + maxHeight，自身不会随内容增长，
+  // ResizeObserver 观察外层拿不到内容变化；改为观察内层包裹 div（不被裁剪、真实高度随
+  // 异步加载的图表/数据增长），内容撑高时触发更新，避免"首次展开只显示一半"。
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    const inner = innerRef.current;
+    if (!inner) return;
     const update = () => {
       if (open) {
-        setMaxHeight(`${el.scrollHeight}px`);
+        setMaxHeight(`${inner.scrollHeight}px`);
       }
     };
     update();
     const ro = new ResizeObserver(update);
-    ro.observe(el);
+    ro.observe(inner);
     return () => ro.disconnect();
   }, [open]);
 
   return (
     <div
-      ref={ref}
+      ref={outerRef}
       className="transition-all duration-300 ease-in-out overflow-hidden"
       style={{ maxHeight: open ? maxHeight : "0px", opacity: open ? 1 : 0 }}
     >
-      {children}
+      <div ref={innerRef}>{children}</div>
     </div>
   );
 }

@@ -15,15 +15,13 @@ fn fmt_opt<T: std::fmt::Display>(v: Option<T>) -> String {
 }
 
 #[tauri::command]
-pub fn export_usage_csv(
-    db: State<'_, Database>,
-    account_id: String,
-) -> Result<String, String> {
+pub fn export_usage_csv(db: State<'_, Database>, account_id: String) -> Result<String, String> {
     let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
     let mut stmt = conn
         .prepare(
             "SELECT timestamp, time_limit_pct, time_limit_reset, \
                     token_limit_pct, token_limit_reset, \
+                    weekly_limit_pct, weekly_limit_reset, \
                     mcp_limit_pct, mcp_limit_reset, \
                     total_tokens_24h, total_calls_24h \
              FROM usage_snapshots WHERE account_id = ?1 \
@@ -31,7 +29,7 @@ pub fn export_usage_csv(
         )
         .map_err(|e| e.to_string())?;
 
-    let mut csv = String::from("timestamp,time_limit_pct,time_limit_reset,token_limit_pct,token_limit_reset,mcp_limit_pct,mcp_limit_reset,total_tokens_24h,total_calls_24h\n");
+    let mut csv = String::from("timestamp,time_limit_pct,time_limit_reset,token_limit_pct,token_limit_reset,weekly_limit_pct,weekly_limit_reset,mcp_limit_pct,mcp_limit_reset,total_tokens_24h,total_calls_24h\n");
 
     let rows = stmt
         .query_map(rusqlite::params![account_id], |row| {
@@ -40,17 +38,21 @@ pub fn export_usage_csv(
             let t_reset: Option<i64> = row.get(2)?;
             let k_pct: Option<f64> = row.get(3)?;
             let k_reset: Option<i64> = row.get(4)?;
-            let m_pct: Option<f64> = row.get(5)?;
-            let m_reset: Option<i64> = row.get(6)?;
-            let tokens: Option<f64> = row.get(7)?;
-            let calls: Option<f64> = row.get(8)?;
-            Ok((ts, t_pct, t_reset, k_pct, k_reset, m_pct, m_reset, tokens, calls))
+            let w_pct: Option<f64> = row.get(5)?;
+            let w_reset: Option<i64> = row.get(6)?;
+            let m_pct: Option<f64> = row.get(7)?;
+            let m_reset: Option<i64> = row.get(8)?;
+            let tokens: Option<f64> = row.get(9)?;
+            let calls: Option<f64> = row.get(10)?;
+            Ok((
+                ts, t_pct, t_reset, k_pct, k_reset, w_pct, w_reset, m_pct, m_reset, tokens, calls,
+            ))
         })
         .map_err(|e| e.to_string())?;
 
     for row in rows.filter_map(|r| r.ok()) {
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{}\n",
             csv_escape(&row.0),
             fmt_opt(row.1),
             fmt_opt(row.2),
@@ -60,6 +62,8 @@ pub fn export_usage_csv(
             fmt_opt(row.6),
             fmt_opt(row.7),
             fmt_opt(row.8),
+            fmt_opt(row.9),
+            fmt_opt(row.10),
         ));
     }
 
@@ -67,15 +71,13 @@ pub fn export_usage_csv(
 }
 
 #[tauri::command]
-pub fn export_usage_json(
-    db: State<'_, Database>,
-    account_id: String,
-) -> Result<String, String> {
+pub fn export_usage_json(db: State<'_, Database>, account_id: String) -> Result<String, String> {
     let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
     let mut stmt = conn
         .prepare(
             "SELECT timestamp, time_limit_pct, time_limit_reset, \
                     token_limit_pct, token_limit_reset, \
+                    weekly_limit_pct, weekly_limit_reset, \
                     mcp_limit_pct, mcp_limit_reset, \
                     total_tokens_24h, total_calls_24h \
              FROM usage_snapshots WHERE account_id = ?1 \
@@ -90,16 +92,20 @@ pub fn export_usage_json(
             let t_reset: Option<i64> = row.get(2)?;
             let k_pct: Option<f64> = row.get(3)?;
             let k_reset: Option<i64> = row.get(4)?;
-            let m_pct: Option<f64> = row.get(5)?;
-            let m_reset: Option<i64> = row.get(6)?;
-            let tokens: Option<f64> = row.get(7)?;
-            let calls: Option<f64> = row.get(8)?;
+            let w_pct: Option<f64> = row.get(5)?;
+            let w_reset: Option<i64> = row.get(6)?;
+            let m_pct: Option<f64> = row.get(7)?;
+            let m_reset: Option<i64> = row.get(8)?;
+            let tokens: Option<f64> = row.get(9)?;
+            let calls: Option<f64> = row.get(10)?;
             Ok(serde_json::json!({
                 "timestamp": ts,
                 "time_limit_pct": t_pct,
                 "time_limit_reset": t_reset,
                 "token_limit_pct": k_pct,
                 "token_limit_reset": k_reset,
+                "weekly_limit_pct": w_pct,
+                "weekly_limit_reset": w_reset,
                 "mcp_limit_pct": m_pct,
                 "mcp_limit_reset": m_reset,
                 "total_tokens_24h": tokens,

@@ -24,7 +24,10 @@ pub fn add_account(
             )
             .unwrap_or(false);
         if exists {
-            return Err(format!("账号 '{}' 已存在用途 '{}'，请使用不同用途", alias, purpose));
+            return Err(format!(
+                "账号 '{}' 已存在用途 '{}'，请使用不同用途",
+                alias, purpose
+            ));
         }
     }
 
@@ -45,17 +48,27 @@ pub fn add_account(
         .map_err(|e| e.to_string())?;
 
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM accounts WHERE is_active = 1", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM accounts WHERE is_active = 1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap_or(0);
         let primary = count == 1;
         if primary {
-            let _ = conn.execute("UPDATE accounts SET is_primary = 1 WHERE id = ?1", rusqlite::params![id]);
+            let _ = conn.execute(
+                "UPDATE accounts SET is_primary = 1 WHERE id = ?1",
+                rusqlite::params![id],
+            );
         }
         primary
     };
 
     if let Err(e) = crypto::store_api_key(&id, &api_key) {
-        let _ = db.conn.lock().map(|c| c.execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![id]));
+        let _ = db
+            .conn
+            .lock()
+            .map(|c| c.execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![id]));
         return Err(format!("凭据存储失败: {}", e));
     }
 
@@ -128,14 +141,26 @@ pub fn delete_account(
             rusqlite::params![id],
         )
         .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM alert_history WHERE account_id = ?1", rusqlite::params![id])
-            .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM alert_rules WHERE account_id = ?1", rusqlite::params![id])
-            .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM usage_snapshots WHERE account_id = ?1", rusqlite::params![id])
-            .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM deepseek_snapshots WHERE account_id = ?1", rusqlite::params![id])
-            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM alert_history WHERE account_id = ?1",
+            rusqlite::params![id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM alert_rules WHERE account_id = ?1",
+            rusqlite::params![id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM usage_snapshots WHERE account_id = ?1",
+            rusqlite::params![id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM deepseek_snapshots WHERE account_id = ?1",
+            rusqlite::params![id],
+        )
+        .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![id])
             .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
@@ -232,16 +257,15 @@ pub async fn validate_api_key(api_key: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn mask_api_key(account_id: String) -> Result<String, String> {
-    let api_key = crypto::get_api_key(&account_id)
-        .map_err(|e| format!("API Key 读取失败: {}", e))?;
+    let api_key =
+        crypto::get_api_key(&account_id).map_err(|e| format!("API Key 读取失败: {}", e))?;
     Ok(crypto::mask_key(&api_key))
 }
 
 /// 获取账号的明文 API Key（用于复制到剪贴板）。仅从 Keychain 读取。
 #[tauri::command]
 pub fn get_api_key_raw(account_id: String) -> Result<String, String> {
-    crypto::get_api_key(&account_id)
-        .map_err(|e| format!("API Key 读取失败: {}", e))
+    crypto::get_api_key(&account_id).map_err(|e| format!("API Key 读取失败: {}", e))
 }
 
 /// 修改账号的 API Key
@@ -259,8 +283,7 @@ pub fn update_api_key(
         .map_err(|e| format!("API Key 验证失败: {}", e))?;
 
     // 2. 覆盖 Keychain 记录
-    crypto::store_api_key(&account_id, &new_api_key)
-        .map_err(|e| format!("凭据存储失败: {}", e))?;
+    crypto::store_api_key(&account_id, &new_api_key).map_err(|e| format!("凭据存储失败: {}", e))?;
 
     // 3. 刷新账号套餐等级 + updated_at，并清除残留的 DB 明文
     {
