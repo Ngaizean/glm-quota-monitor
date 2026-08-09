@@ -1,41 +1,49 @@
-import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useWindowLayout } from "./hooks/useWindowLayout";
+import { getPreviewPage, isTauriRuntime } from "./lib/runtime";
 import Popover from "./popover/Popover";
 import Settings from "./settings/Settings";
 
+type AppPage = "quota" | "settings";
+
+const PAGE_WIDTH: Record<AppPage, number> = {
+  quota: 420,
+  settings: 760,
+};
+
 function App() {
-  const [page, setPage] = useState<"quota" | "settings">("quota");
+  const [page, setPage] = useState<AppPage>(() => getPreviewPage() ?? "quota");
   const containerRef = useRef<HTMLDivElement>(null);
-  const SCREEN_H = useMemo(() => window.screen.availHeight, []);
+  const [screenHeight, setScreenHeight] = useState(() => window.screen.availHeight);
 
   const handleOpenSettings = useCallback(() => setPage("settings"), []);
   const handleBack = useCallback(() => setPage("quota"), []);
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    let pending = false;
-    const observer = new ResizeObserver(([entry]) => {
-      if (pending) return;
-      pending = true;
-      requestAnimationFrame(() => {
-        pending = false;
-        const h = entry.contentRect.height;
-        invoke("fit_window_size", { height: Math.min(h, SCREEN_H) });
-      });
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [SCREEN_H]);
+    const updateScreen = () => setScreenHeight(window.screen.availHeight);
+    window.addEventListener("resize", updateScreen);
+    window.addEventListener("focus", updateScreen);
+    return () => {
+      window.removeEventListener("resize", updateScreen);
+      window.removeEventListener("focus", updateScreen);
+    };
+  }, []);
+
+  useWindowLayout(containerRef, {
+    width: Math.min(PAGE_WIDTH[page], Math.max(360, window.screen.availWidth - 32)),
+    maxHeight: screenHeight,
+    enabled: isTauriRuntime(),
+    onError: (error) => console.error("failed to fit application window", error),
+  });
 
   return (
     <div ref={containerRef}>
-      <div key={page} className="animate-fade-in">
+      <div className="app-screen animate-fade-in" data-page={page}>
         {page === "quota" && (
-          <Popover onOpenSettings={handleOpenSettings} screenHeight={SCREEN_H} />
+          <Popover onOpenSettings={handleOpenSettings} screenHeight={screenHeight} />
         )}
         {page === "settings" && (
-          <Settings onBack={handleBack} screenHeight={SCREEN_H} />
+          <Settings onBack={handleBack} screenHeight={screenHeight} />
         )}
       </div>
     </div>

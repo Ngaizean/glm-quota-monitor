@@ -1,38 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { getAvatarGradient, getLevelStyle, getStatusLevel, statusColorVar } from "../lib/ui";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
+import { formatRelativeTime, resolveDisplayLocale } from "../lib/formatters";
+import { getQuotaSummary } from "../lib/quota";
+import { getAvatarGradient, getLevelStyle } from "../lib/ui";
+import type { Account, QuotaData } from "../types";
 import CostBar from "./CostBar";
-import QuotaSection from "./QuotaSection";
-import UsageSummary from "./UsageSummary";
-import ToolUsageSection from "./ToolUsageSection";
-import TrendChart from "./TrendChart";
 import DeepSeekBalanceBadge from "./DeepSeekBalanceBadge";
 import DeepSeekBalanceBar from "./DeepSeekBalanceBar";
 import DeepSeekModelList from "./DeepSeekModelList";
-import DeepSeekBalanceChart from "./DeepSeekBalanceChart";
-import type { Account, QuotaData } from "../types";
+import QuotaSection from "./QuotaSection";
+import ToolUsageSection from "./ToolUsageSection";
+import UsageSummary from "./UsageSummary";
 
-function formatLastActive(
-  iso: string | null | undefined,
-  t: (key: string, options?: Record<string, unknown>) => string,
-  lng: string
-): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (isNaN(date.getTime())) return null;
-  const diff = Date.now() - date.getTime();
-  if (diff < 0) return null;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return t('account.justNow');
-  if (mins < 60) return t('account.minutesAgo', { count: mins });
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return t('account.hoursAgo', { count: hours });
-  const days = Math.floor(hours / 24);
-  if (days < 7) return t('account.daysAgo', { count: days });
-  // 按当前语言本地化日期
-  const locale = lng.startsWith("en") ? "en-US" : "zh-CN";
-  return date.toLocaleDateString(locale, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
+const TrendChart = lazy(() => import("./TrendChart"));
+const DeepSeekBalanceChart = lazy(() => import("./DeepSeekBalanceChart"));
 
 interface Props {
   accounts: Account[];
@@ -44,225 +26,161 @@ interface Props {
   refreshKey: number;
 }
 
-function getTokenPct(quota: QuotaData | undefined): number | null {
-  if (!quota) return null;
-  const limits = quota.limits.filter((l) => l.type === "TOKENS_LIMIT");
-  // 优先 5h 窗口（unit=3），缺失时回退第一个 TOKENS_LIMIT
-  const hourly = limits.find((l) => l.unit === 3) ?? limits[0];
-  return hourly ? hourly.percentage : null;
-}
+type DetailTab = "overview" | "trend" | "cost" | "tools";
 
-function getWeeklyPct(quota: QuotaData | undefined): number | null {
+function QuotaSummaryBadge({ quota }: { quota: QuotaData | undefined }) {
   if (!quota) return null;
-  const weekly = quota.limits.find((l) => l.type === "TOKENS_LIMIT" && l.unit === 6);
-  return weekly ? weekly.percentage : null;
-}
-
-function PctBadge({ pct, weeklyPct }: { pct: number | null; weeklyPct: number | null }) {
-  const { t } = useTranslation();
-  if (pct === null && weeklyPct === null) return null;
+  const summary = getQuotaSummary(quota.limits);
+  const values = [summary.primary, summary.secondary].filter(Boolean);
+  if (values.length === 0) return null;
   return (
-    <span className="flex items-baseline gap-1 shrink-0 tabular-nums">
-      {pct !== null && (
-        <span className="text-[12px] font-bold" style={{ color: statusColorVar(getStatusLevel(pct)) }}>
-          {Math.round(pct)}%
-        </span>
-      )}
-      {weeklyPct !== null && (
-        <span
-          className="text-[12px] font-bold"
-          style={{ color: statusColorVar(getStatusLevel(weeklyPct)) }}
-          title={t('quota.weeklyTitle')}
-        >
-          {t('quota.weeklyShort')}{Math.round(weeklyPct)}%
-        </span>
-      )}
+    <span className="account-row__quota" data-status={summary.status}>
+      {values.map((limit, index) => (
+        <span key={`${limit?.type}-${limit?.unit}-${index}`}>{Math.round(limit?.percentage ?? 0)}%</span>
+      ))}
     </span>
   );
 }
 
-function StarButton({ isPrimary, onClick }: { isPrimary: boolean; onClick: () => void }) {
-  const { t } = useTranslation();
-  return (
-    <button
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className={`p-0.5 rounded hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] shrink-0 ${
-        isPrimary ? "text-amber-400 hover:text-amber-300" : "text-[var(--color-text-tertiary)] hover:text-amber-400"
-      }`}
-      title={isPrimary ? t('account.unsetPrimary') : t('account.setPrimary')}
-    >
-      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill={isPrimary ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
-        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-      </svg>
-    </button>
-  );
-}
-
-function Expandable({ open, children }: { open: boolean; children: React.ReactNode }) {
-  const outerRef = useRef<HTMLDivElement>(null);
-  const innerRef = useRef<HTMLDivElement>(null);
-  const [maxHeight, setMaxHeight] = useState(open ? "none" : "0px");
-
-  // 测量内容真实高度。外层容器有 overflow-hidden + maxHeight，自身不会随内容增长，
-  // ResizeObserver 观察外层拿不到内容变化；改为观察内层包裹 div（不被裁剪、真实高度随
-  // 异步加载的图表/数据增长），内容撑高时触发更新，避免"首次展开只显示一半"。
-  useEffect(() => {
-    const inner = innerRef.current;
-    if (!inner) return;
-    const update = () => {
-      if (open) {
-        setMaxHeight(`${inner.scrollHeight}px`);
-      }
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(inner);
-    return () => ro.disconnect();
-  }, [open]);
+function AccountDetails({ account, quota, refreshKey }: {
+  account: Account;
+  quota: QuotaData | undefined;
+  refreshKey: number;
+}) {
+  const { t, i18n } = useTranslation();
+  const [tab, setTab] = useState<DetailTab>("overview");
+  const platform = account.platform ?? "zhipu";
+  const options = platform === "zhipu"
+    ? [
+        { value: "overview" as const, label: t("account.tabs.overview") },
+        { value: "trend" as const, label: t("account.tabs.trend") },
+        { value: "cost" as const, label: t("account.tabs.cost") },
+        { value: "tools" as const, label: t("account.tabs.tools") },
+      ]
+    : [
+        { value: "overview" as const, label: t("account.tabs.overview") },
+        { value: "trend" as const, label: t("account.tabs.trend") },
+      ];
 
   return (
-    <div
-      ref={outerRef}
-      className="transition-all duration-300 ease-in-out overflow-hidden"
-      style={{ maxHeight: open ? maxHeight : "0px", opacity: open ? 1 : 0 }}
-    >
-      <div ref={innerRef}>{children}</div>
+    <div className="account-details">
+      <div className="account-details__meta">
+        <span>{account.purpose}</span>
+        {quota?.last_active && (
+          <span>{t("account.lastActive")} {formatRelativeTime(quota.last_active, { locale: resolveDisplayLocale(i18n.language) })}</span>
+        )}
+      </div>
+
+      {quota?.error && platform !== "deepseek" && (
+        <div className="status-inline status-inline--critical" role="status">{quota.error}</div>
+      )}
+
+      <SegmentedControl
+        aria-label={t("account.detailTabs")}
+        value={tab}
+        options={options}
+        onValueChange={setTab}
+      />
+
+      <div className="account-details__panel" role="tabpanel">
+        {tab === "overview" && platform === "deepseek" && (
+          <>
+            <DeepSeekBalanceBar accountId={account.id} refreshKey={refreshKey} />
+            <DeepSeekModelList accountId={account.id} refreshKey={refreshKey} />
+          </>
+        )}
+        {tab === "overview" && platform !== "deepseek" && (
+          <>
+            {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}
+            {platform !== "codex" && (
+              <UsageSummary
+                accountId={account.id}
+                tokenPct={getQuotaSummary(quota?.limits ?? []).primary?.percentage ?? null}
+                refreshKey={refreshKey}
+              />
+            )}
+          </>
+        )}
+        {tab === "trend" && (
+          <Suspense fallback={<div className="skeleton h-36 rounded-xl" />}>
+            {platform === "deepseek"
+              ? <DeepSeekBalanceChart accountId={account.id} refreshKey={refreshKey} />
+              : <TrendChart accountId={account.id} refreshKey={refreshKey} />}
+          </Suspense>
+        )}
+        {tab === "cost" && platform === "zhipu" && <CostBar accountId={account.id} refreshKey={refreshKey} />}
+        {tab === "tools" && platform === "zhipu" && <ToolUsageSection accountId={account.id} refreshKey={refreshKey} />}
+      </div>
     </div>
-  );
-}
-
-function LastActiveLabel({ lastActive }: { lastActive: string | null }) {
-  const { t } = useTranslation();
-  if (!lastActive) return null;
-  return (
-    <span className="text-[10px] text-[var(--color-text-tertiary)]">
-      {t('account.lastActive')} {lastActive}
-    </span>
   );
 }
 
 function ChevronIcon({ open }: { open: boolean }) {
   return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="var(--color-text-tertiary)"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
-    >
+    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className={open ? "rotate-180" : ""}>
       <polyline points="6 9 12 15 18 9" />
     </svg>
   );
 }
 
-export default function AccountList({ accounts, expandedIds, onToggle, onSetPrimary, quotas, loading, refreshKey }: Props) {
-  const { t, i18n } = useTranslation();
+export default function AccountList({
+  accounts,
+  expandedIds,
+  onToggle,
+  onSetPrimary,
+  quotas,
+  loading,
+  refreshKey,
+}: Props) {
+  const { t } = useTranslation();
+
   return (
-    <div className="p-2 space-y-1.5">
-      {accounts.map((acc) => {
-        const expanded = expandedIds.has(acc.id);
-        const quota = quotas[acc.id];
-        const tokenPct = getTokenPct(quota);
-        const weeklyPct = getWeeklyPct(quota);
-
+    <div className="account-list">
+      {accounts.map((account) => {
+        const expanded = expandedIds.has(account.id);
+        const quota = quotas[account.id];
+        const detailId = `account-details-${account.id}`;
         return (
-          <div
-            key={acc.id}
-            className={`rounded-xl border transition-all duration-200 overflow-hidden ${
-              expanded
-                ? "bg-[var(--color-bg-secondary)] border-[var(--color-border)]"
-                : "bg-[var(--color-bg-secondary)]/60 border-[var(--color-border-subtle)] hover:border-[var(--color-border)]"
-            }`}
-          >
-            <button
-              onClick={() => onToggle(acc.id)}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
-            >
-              <div
-                className={`w-6 h-6 rounded-md bg-gradient-to-br ${getAvatarGradient(
-                  acc.alias
-                )} flex items-center justify-center text-[9px] font-bold text-white shrink-0 shadow-sm`}
+          <article className="account-card" data-expanded={expanded || undefined} key={account.id}>
+            <div className="account-row">
+              <button
+                type="button"
+                className="account-row__toggle"
+                onClick={() => onToggle(account.id)}
+                aria-expanded={expanded}
+                aria-controls={detailId}
               >
-                {acc.alias.charAt(0).toUpperCase()}
-              </div>
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                <span className="text-[12px] font-semibold text-[var(--color-text-primary)] truncate">
-                  {acc.alias}
+                <span className={`account-avatar bg-gradient-to-br ${getAvatarGradient(account.alias)}`} aria-hidden="true">
+                  {account.alias.charAt(0).toUpperCase()}
                 </span>
-                {quota?.level && (
-                  <span
-                    className={`text-[9px] font-bold px-1 py-0.5 rounded uppercase tracking-wider shrink-0 ${getLevelStyle(
-                      quota.level
-                    )}`}
-                  >
-                    {quota.level}
-                  </span>
-                )}
-              </div>
-              {loading && !expanded && (
-                <div className="w-3 h-3 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin shrink-0" />
-              )}
-              <StarButton isPrimary={acc.is_primary} onClick={() => onSetPrimary(acc.id)} />
-              {acc.platform === "deepseek" ? (
-                <DeepSeekBalanceBadge quota={quota} />
-              ) : (
-                <PctBadge pct={tokenPct} weeklyPct={weeklyPct} />
-              )}
-              <ChevronIcon open={expanded} />
-            </button>
-
-            <Expandable open={expanded}>
-              <div className="px-3 pb-1.5 flex items-center justify-between">
-                <span className="text-[10px] text-[var(--color-text-tertiary)]">
-                  {acc.purpose}
+                <span className="account-row__identity">
+                  <span className="account-row__name" title={account.alias}>{account.alias}</span>
+                  {quota?.level && <span className={`plan-badge ${getLevelStyle(quota.level)}`}>{quota.level}</span>}
                 </span>
-                <LastActiveLabel lastActive={formatLastActive(quota?.last_active, t, i18n.language)} />
+                {loading && !quota && <span className="ui-spinner" aria-label={t("common.loading")} />}
+                {account.platform === "deepseek"
+                  ? <DeepSeekBalanceBadge quota={quota} />
+                  : <QuotaSummaryBadge quota={quota} />}
+                <span className="account-row__chevron"><ChevronIcon open={expanded} /></span>
+              </button>
+              <button
+                type="button"
+                className="account-row__favorite"
+                onClick={() => onSetPrimary(account.id)}
+                aria-label={account.is_primary ? t("account.unsetPrimary") : t("account.setPrimary")}
+                aria-pressed={account.is_primary}
+              >
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill={account.is_primary ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                </svg>
+              </button>
+            </div>
+            {expanded && (
+              <div id={detailId} className="animate-fade-in">
+                <AccountDetails account={account} quota={quota} refreshKey={refreshKey} />
               </div>
-              {quota?.error && acc.platform !== "deepseek" && (
-                <div className="mx-3 mb-1.5 text-[10px] text-[var(--color-danger)] flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/20">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12.01" y2="16" />
-                  </svg>
-                  {quota.error}
-                </div>
-              )}
-              {acc.platform === "deepseek" ? (
-                <>
-                  <DeepSeekBalanceBar accountId={acc.id} refreshKey={refreshKey} />
-                  <DeepSeekModelList accountId={acc.id} refreshKey={refreshKey} />
-                  <div className="px-3 pb-3">
-                    <DeepSeekBalanceChart accountId={acc.id} refreshKey={refreshKey} />
-                  </div>
-                </>
-              ) : (
-                <>
-                  {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}
-                  {acc.platform !== "codex" && (
-                    <>
-                      <div className="px-3 py-2.5">
-                        <UsageSummary accountId={acc.id} tokenPct={tokenPct} refreshKey={refreshKey} />
-                      </div>
-                      <div className="px-3 pb-3">
-                        <CostBar accountId={acc.id} refreshKey={refreshKey} />
-                      </div>
-                      <div className="px-3 pb-3">
-                        <ToolUsageSection accountId={acc.id} refreshKey={refreshKey} />
-                      </div>
-                    </>
-                  )}
-                  <div className="px-3 pb-3">
-                    <TrendChart accountId={acc.id} refreshKey={refreshKey} />
-                  </div>
-                </>
-              )}
-            </Expandable>
-          </div>
+            )}
+          </article>
         );
       })}
     </div>

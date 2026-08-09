@@ -1,10 +1,20 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GLM Quota Monitor</title>
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      try {
+        const mode = localStorage.getItem("theme-mode");
+        const accent = localStorage.getItem("theme");
+        const language = localStorage.getItem("lang");
+        if (mode === "light" || mode === "dark") document.documentElement.dataset.mode = mode;
+        if (accent && accent !== "default") document.documentElement.dataset.theme = accent;
+        document.documentElement.lang = language === "en" ? "en" : "zh-CN";
+      } catch (_) {}
+    </script>
+    <title>Quota Monitor</title>
   </head>
 
   <body>

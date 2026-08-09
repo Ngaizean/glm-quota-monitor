@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import type { QuotaLimit } from "../types";
-import { getStatusLevel, statusBgClass, statusColorVar, statusGradientVar } from "../lib/ui";
+import { clampPercentage, partitionQuotaLimits } from "../lib/quota";
+import { getStatusLevel, statusColorVar, statusGradientVar } from "../lib/ui";
 
 function formatResetTime(ts: number, t: (key: string, options?: Record<string, unknown>) => string): string {
   if (!ts) return t('quota.resetSoon');
@@ -20,7 +21,8 @@ interface QuotaBarProps {
 
 function QuotaBar({ title, percentage, resetTime }: QuotaBarProps) {
   const { t } = useTranslation();
-  const level = getStatusLevel(percentage);
+  const normalizedPercentage = clampPercentage(percentage);
+  const level = getStatusLevel(normalizedPercentage);
   const colorVar = statusColorVar(level);
   const gradientVar = statusGradientVar(level);
 
@@ -28,23 +30,30 @@ function QuotaBar({ title, percentage, resetTime }: QuotaBarProps) {
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
-          <span className={`inline-block w-[5px] h-[5px] rounded-full shrink-0 ${statusBgClass(level)}`} />
-          <span className="text-[11px] font-medium text-[var(--color-text-secondary)] truncate">{title}</span>
+          <span aria-hidden="true" className="inline-block w-[5px] h-[5px] rounded-full shrink-0" style={{ backgroundColor: colorVar }} />
+          <span className="text-xs font-medium text-[var(--color-text-secondary)] truncate">{title}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[9px] text-[var(--color-text-tertiary)] tabular-nums">
+          <span className="text-[11px] text-[var(--color-text-tertiary)] tabular-nums">
             {formatResetTime(resetTime, t)}
           </span>
           <span className="text-[13px] font-bold tabular-nums w-11 text-right" style={{ color: colorVar }}>
-            {Math.round(percentage)}%
+            {Math.round(normalizedPercentage)}%
           </span>
         </div>
       </div>
-      <div className="w-full h-[6px] bg-[var(--color-bg-tertiary)] rounded-full overflow-hidden">
+      <div
+        className="w-full h-[6px] bg-[var(--color-bg-tertiary)] rounded-full overflow-hidden"
+        role="progressbar"
+        aria-label={title}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={normalizedPercentage}
+      >
         <div
           className="h-full rounded-full animate-progress"
           style={{
-            width: `${Math.min(Math.max(percentage, 0), 100)}%`,
+            width: `${normalizedPercentage}%`,
             background: gradientVar,
             transition: "width 0.7s cubic-bezier(0.16, 1, 0.3, 1)",
           }}
@@ -71,70 +80,38 @@ interface Props {
  * 注意：API 可能返回多个同 type 的额度（如两个 TOKENS_LIMIT），
  * 必须按 (type, unit) 组合查找，不能用 find() 只取第一个。
  */
-type QuotaCategory = "hourly" | "weekly" | "monthly" | "sparkHourly" | "sparkWeekly";
-
-/** 根据 type+unit 判定额度类别，无法判定时用重置周期兜底 */
-function classifyLimit(limit: QuotaLimit): QuotaCategory | null {
-  // Spark 额度（GPT-5.3-Codex-Spark 独立窗口）
-  if (limit.type === "SPARK_5H") return "sparkHourly";
-  if (limit.type === "SPARK_WEEKLY") return "sparkWeekly";
-  // 优先用 (type, unit) 组合精确匹配
-  if (limit.type === "TOKENS_LIMIT") {
-    if (limit.unit === 3) return "hourly";   // 5h 窗口
-    if (limit.unit === 6) return "weekly";   // 周额度
-  }
-  if (limit.type === "TIME_LIMIT") {
-    return "monthly";                          // 月度
-  }
-  if (limit.type === "MCP_MONTHLY") {
-    return "monthly";
-  }
-  // 兜底：用重置周期判定（nextResetTime 与现在的差值）
-  if (limit.nextResetTime > 0) {
-    const hoursLeft = (limit.nextResetTime - Date.now()) / 3600000;
-    if (hoursLeft < 24) return "hourly";
-    if (hoursLeft < 14 * 24) return "weekly";
-    return "monthly";
-  }
-  return null;
-}
+type QuotaCategory = "hourly" | "weekly" | "time" | "mcp" | "sparkHourly" | "sparkWeekly";
 
 const CATEGORY_TITLE_KEY: Record<QuotaCategory, string> = {
   hourly: "quota.token5hTitle",
   weekly: "quota.weeklyTitle",
-  monthly: "quota.mcpMonthlyTitle",
+  time: "quota.mcpMonthlyTitle",
+  mcp: "quota.mcpMonthlyTitle",
   sparkHourly: "quota.spark5hTitle",
   sparkWeekly: "quota.sparkWeeklyTitle",
 };
 
 /** 渲染顺序：5h 窗口 → 周额度 → Spark 5h → Spark 周 → 月度 */
-const RENDER_ORDER: QuotaCategory[] = ["hourly", "weekly", "sparkHourly", "sparkWeekly", "monthly"];
+const RENDER_ORDER: QuotaCategory[] = ["hourly", "weekly", "sparkHourly", "sparkWeekly", "time", "mcp"];
 
 export default function QuotaSection({ limits, isOffline }: Props) {
   const { t } = useTranslation();
 
-  // 分类所有额度，按 category 去重（同一类别只保留第一个）
-  const classified = new Map<QuotaCategory, QuotaLimit>();
-  for (const limit of limits) {
-    const category = classifyLimit(limit);
-    if (category && !classified.has(category)) {
-      classified.set(category, limit);
-    }
-  }
-
-  const ordered = RENDER_ORDER
-    .map((cat) => classified.get(cat))
-    .filter((l): l is QuotaLimit => Boolean(l));
+  const partitioned = partitionQuotaLimits(limits);
+  const ordered = RENDER_ORDER.flatMap((category) => {
+    const limit = partitioned[category];
+    return limit ? [{ category, limit }] : [];
+  });
+  const unknown = partitioned.other.filter((limit) => limit.type !== "DEEPSEEK_BALANCE");
 
   return (
     <div className="px-4 py-3 space-y-3.5 relative">
       {isOffline && (
-        <div className="absolute top-2 right-3 text-[9px] font-medium text-[var(--color-text-tertiary)] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 rounded">
+        <div className="absolute top-2 right-3 text-[11px] font-medium text-[var(--color-text-tertiary)] bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 rounded">
           {t('account.offlineData')}
         </div>
       )}
-      {ordered.map((limit) => {
-        const category = classifyLimit(limit)!;
+      {ordered.map(({ category, limit }) => {
         const titleKey = CATEGORY_TITLE_KEY[category];
         return (
           <QuotaBar
@@ -145,8 +122,16 @@ export default function QuotaSection({ limits, isOffline }: Props) {
           />
         );
       })}
-      {ordered.length === 0 && (
-        <div className="text-[10px] text-[var(--color-text-tertiary)] py-2">{t('usage.noData')}</div>
+      {unknown.map((limit, index) => (
+        <QuotaBar
+          key={`${limit.type}-${limit.unit ?? "unknown"}-${index}`}
+          title={limit.type || t("usage.noData")}
+          percentage={limit.percentage}
+          resetTime={limit.nextResetTime}
+        />
+      ))}
+      {ordered.length === 0 && unknown.length === 0 && (
+        <div className="text-[11px] text-[var(--color-text-tertiary)] py-2">{t('usage.noData')}</div>
       )}
     </div>
   );

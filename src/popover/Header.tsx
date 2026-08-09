@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
+import { CloseIcon, RefreshIcon, SettingsIcon } from "../components/icons";
+import { IconButton } from "../components/ui/IconButton";
 
 interface HeaderProps {
   loading: boolean;
@@ -9,72 +11,39 @@ interface HeaderProps {
 
 export default function Header({ loading, onRefresh, onSettings }: HeaderProps) {
   const { t } = useTranslation();
-  const handleDrag = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest("button") || target.closest("a") || target.closest("input")) return;
-    invoke("start_window_drag");
-  };
+
+  function handleDrag(event: React.MouseEvent) {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("button, a, input, select, textarea")) return;
+    void invoke("start_window_drag").catch((error) => {
+      console.error("failed to start window drag", error);
+    });
+  }
 
   return (
-    <div className="sticky top-0 z-10 backdrop-blur-2xl bg-[var(--color-bg-glass)] border-b border-[var(--color-border-subtle)]">
-      <div
-        className="flex items-center justify-between px-4 py-2.5 cursor-default"
-        data-tauri-drag-region
-        onMouseDown={handleDrag}
-      >
-        <div className="flex items-center gap-2">
-          <div
-            className="w-6 h-6 rounded-lg flex items-center justify-center shadow-sm"
-            style={{ background: "linear-gradient(135deg, var(--color-accent), var(--color-accent-hover))" }}
-          >
-            <span className="text-white text-[9px] font-bold tracking-tight">G</span>
-          </div>
-          <span className="text-[13px] font-semibold tracking-tight text-[var(--color-text-primary)]">
-            {t('header.title')}
-          </span>
-          {loading && (
-            <div className="flex gap-0.5">
-              <span className="w-1 h-1 rounded-full bg-[var(--color-accent)] animate-bounce" style={{ animationDelay: "0ms" }} />
-              <span className="w-1 h-1 rounded-full bg-[var(--color-accent)] animate-bounce" style={{ animationDelay: "75ms" }} />
-              <span className="w-1 h-1 rounded-full bg-[var(--color-accent)] animate-bounce" style={{ animationDelay: "150ms" }} />
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-0.5">
-          <button
-            onClick={onRefresh}
-            disabled={loading}
-            className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] disabled:opacity-40"
-            title={t('header.refresh')}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="23 4 23 10 17 10" />
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-            </svg>
-          </button>
-          <button
-            onClick={onSettings}
-            className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
-            title={t('header.settings')}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
-          <button
-            onClick={() => invoke("close_popover")}
-            className="p-1.5 rounded-lg hover:bg-[var(--color-bg-tertiary)] transition-[var(--transition-fast)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
-            title={t('header.close')}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+    <header className="window-header" data-tauri-drag-region onMouseDown={handleDrag}>
+      <div className="brand-lockup">
+        <div className="brand-mark" aria-hidden="true"><span>Q</span></div>
+        <div className="brand-copy">
+          <strong>{t("header.title")}</strong>
+          <span>{loading ? t("header.refreshing") : t("header.ready")}</span>
         </div>
       </div>
-    </div>
+      <div className="window-actions">
+        <IconButton aria-label={t("header.refresh")} onClick={onRefresh} loading={loading}>
+          <RefreshIcon />
+        </IconButton>
+        <IconButton aria-label={t("header.settings")} onClick={onSettings}>
+          <SettingsIcon />
+        </IconButton>
+        <IconButton
+          aria-label={t("header.close")}
+          onClick={() => void invoke("close_popover").catch((error) => console.error("failed to close popover", error))}
+        >
+          <CloseIcon />
+        </IconButton>
+      </div>
+    </header>
   );
 }

@@ -13,7 +13,19 @@ i18n.use(initReactI18next).init({
   lng: initialLang,
   fallbackLng: 'zh',
   interpolation: { escapeValue: false },
-  returnObjects: true,
+  returnObjects: false,
+});
+
+i18n.on("languageChanged", (language) => {
+  const normalized = language.startsWith("en") ? "en" : "zh";
+  if (typeof document !== "undefined") {
+    document.documentElement.lang = normalized === "en" ? "en" : "zh-CN";
+  }
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem("lang", normalized);
+  } catch {
+    // WebView 禁止持久化时仍保留当前会话语言。
+  }
 });
 
 export default i18n;

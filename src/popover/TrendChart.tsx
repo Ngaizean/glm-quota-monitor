@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   LineChart,
@@ -10,22 +10,10 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
-
-interface HistoryPoint {
-  timestamp: string;
-  token_pct: number;
-  weekly_pct: number;
-  time_pct: number;
-  mcp_pct: number;
-  tokens_24h: number | null;
-  calls: number | null;
-}
-
-function formatTime(ts: string) {
-  // Extract HH:MM from ISO/RFC3339 timestamp
-  const match = ts.match(/(\d{2}):(\d{2})/);
-  return match ? `${match[1]}:${match[2]}` : "";
-}
+import { useAsyncResource } from "../hooks/useAsyncResource";
+import { formatChartTime, resolveDisplayLocale } from "../lib/formatters";
+import type { TokenHistoryPoint } from "../types";
+import { downsampleEvenly } from "./metrics";
 
 // formatTokens available for future use
 // function formatTokens(v: number | null): string {
@@ -45,7 +33,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   const { t } = useTranslation();
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 shadow-md text-[10px]">
+    <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 shadow-md text-[11px]">
       <div className="text-[var(--color-text-tertiary)] mb-1">{label}</div>
       {payload.map((entry, i) => {
         const labelKey =
@@ -69,39 +57,26 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
 const RANGES = [1, 7, 30, 90] as const;
 
 export default function TrendChart({ accountId, refreshKey }: { accountId: string; refreshKey: number }) {
-  const { t } = useTranslation();
-  const [data, setData] = useState<HistoryPoint[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { t, i18n } = useTranslation();
   const [range, setRange] = useState<number>(1);
-
-  useEffect(() => {
-    setLoading(true);
-    invoke<HistoryPoint[]>("get_token_history", { accountId, days: range })
-      .then((points) => setData(points))
-      .catch(() => setData([]))
-      .finally(() => setLoading(false));
-  }, [accountId, refreshKey, range]);
-
-  if (loading) {
-    return (
-      <div className="mt-2 px-3 py-2">
-        <div className="text-[10px] text-[var(--color-text-tertiary)]">{t("common.loading")}</div>
-      </div>
-    );
-  }
-
-  if (data.length < 2) return null;
-
-  const chartData = data.map((p) => ({
+  const resource = useAsyncResource(
+    () => invoke<TokenHistoryPoint[]>("get_token_history", { accountId, days: range }),
+    [accountId, refreshKey, range],
+    { enabled: Boolean(accountId), clearOnLoad: true },
+  );
+  const data = resource.data ?? [];
+  const locale = resolveDisplayLocale(i18n.resolvedLanguage ?? i18n.language);
+  const chartData = downsampleEvenly(data, 240).map((p) => ({
     ...p,
-    label: formatTime(p.timestamp),
+    label: formatChartTime(p.timestamp, range, locale),
   }));
 
   // 智能隐藏无效虚线: time_pct 全部相同值(恒0或恒100)时，
   // 虚线是一条贴顶/贴底的直线，无参考价值，隐藏虚线及其图例。
   const timeValues = data.map((p) => p.time_pct);
-  const allSame = timeValues.every((v) => v === timeValues[0]);
-  const showTimeLine = !allSame;
+  const showTimeLine = data.length > 0
+    && !timeValues.every((value) => value === 0)
+    && !timeValues.every((value) => value === 100);
   const showTokenLine = data.some((p) => p.token_pct > 0);
   const showWeeklyLine = data.some((p) => p.weekly_pct > 0);
   // MCP 线仅当存在非零数据时显示
@@ -110,15 +85,18 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
   return (
     <div className="mt-2 px-1">
       <div className="flex items-center justify-between mb-1.5">
-        <div className="text-[10px] font-medium text-[var(--color-text-secondary)]">
+        <div className="text-xs font-medium text-[var(--color-text-secondary)]">
           {t("trendChart.title")}
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5" role="tablist" aria-label={t("trendChart.title")}>
           {RANGES.map((r) => (
             <button
               key={r}
+              type="button"
+              role="tab"
+              aria-selected={range === r}
               onClick={() => setRange(r)}
-              className={`px-1.5 py-0.5 rounded text-[9px] tabular-nums transition-colors ${
+              className={`px-1.5 py-0.5 rounded text-xs tabular-nums transition-colors ${
                 range === r
                   ? "bg-[var(--color-accent)] text-white"
                   : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
@@ -129,9 +107,26 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
           ))}
         </div>
       </div>
-      <div className="h-[100px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 2, right: 4, left: -16, bottom: 0 }}>
+      {resource.loading && (
+        <div role="status" aria-live="polite" className="px-2 py-2 text-[11px] text-[var(--color-text-tertiary)]">
+          {t("common.loading")}
+        </div>
+      )}
+      {resource.error && (
+        <div role="status" className="px-2 py-2 text-[11px] text-[var(--color-danger)]">
+          {t("common.error")}
+        </div>
+      )}
+      {!resource.loading && !resource.error && data.length < 2 && (
+        <div role="status" className="px-2 py-2 text-[11px] text-[var(--color-text-tertiary)]">
+          {t("usage.noData")}
+        </div>
+      )}
+      {!resource.loading && !resource.error && data.length >= 2 && (
+        <>
+          <div className="h-[100px]" role="img" aria-label={t("trendChart.title")}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 2, right: 4, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
             <XAxis
               dataKey="label"
@@ -191,35 +186,37 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
                 activeDot={{ r: 2, fill: "var(--color-chart-tertiary, #a855f7)" }}
               />
             )}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="flex items-center gap-3 mt-1">
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex items-center gap-3 mt-1">
         {showTokenLine && (
           <div className="flex items-center gap-1">
             <div className="w-2.5 h-0.5 rounded bg-[var(--color-accent)]" />
-            <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.tokenUsage")}</span>
+            <span className="text-[11px] text-[var(--color-text-tertiary)]">{t("trendChart.tokenUsage")}</span>
           </div>
         )}
         {showWeeklyLine && (
           <div className="flex items-center gap-1">
             <div className="w-2.5 h-0.5 rounded" style={{ backgroundColor: "var(--color-warning, #f59e0b)" }} />
-            <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.weeklyUsage")}</span>
+            <span className="text-[11px] text-[var(--color-text-tertiary)]">{t("trendChart.weeklyUsage")}</span>
           </div>
         )}
         {showTimeLine && (
           <div className="flex items-center gap-1">
             <div className="w-2.5 h-0.5 rounded opacity-60" style={{ backgroundColor: "var(--color-chart-secondary)", borderStyle: "dashed" }} />
-            <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.timeUsage")}</span>
+            <span className="text-[11px] text-[var(--color-text-tertiary)]">{t("trendChart.timeUsage")}</span>
           </div>
         )}
         {showMcpLine && (
           <div className="flex items-center gap-1">
             <div className="w-2.5 h-0.5 rounded opacity-70" style={{ backgroundColor: "var(--color-chart-tertiary, #a855f7)", borderStyle: "dashed" }} />
-            <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.mcpUsage")}</span>
+            <span className="text-[11px] text-[var(--color-text-tertiary)]">{t("trendChart.mcpUsage")}</span>
           </div>
         )}
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

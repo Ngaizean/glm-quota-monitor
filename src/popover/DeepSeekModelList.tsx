@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useAsyncResource } from "../hooks/useAsyncResource";
 
 interface ModelEntry {
   id: string;
@@ -27,49 +28,48 @@ export default function DeepSeekModelList({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [models, setModels] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    setLoading(true);
-    invoke<ModelsResponse>("get_deepseek_models", { accountId })
-      .then((r) =>
-        setModels((r.data ?? []).map((m) => m.id).filter((s) => s.length > 0))
-      )
-      .catch(() => setModels([]))
-      .finally(() => setLoading(false));
-  }, [open, accountId, refreshKey]);
+  const listId = useId();
+  const resource = useAsyncResource(async () => {
+    const response = await invoke<ModelsResponse>("get_deepseek_models", { accountId });
+    return [...new Set((response.data ?? []).map((model) => model.id.trim()).filter(Boolean))];
+  }, [open, accountId, refreshKey], { enabled: open && Boolean(accountId), clearOnLoad: true });
+  const models = resource.data ?? [];
 
   return (
     <div className="px-3 pb-2">
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={listId}
         className="w-full flex items-center justify-between text-left"
       >
-        <span className="text-[10px] font-medium text-[var(--color-text-secondary)]">
+        <span className="text-xs font-medium text-[var(--color-text-secondary)]">
           {t("deepseekPane.modelsTitle")}
           {open && models.length > 0 && (
             <span className="ml-1 text-[var(--color-text-tertiary)]">({models.length})</span>
           )}
         </span>
-        <span className="text-[10px] text-[var(--color-text-tertiary)]">
-          {loading ? t("deepseekPane.loading") : open ? t("accountsPane.collapse") : t("common.confirm")}
+        <span className="text-[11px] text-[var(--color-text-tertiary)]">
+          {resource.loading ? t("deepseekPane.loading") : open ? t("accountsPane.collapse") : t("common.confirm")}
         </span>
       </button>
       {open && (
-        <div className="flex flex-wrap gap-1 mt-1.5">
-          {loading && (
-            <span className="text-[10px] text-[var(--color-text-tertiary)]">{t("deepseekPane.loading")}</span>
+        <div id={listId} className="flex flex-wrap gap-1 mt-1.5">
+          {resource.loading && (
+            <span role="status" aria-live="polite" className="text-[11px] text-[var(--color-text-tertiary)]">{t("deepseekPane.loading")}</span>
           )}
-          {!loading && models.length === 0 && (
-            <span className="text-[10px] text-[var(--color-text-tertiary)]">{t("accountsPane.noModels")}</span>
+          {resource.error && (
+            <span role="status" className="text-[11px] text-[var(--color-danger)]">{t("common.error")}</span>
           )}
-          {!loading &&
+          {!resource.loading && !resource.error && models.length === 0 && (
+            <span className="text-[11px] text-[var(--color-text-tertiary)]">{t("accountsPane.noModels")}</span>
+          )}
+          {!resource.loading && !resource.error &&
             models.map((m) => (
               <span
                 key={m}
-                className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] border border-[var(--color-border-subtle)] text-[var(--color-text-secondary)] font-mono"
+                className="text-xs px-1.5 py-0.5 rounded bg-[var(--color-bg-tertiary)] border border-[var(--color-border-subtle)] text-[var(--color-text-secondary)] font-mono"
               >
                 {m}
               </span>

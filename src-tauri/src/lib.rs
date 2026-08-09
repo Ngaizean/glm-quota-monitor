@@ -127,18 +127,41 @@ fn get_db_path(app: &tauri::App) -> PathBuf {
 
 // ========== 窗口管理 ==========
 
-fn position_popover(window: &tauri::WebviewWindow, app: &tauri::AppHandle) {
+fn position_popover_with_size(
+    window: &tauri::WebviewWindow,
+    app: &tauri::AppHandle,
+    requested_size: Option<tauri::PhysicalSize<u32>>,
+) {
     if let Some(tray) = app.tray_by_id("main") {
         if let Ok(Some(rect)) = tray.rect() {
             if let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) =
                 (rect.position, rect.size)
             {
                 let scale = window.scale_factor().unwrap_or(1.0);
-                let window_w = (platform::POPOVER_WIDTH_LOGICAL * scale) as u32;
-                let window_h = window
-                    .inner_size()
-                    .unwrap_or(tauri::PhysicalSize::new(window_w, 600))
-                    .height;
+                let window_size = requested_size.unwrap_or_else(|| {
+                    window.inner_size().unwrap_or(tauri::PhysicalSize::new(
+                        (platform::POPOVER_WIDTH_LOGICAL * scale) as u32,
+                        (600.0 * scale) as u32,
+                    ))
+                });
+                let window_w = window_size.width;
+                let window_h = window_size.height;
+                let tray_center_x = f64::from(pos.x) + f64::from(size.width) / 2.0;
+                let tray_center_y = f64::from(pos.y) + f64::from(size.height) / 2.0;
+                let work_area = window
+                    .monitor_from_point(tray_center_x, tray_center_y)
+                    .ok()
+                    .flatten()
+                    .or_else(|| window.current_monitor().ok().flatten())
+                    .map(|monitor| {
+                        let area = monitor.work_area();
+                        platform::WorkArea::new(
+                            area.position.x,
+                            area.position.y,
+                            area.size.width,
+                            area.size.height,
+                        )
+                    });
                 let (x, y) = platform::popover_position(
                     pos.x,
                     pos.y,
@@ -146,6 +169,7 @@ fn position_popover(window: &tauri::WebviewWindow, app: &tauri::AppHandle) {
                     size.height,
                     window_w,
                     window_h,
+                    work_area,
                 );
                 let _ = window.set_position(tauri::Position::Physical(
                     tauri::PhysicalPosition::new(x, y),
@@ -153,6 +177,10 @@ fn position_popover(window: &tauri::WebviewWindow, app: &tauri::AppHandle) {
             }
         }
     }
+}
+
+fn position_popover(window: &tauri::WebviewWindow, app: &tauri::AppHandle) {
+    position_popover_with_size(window, app, None);
 }
 
 fn toggle_popover(app: &tauri::AppHandle) {
@@ -179,7 +207,7 @@ fn create_popover_window(app: &tauri::AppHandle) {
         tauri::WebviewUrl::App("index.html".into()),
     )
     .title("GLM Quota Monitor")
-    .inner_size(360.0, 600.0)
+    .inner_size(platform::POPOVER_WIDTH_LOGICAL, 600.0)
     .decorations(false)
     .resizable(false)
     .skip_taskbar(true)
@@ -1374,17 +1402,21 @@ fn start_window_drag(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn fit_window_size(app: tauri::AppHandle, height: f64) {
+fn fit_window_size(app: tauri::AppHandle, height: f64, width: Option<f64>) {
     if let Some(window) = app.get_webview_window(POPOVER_LABEL) {
-        let pos = match window.outer_position() {
-            Ok(p) => p,
-            Err(_) => return,
-        };
         let scale = window.scale_factor().unwrap_or(1.0);
-        let new_w = (360.0 * scale) as u32;
-        let new_h = (height * scale) as u32;
-        let _ = window.set_size(tauri::PhysicalSize::new(new_w, new_h));
-        let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+        let current_width = window
+            .inner_size()
+            .map(|size| size.width as f64 / scale)
+            .unwrap_or(platform::POPOVER_WIDTH_LOGICAL);
+        let logical_width = width.unwrap_or(current_width).clamp(360.0, 960.0);
+        let logical_height = height.clamp(160.0, 1200.0);
+        let new_w = (logical_width * scale) as u32;
+        let new_h = (logical_height * scale) as u32;
+        let requested_size = tauri::PhysicalSize::new(new_w, new_h);
+        let _ = window.set_size(requested_size);
+        // set_size 的系统事件可能延迟，立即重定位时直接使用本次请求尺寸。
+        position_popover_with_size(&window, &app, Some(requested_size));
     }
 }
 

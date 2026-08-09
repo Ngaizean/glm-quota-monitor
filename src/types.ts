@@ -2,6 +2,7 @@ export interface Account {
   id: string;
   alias: string;
   purpose: string;
+  /** 后端历史数据可能包含未知值；使用前统一通过 normalizePlatform 收敛。 */
   platform?: string;
   level: string | null;
   is_active: boolean;

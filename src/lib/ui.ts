@@ -14,8 +14,8 @@ export type StatusLevel = "success" | "warning" | "danger";
 
 /** 根据使用率百分比返回状态级别 */
 export function getStatusLevel(pct: number): StatusLevel {
-  if (pct > STATUS_THRESHOLDS.danger) return "danger";
-  if (pct > STATUS_THRESHOLDS.warning) return "warning";
+  if (pct >= STATUS_THRESHOLDS.danger) return "danger";
+  if (pct >= STATUS_THRESHOLDS.warning) return "warning";
   return "success";
 }
 
@@ -27,15 +27,6 @@ export function statusColorVar(level: StatusLevel): string {
 /** 状态级别 → 渐变 CSS var（用于进度条填充） */
 export function statusGradientVar(level: StatusLevel): string {
   return `var(--gradient-${level})`;
-}
-
-/** 状态级别 → 单色 CSS 类（用于小圆点/文本） */
-export function statusBgClass(level: StatusLevel): string {
-  return `bg-[var(--color-${level})]`;
-}
-
-export function statusTextClass(level: StatusLevel): string {
-  return `text-[var(--color-${level})]`;
 }
 
 /** 头像渐变 — 多色调色板（头像适合多色，不跟随 accent） */

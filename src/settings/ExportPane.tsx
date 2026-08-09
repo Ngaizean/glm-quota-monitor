@@ -1,75 +1,163 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { DownloadIcon } from "../components/icons";
+import { Button } from "../components/ui/Button";
+import { EmptyState } from "../components/ui/EmptyState";
+import { SelectField } from "../components/ui/Field";
+import { StatusNotice } from "../components/ui/StatusNotice";
 import type { Account } from "../types";
+import SettingsSection from "./components/SettingsSection";
+
+type ExportFormat = "csv" | "json";
+
+function sanitizeFilename(value: string): string {
+  const sanitized = value
+    .normalize("NFKC")
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "");
+  return sanitized || "account";
+}
 
 function downloadFile(content: string, filename: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.hidden = true;
+  document.body.appendChild(anchor);
+  anchor.click();
+  window.setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, 1_000);
 }
 
 export default function ExportPane() {
   const { t } = useTranslation();
-  const [exporting, setExporting] = useState(false);
-  const [status, setStatus] = useState("");
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState<ExportFormat | null>(null);
+  const [status, setStatus] = useState<{ kind: "success" | "error"; text: string } | null>(null);
 
-  async function handleExport(format: "csv" | "json") {
-    setExporting(true);
-    setStatus("");
+  useEffect(() => {
+    let disposed = false;
+    invoke<Account[]>("list_accounts")
+      .then((items) => {
+        if (disposed) return;
+        setAccounts(items);
+      })
+      .catch(() => {
+        if (!disposed) setStatus({ kind: "error", text: t("export.loadError") });
+      })
+      .finally(() => {
+        if (!disposed) setLoading(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [t]);
+
+  const selectedAccount = useMemo(
+    () => accounts.find((account) => account.id === selectedId) ?? null,
+    [accounts, selectedId],
+  );
+
+  async function handleExport(format: ExportFormat) {
+    if (!selectedAccount) return;
+    setExporting(format);
+    setStatus(null);
     try {
-      const accounts = await invoke<Account[]>("list_accounts");
-      if (accounts.length === 0) {
-        setStatus(t("common.error") + ": no accounts");
-        return;
-      }
-      const account = accounts.find((a) => a.is_primary) || accounts[0];
-      const cmd = format === "csv" ? "export_usage_csv" : "export_usage_json";
-      const data = await invoke<string>(cmd, { accountId: account.id });
-      const ext = format === "csv" ? "csv" : "json";
-      const mime = format === "csv" ? "text/csv" : "application/json";
-      downloadFile(data, `glm-usage-${account.alias}.${ext}`, mime);
-      setStatus(t("common.success") + " ✓");
-    } catch (e) {
-      setStatus(t("common.error") + ": " + String(e));
+      const command = format === "csv" ? "export_usage_csv" : "export_usage_json";
+      const data = await invoke<string>(command, { accountId: selectedAccount.id });
+      const mimeType = format === "csv" ? "text/csv;charset=utf-8" : "application/json;charset=utf-8";
+      downloadFile(
+        data,
+        `glm-usage-${sanitizeFilename(selectedAccount.alias)}.${format}`,
+        mimeType,
+      );
+      setStatus({
+        kind: "success",
+        text: t("export.success", { account: selectedAccount.alias, format: format.toUpperCase() }),
+      });
+    } catch (error) {
+      setStatus({ kind: "error", text: t("export.failed", { error: String(error) }) });
     } finally {
-      setExporting(false);
+      setExporting(null);
     }
   }
 
+  if (!loading && accounts.length === 0 && status?.kind === "error") {
+    return <StatusNotice tone="danger">{status.text}</StatusNotice>;
+  }
+
+  if (!loading && accounts.length === 0) {
+    return (
+      <SettingsSection>
+        <EmptyState
+          icon={<DownloadIcon size={22} />}
+          title={t("export.noAccounts")}
+          description={t("export.noAccountsDesc")}
+        />
+      </SettingsSection>
+    );
+  }
+
   return (
-    <div className="space-y-3">
-      <div className="bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border-subtle)] p-3.5 space-y-3">
-        <span className="text-xs font-medium text-[var(--color-text-primary)] block">
-          {t("export.title")}
-        </span>
-        <p className="text-[10px] text-[var(--color-text-tertiary)]">
-          {t("export.desc")}
-        </p>
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleExport("csv")}
-            disabled={exporting}
-            className="flex-1 text-[11px] font-medium px-3 py-2 bg-[var(--color-accent)] text-white rounded-lg hover:bg-[var(--color-accent-hover)] transition-[var(--transition-fast)] disabled:opacity-40"
+    <div className="space-y-4">
+      {status && (
+        <StatusNotice tone={status.kind === "success" ? "success" : "danger"}>
+          {status.text}
+        </StatusNotice>
+      )}
+
+      <SettingsSection title={t("export.title")} description={t("export.desc")}>
+        <div className="space-y-5 p-5">
+          <SelectField
+            label={t("export.accountLabel")}
+            description={t("export.accountDesc")}
+            value={selectedId}
+            disabled={loading || exporting !== null}
+            onChange={(event) => setSelectedId(event.target.value)}
           >
-            {t("export.exportCsv")}
-          </button>
-          <button
-            onClick={() => handleExport("json")}
-            disabled={exporting}
-            className="flex-1 text-[11px] font-medium px-3 py-2 bg-[var(--color-bg-primary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] rounded-lg hover:border-[var(--color-accent)] transition-[var(--transition-fast)] disabled:opacity-40"
-          >
-            {t("export.exportJson")}
-          </button>
+            {loading && <option value="">{t("export.loadingAccounts")}</option>}
+            {!loading && <option value="">{t("export.accountLabel")}</option>}
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.alias}{account.is_primary ? ` · ${t("export.primaryAccount")}` : ""}
+              </option>
+            ))}
+          </SelectField>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              variant="primary"
+              fullWidth
+              leadingIcon={<DownloadIcon size={15} />}
+              loading={exporting === "csv"}
+              loadingLabel={t("export.exporting")}
+              disabled={!selectedAccount || exporting !== null}
+              onClick={() => void handleExport("csv")}
+            >
+              {t("export.exportCsv")}
+            </Button>
+            <Button
+              fullWidth
+              leadingIcon={<DownloadIcon size={15} />}
+              loading={exporting === "json"}
+              loadingLabel={t("export.exporting")}
+              disabled={!selectedAccount || exporting !== null}
+              onClick={() => void handleExport("json")}
+            >
+              {t("export.exportJson")}
+            </Button>
+          </div>
         </div>
-        {status && (
-          <div className="text-[10px] text-[var(--color-text-tertiary)]">{status}</div>
-        )}
-      </div>
+      </SettingsSection>
     </div>
   );
 }

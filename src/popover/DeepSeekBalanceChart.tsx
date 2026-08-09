@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   LineChart,
@@ -10,27 +10,27 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
+import { useAsyncResource } from "../hooks/useAsyncResource";
+import { formatChartTime, formatCurrency, resolveDisplayLocale, type DisplayLocale } from "../lib/formatters";
 import type { DeepSeekBalancePoint } from "../types";
-
-function formatTime(ts: string) {
-  const match = ts.match(/(\d{2}):(\d{2})/);
-  return match ? `${match[1]}:${match[2]}` : "";
-}
+import { downsampleEvenly, selectDominantCurrency } from "./metrics";
 
 interface CustomTooltipProps {
   active?: boolean;
   payload?: Array<{ value: number }>;
   label?: string;
+  currency: string;
+  locale: DisplayLocale;
 }
 
-function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
+function CustomTooltip({ active, payload, label, currency, locale }: CustomTooltipProps) {
   const { t } = useTranslation();
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 shadow-md text-[10px]">
+    <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 shadow-md text-[11px]">
       <div className="text-[var(--color-text-tertiary)] mb-1">{label}</div>
       <div className="text-emerald-500 font-medium tabular-nums">
-        {t("trendChart.balanceLabel")}: ¥{payload[0].value.toFixed(2)}
+        {t("trendChart.balanceLabel")}: {formatCurrency(payload[0].value, currency, locale)}
       </div>
     </div>
   );
@@ -51,62 +51,40 @@ export default function DeepSeekBalanceChart({
   accountId: string;
   refreshKey: number;
 }) {
-  const { t } = useTranslation();
-  const [raw, setRaw] = useState<DeepSeekBalancePoint[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { t, i18n } = useTranslation();
   const [range, setRange] = useState<number>(1);
+  const resource = useAsyncResource(
+    () => invoke<DeepSeekBalancePoint[]>("get_deepseek_balance_history", { accountId, days: range }),
+    [accountId, refreshKey, range],
+    { enabled: Boolean(accountId), clearOnLoad: true },
+  );
+  const raw = resource.data ?? [];
+  const locale = resolveDisplayLocale(i18n.resolvedLanguage ?? i18n.language);
 
-  useEffect(() => {
-    setLoading(true);
-    invoke<DeepSeekBalancePoint[]>("get_deepseek_balance_history", { accountId, days: range })
-      .then(setRaw)
-      .catch(() => setRaw([]))
-      .finally(() => setLoading(false));
-  }, [accountId, refreshKey, range]);
+  const selected = useMemo(() => selectDominantCurrency(raw), [raw]);
+  const data = useMemo(() => downsampleEvenly(selected.points, 240).map((point) => ({
+    ...point,
+    label: formatChartTime(point.timestamp, range, locale),
+  })), [selected.points, range, locale]);
 
-  // 多币种：取点数最多的币种（通常账号只有一种），其余丢弃以保证单线连续。
-  const data = useMemo(() => {
-    if (raw.length === 0) return [];
-    const counts = new Map<string, number>();
-    for (const p of raw) counts.set(p.currency, (counts.get(p.currency) ?? 0) + 1);
-    let best = raw[0].currency;
-    let bestN = 0;
-    for (const [c, n] of counts) {
-      if (n > bestN) {
-        best = c;
-        bestN = n;
-      }
-    }
-    return raw
-      .filter((p) => p.currency === best)
-      .map((p) => ({ totalBalance: p.totalBalance, label: formatTime(p.timestamp) }));
-  }, [raw]);
-
-  if (loading) {
-    return (
-      <div className="mt-2 px-3 py-2">
-        <div className="text-[10px] text-[var(--color-text-tertiary)]">{t("common.loading")}</div>
-      </div>
-    );
-  }
-
-  if (data.length < 2) return null;
-
-  const maxTotal = Math.max(...data.map((d) => d.totalBalance));
+  const maxTotal = Math.max(...data.map((d) => d.totalBalance), 0);
   const yMax = Math.max(maxTotal * 1.1, 1);
 
   return (
     <div className="mt-2 px-1">
       <div className="flex items-center justify-between mb-1.5">
-        <div className="text-[10px] font-medium text-[var(--color-text-secondary)]">
+        <div className="text-xs font-medium text-[var(--color-text-secondary)]">
           {t("deepseekPane.balanceChartTitle")}
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5" role="tablist" aria-label={t("deepseekPane.balanceChartTitle")}>
           {RANGES.map((r) => (
             <button
               key={r}
+              type="button"
+              role="tab"
+              aria-selected={range === r}
               onClick={() => setRange(r)}
-              className={`px-1.5 py-0.5 rounded text-[9px] tabular-nums transition-colors ${
+              className={`px-1.5 py-0.5 rounded text-xs tabular-nums transition-colors ${
                 range === r
                   ? "bg-[var(--color-accent)] text-white"
                   : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
@@ -117,9 +95,26 @@ export default function DeepSeekBalanceChart({
           ))}
         </div>
       </div>
-      <div className="h-[100px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 2, right: 4, left: -16, bottom: 0 }}>
+      {resource.loading && (
+        <div role="status" aria-live="polite" className="px-2 py-2 text-[11px] text-[var(--color-text-tertiary)]">
+          {t("common.loading")}
+        </div>
+      )}
+      {resource.error && (
+        <div role="status" className="px-2 py-2 text-[11px] text-[var(--color-danger)]">
+          {t("common.error")}
+        </div>
+      )}
+      {!resource.loading && !resource.error && data.length < 2 && (
+        <div role="status" className="px-2 py-2 text-[11px] text-[var(--color-text-tertiary)]">
+          {t("deepseekPane.noData")}
+        </div>
+      )}
+      {!resource.loading && !resource.error && data.length >= 2 && (
+        <>
+          <div className="h-[100px]" role="img" aria-label={t("deepseekPane.balanceChartTitle")}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data} margin={{ top: 2, right: 4, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-subtle)" />
             <XAxis
               dataKey="label"
@@ -133,9 +128,9 @@ export default function DeepSeekBalanceChart({
               tick={{ fontSize: 8, fill: "var(--color-text-tertiary)" }}
               axisLine={{ stroke: "var(--color-border-subtle)" }}
               tickLine={false}
-              tickFormatter={(v: number) => `¥${v >= 100 ? Math.round(v) : v.toFixed(0)}`}
+              tickFormatter={(v: number) => formatCurrency(v, selected.currency, locale)}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip currency={selected.currency} locale={locale} />} />
             <Line
               type="monotone"
               dataKey="totalBalance"
@@ -144,15 +139,17 @@ export default function DeepSeekBalanceChart({
               dot={false}
               activeDot={{ r: 3, fill: "#10b981" }}
             />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="flex items-center gap-3 mt-1">
-        <div className="flex items-center gap-1">
-          <div className="w-2.5 h-0.5 rounded bg-emerald-500" />
-          <span className="text-[9px] text-[var(--color-text-tertiary)]">{t("trendChart.balanceLabel")}</span>
-        </div>
-      </div>
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex items-center gap-3 mt-1">
+            <div className="flex items-center gap-1">
+              <div className="w-2.5 h-0.5 rounded bg-emerald-500" />
+              <span className="text-[11px] text-[var(--color-text-tertiary)]">{t("trendChart.balanceLabel")}</span>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

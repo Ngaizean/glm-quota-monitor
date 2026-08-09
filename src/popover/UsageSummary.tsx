@@ -1,29 +1,37 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TokenUsageSummary, TokenUsagePeriod, TokenHistoryPoint } from "../types";
+import { useAsyncResource } from "../hooks/useAsyncResource";
+import { formatTokens, resolveDisplayLocale } from "../lib/formatters";
+import { clampPercentage } from "../lib/quota";
 import { getStatusLevel, statusColorVar } from "../lib/ui";
-
-function formatTokens(n: number, t: (key: string) => string): string {
-  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}${t('usage.hundredMillion')}`;
-  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}${t('usage.tenThousand')}`;
-  if (n >= 1) return `${n.toFixed(0)}`;
-  return "0";
-}
+import { aggregateDailyRollingTokens } from "./metrics";
 
 function getStatusColor(pct: number): string {
   return statusColorVar(getStatusLevel(pct));
 }
 
 /** 环形进度条 SVG */
-function RingGauge({ pct, size = 44, stroke = 4 }: { pct: number; size?: number; stroke?: number }) {
+function RingGauge({ pct, label, emptyLabel, size = 44, stroke = 4 }: { pct: number | null; label: string; emptyLabel: string; size?: number; stroke?: number }) {
+  const hasPercentage = pct !== null && Number.isFinite(pct);
+  const normalizedPercentage = clampPercentage(pct ?? 0);
   const r = (size - stroke) / 2;
   const circumference = 2 * Math.PI * r;
-  const fill = circumference * (Math.min(pct, 100) / 100);
-  const color = getStatusColor(pct);
+  const fill = circumference * (normalizedPercentage / 100);
+  const color = getStatusColor(normalizedPercentage);
 
   return (
-    <svg width={size} height={size} className="shrink-0 -rotate-90">
+    <svg
+      width={size}
+      height={size}
+      className="shrink-0 -rotate-90"
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={hasPercentage ? normalizedPercentage : undefined}
+      aria-valuetext={hasPercentage ? `${Math.round(normalizedPercentage)}%` : emptyLabel}
+    >
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-bg-tertiary)" strokeWidth={stroke} />
       <circle
         cx={size / 2} cy={size / 2} r={r} fill="none"
@@ -37,20 +45,22 @@ function RingGauge({ pct, size = 44, stroke = 4 }: { pct: number; size?: number;
 
 /** 今日卡片 — 水位 + 环形进度 */
 function TodayCard({ data, tokenPct }: { data: TokenUsagePeriod; tokenPct: number | null }) {
-  const { t } = useTranslation();
-  const pct = tokenPct ?? 0;
+  const { t, i18n } = useTranslation();
+  const hasPercentage = tokenPct !== null && Number.isFinite(tokenPct);
+  const pct = clampPercentage(tokenPct ?? 0);
   const color = getStatusColor(pct);
+  const locale = resolveDisplayLocale(i18n.resolvedLanguage ?? i18n.language);
 
   return (
     <div className="flex items-center gap-3 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] px-3 py-3 flex-1 min-w-0">
-      <RingGauge pct={pct} />
+      <RingGauge pct={tokenPct} label={t("usage.today")} emptyLabel={t("usage.noData")} />
       <div className="min-w-0">
-        <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] tracking-wider">{t('usage.today')}</div>
+        <div className="text-[11px] font-bold text-[var(--color-text-tertiary)] tracking-wider">{t('usage.today')}</div>
         <div className="text-[18px] font-bold tabular-nums leading-tight" style={{ color }}>
-          {pct > 0 ? `${Math.round(pct)}%` : "—"}
+          {hasPercentage ? `${Math.round(pct)}%` : "—"}
         </div>
-        <div className="text-[9px] text-[var(--color-text-tertiary)]">
-          {data.total_tokens > 0 ? `${formatTokens(data.total_tokens, t)} ${t('usage.token')}` : t('usage.noData')}
+        <div className="text-[11px] text-[var(--color-text-tertiary)]">
+          {data.total_tokens > 0 ? `${formatTokens(data.total_tokens, locale)} ${t('usage.token')}` : t('usage.noData')}
         </div>
       </div>
     </div>
@@ -69,7 +79,7 @@ function TrendArrow({ todayDaily, periodDaily }: { todayDaily: number; periodDai
   const arrow = up ? "↑" : "↓";
 
   return (
-    <span className="text-[9px] font-bold tabular-nums ml-1" style={{ color }}>
+    <span className="text-[11px] font-bold tabular-nums ml-1" style={{ color }}>
       {arrow}{pct >= 100 ? `${ratio.toFixed(1)}x` : `${Math.round(pct)}%`}
     </span>
   );
@@ -77,21 +87,22 @@ function TrendArrow({ todayDaily, periodDaily }: { todayDaily: number; periodDai
 
 /** 时段卡片 — 总量 + 日均 + 趋势箭头 */
 function PeriodCard({ data, label, days, todayDaily }: { data: TokenUsagePeriod; label: string; days: number; todayDaily: number }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = resolveDisplayLocale(i18n.resolvedLanguage ?? i18n.language);
   const avg = data.total_tokens / days;
 
   return (
     <div className="flex-1 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] px-3 py-2.5 min-w-0">
       <div className="flex items-center gap-1">
-        <span className="text-[9px] font-bold text-[var(--color-text-tertiary)] tracking-wider">{label}</span>
+        <span className="text-[11px] font-bold text-[var(--color-text-tertiary)] tracking-wider">{label}</span>
       </div>
       <div className="flex items-baseline gap-1.5 mt-0.5">
         <span className="text-[13px] font-bold tabular-nums text-[var(--color-text-primary)] leading-none">
-          {formatTokens(data.total_tokens, t)}
+          {formatTokens(data.total_tokens, locale)}
         </span>
       </div>
-      <div className="flex items-center text-[9px] text-[var(--color-text-tertiary)] mt-0.5">
-        <span>{t('usage.dailyAvg', { value: formatTokens(avg, t) })}</span>
+      <div className="flex items-center text-[11px] text-[var(--color-text-tertiary)] mt-0.5">
+        <span>{t('usage.dailyAvg', { value: formatTokens(avg, locale) })}</span>
         <TrendArrow todayDaily={todayDaily} periodDaily={avg} />
       </div>
     </div>
@@ -100,30 +111,24 @@ function PeriodCard({ data, label, days, todayDaily }: { data: TokenUsagePeriod;
 
 /** 纯 CSS 柱状趋势图 — 按天聚合 token 消耗量 */
 function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   if (data.length < 2) return null;
 
-  // 按天聚合：最近的在前，只取最近 7 天
-  const dailyMap = new Map<string, number>();
-  for (const pt of data) {
-    const day = pt.timestamp.slice(0, 10);
-    const tokens = pt.tokens_24h ?? 0;
-    dailyMap.set(day, (dailyMap.get(day) ?? 0) + tokens);
-  }
-  const days = Array.from(dailyMap.entries()).slice(-7);
+  const days = aggregateDailyRollingTokens(data).slice(-7);
   if (days.length < 2) return null;
 
-  const maxVal = Math.max(...days.map(([, v]) => v), 1);
+  const maxVal = Math.max(...days.map(({ tokens }) => tokens), 1);
   const dayLabels = t("weekdays.short", { returnObjects: true }) as string[];
+  const locale = resolveDisplayLocale(i18n.resolvedLanguage ?? i18n.language);
 
   return (
     <div>
-      <div className="text-[9px] font-bold text-[var(--color-text-tertiary)] tracking-wider px-0.5 mb-2">
+      <div className="text-[11px] font-bold text-[var(--color-text-tertiary)] tracking-wider px-0.5 mb-2">
         {t('usage.dailyConsumption')}
       </div>
       <div className="rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] px-3 py-3">
         <div className="flex items-end gap-1.5 h-[60px]">
-          {days.map(([day, val], i) => {
+          {days.map(({ date: day, tokens: val }, i) => {
             const h = Math.max((val / maxVal) * 100, 3);
             const d = new Date(day + "T00:00:00");
             const isToday = i === days.length - 1;
@@ -137,10 +142,15 @@ function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
                   <div
                     className={`w-full rounded-t-sm ${barColor} transition-all duration-500 animate-progress`}
                     style={{ height: `${h}%` }}
-                    title={`${formatTokens(val, t)} ${t('usage.token')}`}
+                    role="progressbar"
+                    aria-label={`${day} ${t('usage.token')}`}
+                    aria-valuemin={0}
+                    aria-valuemax={maxVal}
+                    aria-valuenow={val}
+                    title={`${formatTokens(val, locale)} ${t('usage.token')}`}
                   />
                 </div>
-                <span className="text-[9px] text-[var(--color-text-tertiary)] tabular-nums">
+                <span className="text-[11px] text-[var(--color-text-tertiary)] tabular-nums">
                   {dayLabels[d.getDay()]}
                 </span>
               </div>
@@ -154,27 +164,15 @@ function TrendBars({ data }: { data: TokenHistoryPoint[] }) {
 
 export default function UsageSummary({ accountId, tokenPct, refreshKey }: { accountId: string; tokenPct: number | null; refreshKey: number }) {
   const { t } = useTranslation();
-  const [summary, setSummary] = useState<TokenUsageSummary | null>(null);
-  const [history, setHistory] = useState<TokenHistoryPoint[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!accountId) return;
-    let stale = false;
-    setLoading(true);
-    Promise.all([
-      invoke<TokenUsageSummary>("get_usage_summary", { accountId }).catch(() => null),
+  const resource = useAsyncResource(async () => {
+    const [summary, history] = await Promise.all([
+      invoke<TokenUsageSummary>("get_usage_summary", { accountId }),
       invoke<TokenHistoryPoint[]>("get_token_history", { accountId, days: 30 }).catch(() => []),
-    ]).then(([sum, hist]) => {
-      if (stale) return;
-      setSummary(sum);
-      setHistory(hist);
-      setLoading(false);
-    });
-    return () => { stale = true; };
-  }, [accountId, refreshKey]);
+    ]);
+    return { summary, history };
+  }, [accountId, refreshKey], { enabled: Boolean(accountId), clearOnLoad: true });
 
-  if (loading) {
+  if (resource.loading) {
     return (
       <div className="space-y-2.5">
         <div className="h-3 w-20 skeleton rounded" />
@@ -187,7 +185,15 @@ export default function UsageSummary({ accountId, tokenPct, refreshKey }: { acco
     );
   }
 
-  if (!summary) return null;
+  if (resource.error || !resource.data) {
+    return (
+      <div role="status" className="text-[11px] text-[var(--color-text-tertiary)] py-2">
+        {resource.error ? t("common.error") : t("usage.noData")}
+      </div>
+    );
+  }
+
+  const { summary, history } = resource.data;
 
   const todayDaily = summary.today.total_tokens; // 今日总量即今日日均
 
