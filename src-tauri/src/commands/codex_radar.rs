@@ -1,7 +1,8 @@
-//! Codex 雷达 —— codexradar.com 公开摘要接入
+//! Codex 雷达 —— codexradar.com 智力效率与重置预测接入
 //!
-//! 显示站点当前头条模型及其 IQ 分数；前端按 prediction.probability_24h
-//! （24h 硬重置概率）做颜色编码。归属要求：数据来自 Codex 雷达 codexradar.com。
+//! IQ 必须跟随网站 `/api/intelligence-efficiency-metrics` 的实时卡片口径；
+//! 24h 硬重置概率仍来自 `/current.json` 的 prediction。归属要求：数据来自
+//! Codex 雷达 codexradar.com。
 //!
 //! 策略：后台线程定时拉取（数据源响应慢 ~10s），缓存到 app state，
 //! 前端 invoke 同步读取缓存，永不阻塞 popover。
@@ -11,12 +12,13 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 
-const RADAR_URL: &str = "https://codexradar.com/current.json";
+const RADAR_METRICS_URL: &str = "https://codexradar.com/api/intelligence-efficiency-metrics";
+const RADAR_STATUS_URL: &str = "https://codexradar.com/current.json";
 
 /// 缓存的雷达摘要（前端渲染所需的最小字段集）
 #[derive(Serialize, Clone, Default)]
 pub struct CodexRadarData {
-    /// 站点头条模型的可读名，如 "GPT-5.6 Sol max"
+    /// 网站智力效率卡片中 IQ 最高模型的可读名，如 "GPT-5.6 Sol xhigh"
     pub best_model: String,
     /// 对应 IQ 分数
     pub best_score: f64,
@@ -24,16 +26,31 @@ pub struct CodexRadarData {
     pub probability_24h: f64,
     /// 文本级概率档位（low/medium/high/...）
     pub probability_level: String,
-    /// 缓存写入时间（本地 ISO 时间）
+    /// 网站智力效率快照的来源时间（ISO 时间）
     pub updated_at: String,
 }
 
 /// 全局缓存 state：后台线程写，command 读
 pub struct CodexRadarState(pub std::sync::Mutex<Option<CodexRadarData>>);
 
-/// gpt-5.6-sol + max -> "GPT-5.6 Sol"
-/// 规则与 Claude Code 状态栏脚本一致（与 comparisons.label 风格对齐）。
+/// gpt-5.6-sol + max -> "GPT-5.6 Sol max"
 fn pretty_model(model: &str, effort: &str) -> String {
+    let known_name = match model {
+        "gpt-5.6-sol" => Some("GPT-5.6 Sol"),
+        "gpt-5.6-terra" => Some("GPT-5.6 Terra"),
+        "gpt-5.6-luna" => Some("GPT-5.6 Luna"),
+        "gpt-5.5" => Some("GPT-5.5"),
+        "deepseek-v4-flash" => Some("DeepSeek V4 Flash"),
+        _ => None,
+    };
+    if let Some(name) = known_name {
+        return if effort.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name} {effort}")
+        };
+    }
+
     let mut parts: Vec<String> = Vec::new();
     for w in model.split('-') {
         if w.is_empty() {
@@ -69,146 +86,170 @@ fn pretty_model(model: &str, effort: &str) -> String {
     }
 }
 
-/// 从 current.json 解析出「站点头条」模型 + 重置概率。
-///
-/// 口径说明：网站头部展示的是 `model_iq.latest`（默认档的实时 IQ 分），
-/// 而 `model_iq.comparisons.*` 是各推理强度档位的横向对比——不同档位（xhigh/high/…）
-/// 的得分可以高于 headline，直接跨 comparisons 取 max 会让 app 显示的分值/模型与网站
-/// 头条对不上（例如网站头条 GPT-5.6 Sol 104.9，comparisons 里 xhigh 是 113.0）。
-/// 因此这里以 `latest` 为唯一口径（跟随网站最新消息）；仅当 latest 缺失时才回退
-/// comparisons 取最高档，保证显示与网站一致。
-fn parse_best(v: &serde_json::Value) -> CodexRadarData {
-    let mut best_score: f64 = 0.0;
-    let mut best_model: String = "?".to_string();
-
-    if let Some(iq) = v.get("model_iq") {
-        // 主口径：model_iq.latest（站点头条）
-        if let Some(latest) = iq.get("latest") {
-            if let Some(score) = latest.get("score").and_then(|s| s.as_f64()) {
-                let model = latest.get("model").and_then(|m| m.as_str()).unwrap_or("?");
-                let effort = latest
-                    .get("reasoning_effort")
-                    .and_then(|e| e.as_str())
-                    .unwrap_or("");
-                best_score = score;
-                best_model = pretty_model(model, effort);
-            }
-        }
-
-        // 兜底：latest 缺失时，从 comparisons.*.latest 取最高分（label 优先）
-        if best_model == "?" {
-            let mut cands: Vec<(f64, String)> = Vec::new();
-            if let Some(comp) = iq.get("comparisons").and_then(|c| c.as_object()) {
-                for (_, cv) in comp {
-                    let Some(lv) = cv.get("latest") else { continue };
-                    let Some(score) = lv.get("score").and_then(|s| s.as_f64()) else {
-                        continue;
-                    };
-                    let name = match cv.get("label").and_then(|l| l.as_str()) {
-                        Some(lbl) if !lbl.is_empty() => lbl.to_string(),
-                        _ => {
-                            let model = lv.get("model").and_then(|m| m.as_str()).unwrap_or("?");
-                            let effort = lv
-                                .get("reasoning_effort")
-                                .and_then(|e| e.as_str())
-                                .unwrap_or("");
-                            pretty_model(model, effort)
-                        }
-                    };
-                    cands.push((score, name));
-                }
-            }
-            cands.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-            if let Some((score, name)) = cands.first() {
-                best_score = *score;
-                best_model = name.clone();
-            }
-        }
+/// 按网站 `compactIqSnapshot` 的当前约束解析智力效率卡片，并选择最高 IQ 点。
+/// 模型、effort 和 IQ 始终来自同一个 point，避免把一个档位的名字和另一个档位的
+/// 分数拼在一起。
+fn parse_metrics(v: &serde_json::Value) -> Result<CodexRadarData, String> {
+    if v.get("schema").and_then(|value| value.as_u64()) != Some(2)
+        || v.get("mode").and_then(|value| value.as_str()) != Some("weighted_latest_3")
+    {
+        return Err("智力效率接口版本不受支持".to_string());
     }
 
+    let points = v
+        .get("points")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "智力效率响应缺少 points".to_string())?;
+
+    let best = points
+        .iter()
+        .filter_map(|point| {
+            let model = point.get("model")?.as_str()?.trim();
+            let effort = point.get("effort")?.as_str()?.trim();
+            let score = point.get("iq")?.as_f64()?;
+            if model.is_empty() || effort.is_empty() || !score.is_finite() {
+                return None;
+            }
+            Some((score, model, effort))
+        })
+        .max_by(|left, right| left.0.total_cmp(&right.0))
+        .ok_or_else(|| "智力效率响应没有有效 IQ 点".to_string())?;
+
+    let updated_at = v
+        .get("source_updated_at")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "智力效率响应缺少来源时间".to_string())?;
+
+    Ok(CodexRadarData {
+        best_model: pretty_model(best.1, best.2),
+        best_score: best.0,
+        probability_24h: 0.0,
+        probability_level: String::new(),
+        updated_at: updated_at.to_string(),
+    })
+}
+
+/// prediction 属于状态接口的独立数据域，只合并概率，不覆盖 metrics 选出的 IQ 对。
+fn apply_prediction(data: &mut CodexRadarData, v: &serde_json::Value) {
     let pred = v.get("prediction");
-    let p24 = pred
+    data.probability_24h = pred
         .and_then(|p| p.get("probability_24h"))
         .and_then(|x| x.as_f64())
         .unwrap_or(0.0);
-    let level = pred
+    data.probability_level = pred
         .and_then(|p| p.get("level"))
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
-
-    CodexRadarData {
-        best_model,
-        best_score,
-        probability_24h: p24,
-        probability_level: level,
-        updated_at: chrono::Local::now().to_rfc3339(),
-    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::parse_best;
-
-    #[test]
-    fn headline_latest_wins_over_higher_comparison_score() {
-        let value = serde_json::json!({
-            "model_iq": {
-                "latest": {
-                    "score": 104.9,
-                    "model": "gpt-5.6-sol",
-                    "reasoning_effort": "max"
-                },
-                "comparisons": {
-                    "xhigh": {
-                        "label": "Comparison xhigh",
-                        "latest": { "score": 113.0 }
-                    }
-                }
-            }
-        });
-
-        let result = parse_best(&value);
-        assert_eq!(result.best_model, "GPT-5.6 Sol max");
-        assert_eq!(result.best_score, 104.9);
-    }
-
-    #[test]
-    fn comparisons_are_used_when_headline_is_missing() {
-        let value = serde_json::json!({
-            "model_iq": {
-                "comparisons": {
-                    "low": { "label": "Low", "latest": { "score": 90.0 } },
-                    "high": { "label": "High", "latest": { "score": 110.0 } }
-                }
-            }
-        });
-
-        let result = parse_best(&value);
-        assert_eq!(result.best_model, "High");
-        assert_eq!(result.best_score, 110.0);
-    }
-}
-
-/// 拉取一次 codexradar.com/current.json 并解析。走代理 client（境外 Cloudflare 站点）。
-async fn fetch_radar() -> Result<CodexRadarData, String> {
-    let client = crate::proxy_http_client();
-    let resp = client
-        .get(RADAR_URL)
+async fn fetch_json(
+    client: &reqwest::Client,
+    url: &str,
+    force: bool,
+    label: &str,
+) -> Result<serde_json::Value, String> {
+    let mut request = client
+        .get(url)
         .header(reqwest::header::ACCEPT, "application/json")
         .header(
             reqwest::header::USER_AGENT,
             concat!("glm-quota-monitor/", env!("CARGO_PKG_VERSION")),
         )
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(20));
+    if force {
+        request = request
+            .query(&[("refresh", "1")])
+            .header(reqwest::header::CACHE_CONTROL, "no-cache");
+    }
+
+    request
         .send()
         .await
-        .map_err(|e| format!("雷达请求失败: {e}"))?;
-    let v: serde_json::Value = resp
+        .map_err(|e| format!("{label}请求失败: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("{label}返回错误状态: {e}"))?
         .json()
         .await
-        .map_err(|e| format!("雷达响应解析失败: {e}"))?;
-    Ok(parse_best(&v))
+        .map_err(|e| format!("{label}响应解析失败: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_prediction, parse_metrics};
+
+    #[test]
+    fn metrics_pick_highest_iq_with_matching_model_and_effort() {
+        let value = serde_json::json!({
+            "schema": 2,
+            "mode": "weighted_latest_3",
+            "source_updated_at": "2026-08-09T02:07:09+00:00",
+            "points": [
+                { "model": "gpt-5.6-sol", "effort": "max", "iq": 103.21 },
+                { "model": "gpt-5.6-sol", "effort": "xhigh", "iq": 106.43 },
+                { "model": "gpt-5.6-terra", "effort": "ultra", "iq": 98.57 }
+            ]
+        });
+
+        let result = parse_metrics(&value).expect("metrics payload should parse");
+        assert_eq!(result.best_model, "GPT-5.6 Sol xhigh");
+        assert_eq!(result.best_score, 106.43);
+        assert_eq!(result.updated_at, "2026-08-09T02:07:09+00:00");
+    }
+
+    #[test]
+    fn metrics_reject_unsupported_website_snapshot() {
+        let value = serde_json::json!({
+            "schema": 1,
+            "mode": "legacy",
+            "points": [{ "model": "gpt-5.6-sol", "effort": "max", "iq": 150.0 }]
+        });
+
+        assert!(parse_metrics(&value).is_err());
+    }
+
+    #[test]
+    fn prediction_is_merged_without_changing_the_iq_pair() {
+        let metrics = serde_json::json!({
+            "schema": 2,
+            "mode": "weighted_latest_3",
+            "source_updated_at": "2026-08-09T02:07:09+00:00",
+            "points": [
+                { "model": "gpt-5.6-sol", "effort": "xhigh", "iq": 106.43 }
+            ]
+        });
+        let prediction = serde_json::json!({
+            "prediction": { "probability_24h": 0.14, "level": "low" },
+            "model_iq": {
+                "latest": {
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "max",
+                    "score": 103.21
+                }
+            }
+        });
+
+        let mut result = parse_metrics(&metrics).expect("metrics payload should parse");
+        apply_prediction(&mut result, &prediction);
+
+        assert_eq!(result.best_model, "GPT-5.6 Sol xhigh");
+        assert_eq!(result.best_score, 106.43);
+        assert_eq!(result.probability_24h, 0.14);
+        assert_eq!(result.probability_level, "low");
+    }
+}
+
+/// 同时拉取网站智力效率卡片与状态预测。走代理 client（境外 Cloudflare 站点）。
+async fn fetch_radar(force: bool) -> Result<CodexRadarData, String> {
+    let client = crate::proxy_http_client();
+    let (metrics, status) = tokio::join!(
+        fetch_json(&client, RADAR_METRICS_URL, force, "智力效率"),
+        fetch_json(&client, RADAR_STATUS_URL, force, "重置预测")
+    );
+    let mut data = parse_metrics(&metrics?)?;
+    apply_prediction(&mut data, &status?);
+    Ok(data)
 }
 
 /// 把雷达刷新日志追加到 app_data_dir/codex_radar.log（release 无 stderr，便于诊断连通性）
@@ -236,7 +277,7 @@ fn log_radar(app: &tauri::AppHandle, msg: &str) {
 /// 后台线程调用：拉取并写入缓存 state，成功后 emit 事件通知前端。
 /// 失败仅打日志，不影响已有缓存。
 pub fn refresh_once(app: &tauri::AppHandle) {
-    match tauri::async_runtime::block_on(fetch_radar()) {
+    match tauri::async_runtime::block_on(fetch_radar(false)) {
         Ok(data) => {
             log_radar(
                 app,
@@ -269,7 +310,7 @@ pub fn get_codex_radar(state: State<'_, CodexRadarState>) -> Option<CodexRadarDa
 /// 失败仅 log + 返回 Err，不影响已有缓存。前端需显示足够长的 loading 态。
 #[tauri::command]
 pub async fn refresh_codex_radar(app: tauri::AppHandle) -> Result<CodexRadarData, String> {
-    match fetch_radar().await {
+    match fetch_radar(true).await {
         Ok(data) => {
             log_radar(
                 &app,

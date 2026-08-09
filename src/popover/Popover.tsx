@@ -28,7 +28,7 @@ function radarProbColor(p: number): string {
   return "#9ca3af"; // 灰
 }
 
-// 把 updated_at (ISO) 格式化成「刚刚 / N分钟前 / HH:MM」，每次刷新都更新
+// 把网站 source_updated_at (ISO) 格式化成「刚刚 / N分钟前 / HH:MM」
 function formatRefreshTime(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
@@ -139,7 +139,7 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
     refreshAll();
   }
 
-  // 手动刷新雷达（强制抓取 codexradar.com，约 10s）；防重复点击
+  // 手动刷新雷达（与网站一致地强制重新验证智力效率和预测接口）；防重复点击
   const refreshRadar = useCallback(async () => {
     if (radarRefreshing) return;
     setRadarRefreshing(true);
@@ -180,7 +180,7 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
                   <div className="flex items-center gap-1 min-w-0">
                     <span className="text-[8px]">🧠</span>
                     <span className="text-[9px] font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
-                      Codex 雷达
+                      Codex 雷达 · 最高 IQ
                     </span>
                   </div>
                   <button
@@ -235,7 +235,7 @@ function Popover({ onOpenSettings, screenHeight }: { onOpenSettings: () => void;
             </div>
             <div className="flex items-center justify-between text-[8px] text-[var(--color-text-tertiary)] opacity-60 mt-1.5">
               <span>数据来自 codexradar.com</span>
-              {radar.updated_at && <span>刷新于 {formatRefreshTime(radar.updated_at)}</span>}
+              {radar.updated_at && <span>数据于 {formatRefreshTime(radar.updated_at)}</span>}
             </div>
           </div>
         )}
