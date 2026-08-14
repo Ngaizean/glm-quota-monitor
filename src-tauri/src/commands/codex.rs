@@ -216,14 +216,17 @@ pub async fn upload_codex_auth(db: State<'_, Database>) -> Result<(), String> {
 }
 
 /// 从 Gist 拉取加密的鉴权内容（按 URL 类型分流）
-/// - raw URL (gistusercontent.com)：直接匿名 fetch
+/// - raw URL (githubusercontent.com)：直接匿名 fetch
 /// - 网页 URL / API URL：用 GitHub Token 解析出 raw URL 后再 fetch
 ///   （旧实现的“先试 raw、失败再 resolve”无效：网页/API URL 都返回 HTTP 200，
 ///   永远不会触发 fallback，导致 HTML/JSON 被当成 base64 送进 decrypt）
 pub async fn fetch_codex_gist_encrypted(db: &Database) -> Result<String, String> {
     let gist_url = read_setting(db, GIST_URL_KEY).ok_or("未配置 Gist URL，请在设置中填写")?;
     let proxy = crate::proxy_http_client();
-    if gist_url.contains("gistusercontent.com") {
+    // 实际 raw 域名是 gist.githubusercontent.com / gist.githubusercontent.com，
+    // 都以 githubusercontent.com 结尾；匹配后者才能命中（"gistusercontent.com"
+    // 不是其子串，旧写法导致 raw URL 也走 API 分支）
+    if gist_url.contains("githubusercontent.com") {
         codex::sync::fetch_from_gist(&proxy, &gist_url).await
     } else {
         // 网页 URL / API URL → resolve 出 raw URL
