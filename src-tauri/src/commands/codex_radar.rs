@@ -1,6 +1,6 @@
 //! Codex 雷达 —— codexradar.com 智力效率与重置预测接入
 //!
-//! IQ 必须跟随网站 `/api/intelligence-efficiency-metrics` 的实时卡片口径；
+//! IQ 必须跟随网站 `/api/radar-insights` 的 Codex 站“综合智能”口径；
 //! 24h 硬重置概率仍来自 `/current.json` 的 prediction。归属要求：数据来自
 //! Codex 雷达 codexradar.com。
 //!
@@ -12,14 +12,13 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 
-const RADAR_METRICS_URL: &str = "https://codexradar.com/api/intelligence-efficiency-metrics";
 const RADAR_INSIGHTS_URL: &str = "https://codexradar.com/api/radar-insights";
 const RADAR_STATUS_URL: &str = "https://codexradar.com/current.json";
 
 /// 缓存的雷达摘要（前端渲染所需的最小字段集）
 #[derive(Serialize, Clone, Default)]
 pub struct CodexRadarData {
-    /// 网站智力效率卡片中 IQ 最高模型的可读名，如 "GPT-5.6 Sol xhigh"
+    /// Codex 站综合智能 IQ 最高模型的可读名，如 "GPT-5.6 Sol ultra"
     pub best_model: String,
     /// 对应 IQ 分数
     pub best_score: f64,
@@ -98,25 +97,19 @@ fn pretty_model(model: &str, effort: &str) -> String {
     }
 }
 
-/// 按网站 `compactIqSnapshot` 的当前约束解析智力效率卡片，并选择最高 IQ 点。
+fn is_codex_model(model: &str) -> bool {
+    model.starts_with("gpt-") || model.starts_with("codex-")
+}
+
+/// 按网站 Codex 站“综合智能”卡片口径解析，并选择最高 IQ 点。
 /// 模型、effort 和 IQ 始终来自同一个 point，避免把一个档位的名字和另一个档位的
 /// 分数拼在一起。
-/// 2026-08-19 起上游将 schema 2 / mode weighted_latest_3 升级为 schema 3 /
-/// mode equal_latest_3（points 结构与 source_updated_at 字段实测兼容），
-/// 这里接受 schema 2..=3 并放宽 mode 校验，避免接口升级导致雷达整卡消失。
-fn parse_metrics(v: &serde_json::Value) -> Result<CodexRadarData, String> {
-    let schema = v
-        .get("schema")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(0);
-    if !(2..=3).contains(&schema) {
-        return Err(format!("智力效率接口版本不受支持: schema={schema}"));
-    }
-
+/// 只接受 Codex 可用的 GPT/Codex 模型，防止未限定站点的模型混入主卡。
+fn parse_comprehensive_metrics(v: &serde_json::Value) -> Result<CodexRadarData, String> {
     let points = v
-        .get("points")
+        .get("comprehensive_points")
         .and_then(|value| value.as_array())
-        .ok_or_else(|| "智力效率响应缺少 points".to_string())?;
+        .ok_or_else(|| "雷达洞察响应缺少 comprehensive_points".to_string())?;
 
     let best = points
         .iter()
@@ -124,19 +117,19 @@ fn parse_metrics(v: &serde_json::Value) -> Result<CodexRadarData, String> {
             let model = point.get("model")?.as_str()?.trim();
             let effort = point.get("effort")?.as_str()?.trim();
             let score = point.get("iq")?.as_f64()?;
-            if model.is_empty() || effort.is_empty() || !score.is_finite() {
+            if !is_codex_model(model) || effort.is_empty() || !score.is_finite() {
                 return None;
             }
             Some((score, model, effort))
         })
         .max_by(|left, right| left.0.total_cmp(&right.0))
-        .ok_or_else(|| "智力效率响应没有有效 IQ 点".to_string())?;
+        .ok_or_else(|| "雷达洞察响应没有有效的 Codex 综合智能点".to_string())?;
 
     let updated_at = v
         .get("source_updated_at")
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "智力效率响应缺少来源时间".to_string())?;
+        .ok_or_else(|| "雷达洞察响应缺少来源时间".to_string())?;
 
     Ok(CodexRadarData {
         best_model: pretty_model(best.1, best.2),
@@ -265,64 +258,60 @@ async fn fetch_json(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_prediction, parse_metrics, parse_recommendations};
+    use super::{apply_prediction, parse_comprehensive_metrics, parse_recommendations};
 
     #[test]
-    fn metrics_pick_highest_iq_with_matching_model_and_effort() {
+    fn insights_pick_codex_highest_comprehensive_iq_instead_of_other_stations() {
         let value = serde_json::json!({
-            "schema": 2,
-            "mode": "weighted_latest_3",
+            "schema": 1,
+            "source_updated_at": "2026-08-24T02:18:19+00:00",
+            "comprehensive_points": [
+                { "model": "gpt-5.6-sol", "effort": "max", "iq": 102.71 },
+                { "model": "gpt-5.6-sol", "effort": "ultra", "iq": 103.06 },
+                { "model": "kimi-k3", "effort": "max", "iq": 150.0 }
+            ]
+        });
+
+        let result =
+            parse_comprehensive_metrics(&value).expect("Codex comprehensive payload should parse");
+        assert_eq!(result.best_model, "GPT-5.6 Sol ultra");
+        assert_eq!(result.best_score, 103.06);
+    }
+
+    #[test]
+    fn comprehensive_metrics_keep_model_effort_and_score_together() {
+        let value = serde_json::json!({
             "source_updated_at": "2026-08-09T02:07:09+00:00",
-            "points": [
+            "comprehensive_points": [
                 { "model": "gpt-5.6-sol", "effort": "max", "iq": 103.21 },
                 { "model": "gpt-5.6-sol", "effort": "xhigh", "iq": 106.43 },
                 { "model": "gpt-5.6-terra", "effort": "ultra", "iq": 98.57 }
             ]
         });
 
-        let result = parse_metrics(&value).expect("metrics payload should parse");
+        let result = parse_comprehensive_metrics(&value).expect("metrics payload should parse");
         assert_eq!(result.best_model, "GPT-5.6 Sol xhigh");
         assert_eq!(result.best_score, 106.43);
         assert_eq!(result.updated_at, "2026-08-09T02:07:09+00:00");
     }
 
     #[test]
-    fn metrics_reject_unsupported_website_snapshot() {
+    fn comprehensive_metrics_require_codex_points() {
         let value = serde_json::json!({
-            "schema": 1,
-            "mode": "legacy",
-            "points": [{ "model": "gpt-5.6-sol", "effort": "max", "iq": 150.0 }]
-        });
-
-        assert!(parse_metrics(&value).is_err());
-    }
-
-    /// 2026-08-19 上游升级到 schema 3 / equal_latest_3,points 结构不变。
-    #[test]
-    fn metrics_accept_schema3_equal_latest() {
-        let value = serde_json::json!({
-            "schema": 3,
-            "mode": "equal_latest_3",
-            "source_updated_at": "2026-08-19T04:00:00+00:00",
-            "points": [
-                { "model": "gpt-5.6-sol", "effort": "max", "iq": 150.0 },
-                { "model": "gpt-5.6-terra", "effort": "ultra", "iq": 120.0 }
+            "source_updated_at": "2026-08-24T02:18:19+00:00",
+            "comprehensive_points": [
+                { "model": "kimi-k3", "effort": "max", "iq": 150.0 }
             ]
         });
 
-        let result = parse_metrics(&value).expect("schema3 payload should parse");
-        assert_eq!(result.best_model, "GPT-5.6 Sol max");
-        assert_eq!(result.best_score, 150.0);
-        assert_eq!(result.updated_at, "2026-08-19T04:00:00+00:00");
+        assert!(parse_comprehensive_metrics(&value).is_err());
     }
 
     #[test]
     fn prediction_is_merged_without_changing_the_iq_pair() {
         let metrics = serde_json::json!({
-            "schema": 2,
-            "mode": "weighted_latest_3",
             "source_updated_at": "2026-08-09T02:07:09+00:00",
-            "points": [
+            "comprehensive_points": [
                 { "model": "gpt-5.6-sol", "effort": "xhigh", "iq": 106.43 }
             ]
         });
@@ -337,7 +326,8 @@ mod tests {
             }
         });
 
-        let mut result = parse_metrics(&metrics).expect("metrics payload should parse");
+        let mut result =
+            parse_comprehensive_metrics(&metrics).expect("metrics payload should parse");
         apply_prediction(&mut result, &prediction);
 
         assert_eq!(result.best_model, "GPT-5.6 Sol xhigh");
@@ -400,17 +390,17 @@ mod tests {
     }
 }
 
-/// 同时拉取网站智力效率卡片与状态预测。走代理 client（境外 Cloudflare 站点）。
+/// 同时拉取 Codex 站综合智能、站长推荐与状态预测。走代理 client。
 async fn fetch_radar(force: bool) -> Result<CodexRadarData, String> {
     let client = crate::proxy_http_client();
-    let (metrics, status, insights) = tokio::join!(
-        fetch_json(&client, RADAR_METRICS_URL, force, "智力效率"),
+    let (insights, status) = tokio::join!(
+        fetch_json(&client, RADAR_INSIGHTS_URL, force, "雷达洞察"),
         fetch_json(&client, RADAR_STATUS_URL, force, "重置预测"),
-        fetch_json(&client, RADAR_INSIGHTS_URL, force, "站长推荐")
     );
-    let mut data = parse_metrics(&metrics?)?;
+    let insights = insights?;
+    let mut data = parse_comprehensive_metrics(&insights)?;
     apply_prediction(&mut data, &status?);
-    match insights.and_then(|value| parse_recommendations(&value)) {
+    match parse_recommendations(&insights) {
         Ok(recommendations) => apply_recommendations(&mut data, recommendations),
         Err(error) => eprintln!("codex radar recommendations unavailable: {error}"),
     }
