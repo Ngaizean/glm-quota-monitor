@@ -112,10 +112,25 @@ pub async fn add_codex_account(
     .await
     .map_err(|e| format!("验证失败（access_token 可能已失效）: {}", e))?;
 
-    // 3. 存库
+    // 3. 存库 + Keychain
+    let account =
+        store_codex_account(&app, &db, alias, usage.plan_type.unwrap_or_default(), &auth)?;
+
+    let _ = app.emit("accounts-changed", ());
+    Ok(account)
+}
+
+/// 验证通过后的落库：accounts 表插入 + Keychain 凭证存储 + 首账号设主账号。
+/// 失败时回滚已插入的行。
+fn store_codex_account(
+    app: &tauri::AppHandle,
+    db: &Database,
+    alias: String,
+    level: String,
+    auth: &codex::types::AuthJson,
+) -> Result<Account, String> {
     let now = Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
-    let level = usage.plan_type.unwrap_or_default();
 
     {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
@@ -142,8 +157,8 @@ pub async fn add_codex_account(
         }
     }
 
-    // 4. 凭证存 Keychain
-    if let Err(e) = codex::auth::store_auth_to_keychain(&id, &auth) {
+    // 凭证存 Keychain
+    if let Err(e) = codex::auth::store_auth_to_keychain(&id, auth) {
         let _ = db
             .conn
             .lock()
@@ -153,7 +168,7 @@ pub async fn add_codex_account(
 
     let _ = app.emit("accounts-changed", ());
 
-    let is_primary = count_is_primary(&db, &id);
+    let is_primary = count_is_primary(db, &id);
 
     Ok(Account {
         id,
@@ -166,6 +181,136 @@ pub async fn add_codex_account(
         created_at: now.clone(),
         updated_at: now,
     })
+}
+
+/// 预览：解析粘贴的 JSON，返回识别出的账号列表（脱敏，不含 token 明文）
+#[tauri::command]
+pub fn parse_codex_accounts_json_preview(
+    json: String,
+) -> Result<Vec<codex::import_json::ParsedCodexAccount>, String> {
+    codex::import_json::parse_codex_accounts_json(&json).map(|list| {
+        list.into_iter()
+            .map(|mut a| {
+                a.auth.tokens.access_token = String::new();
+                a.auth.tokens.refresh_token = String::new();
+                a.auth.tokens.id_token = String::new();
+                a
+            })
+            .collect()
+    })
+}
+
+/// 单个账号的导入结果
+#[derive(Debug, Serialize)]
+pub struct CodexJsonImportResult {
+    pub alias: String,
+    pub success: bool,
+    pub error: Option<String>,
+    pub account_id: Option<String>,
+}
+
+fn unique_codex_alias(existing: &[String], suggested: &str) -> String {
+    if !existing.iter().any(|alias| alias == suggested) {
+        return suggested.to_string();
+    }
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{suggested}-{suffix}");
+        if !existing.iter().any(|alias| alias == &candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+/// 从粘贴的 JSON 批量导入 Codex 账号：解析 → 逐个验证（wham/usage）→ 入库。
+/// 单个失败不影响其余账号，结果逐条返回。
+#[tauri::command]
+pub async fn add_codex_accounts_from_json(
+    app: tauri::AppHandle,
+    db: State<'_, Database>,
+    json: String,
+) -> Result<Vec<CodexJsonImportResult>, String> {
+    let parsed = codex::import_json::parse_codex_accounts_json(&json)?;
+
+    // 同名账号自动加序号后缀
+    let mut existing: Vec<String> = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {e}"))?;
+        let mut stmt = conn
+            .prepare("SELECT alias FROM accounts WHERE platform = 'codex'")
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        rows
+    };
+
+    let mut results = Vec::new();
+    for item in parsed {
+        let alias = unique_codex_alias(&existing, &item.suggested_alias);
+
+        let proxy = crate::proxy_http_client();
+        let verify = codex::client::CodexClient::get_usage_with_fallback(
+            &proxy,
+            &crate::HTTP_CLIENT,
+            &item.auth.tokens.access_token,
+        )
+        .await;
+
+        match verify {
+            Ok(usage) => {
+                let level = usage
+                    .plan_type
+                    .clone()
+                    .or_else(|| item.plan_type.clone())
+                    .unwrap_or_default();
+                match store_codex_account(&app, &db, alias.clone(), level, &item.auth) {
+                    Ok(acc) => {
+                        existing.push(alias.clone());
+                        results.push(CodexJsonImportResult {
+                            alias,
+                            success: true,
+                            error: None,
+                            account_id: Some(acc.id),
+                        });
+                    }
+                    Err(e) => results.push(CodexJsonImportResult {
+                        alias,
+                        success: false,
+                        error: Some(e),
+                        account_id: None,
+                    }),
+                }
+            }
+            Err(e) => results.push(CodexJsonImportResult {
+                alias,
+                success: false,
+                error: Some(format!("验证失败: {e}")),
+                account_id: None,
+            }),
+        }
+    }
+
+    let _ = app.emit("accounts-changed", ());
+    Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unique_codex_alias;
+
+    #[test]
+    fn batch_import_aliases_skip_all_existing_suffixes() {
+        let existing = vec![
+            "team".to_string(),
+            "team-2".to_string(),
+            "team-3".to_string(),
+        ];
+        assert_eq!(unique_codex_alias(&existing, "new"), "new");
+        assert_eq!(unique_codex_alias(&existing, "team"), "team-4");
+    }
 }
 
 fn count_is_primary(db: &Database, id: &str) -> bool {

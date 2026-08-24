@@ -67,6 +67,22 @@ export default function RadarCard({ data, refreshing, error, onRefresh }: RadarC
           <strong className="radar-metric__value">{Math.round(probability * 100)}%</strong>
         </div>
       </div>
+      {(data.daily_models.length > 0 || data.hard_problem_models.length > 0) && (
+        <div className="radar-card__recommendations">
+          {data.daily_models.length > 0 && (
+            <div className="radar-recommendation">
+              <span>{t("radar.dailyDevelopment")}</span>
+              <strong title={data.daily_models.join(" · ")}>{data.daily_models.join(" · ")}</strong>
+            </div>
+          )}
+          {data.hard_problem_models.length > 0 && (
+            <div className="radar-recommendation">
+              <span>{t("radar.hardProblems")}</span>
+              <strong title={data.hard_problem_models.join(" · ")}>{data.hard_problem_models.join(" · ")}</strong>
+            </div>
+          )}
+        </div>
+      )}
       <div className="radar-card__footer">
         <span>{t("radar.source")}</span>
         <span>{formatUpdatedAt(data.updated_at, i18n.language)}</span>

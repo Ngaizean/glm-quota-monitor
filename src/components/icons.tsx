@@ -97,6 +97,10 @@ export function UserIcon(props: IconProps) {
   return <IconFrame {...props}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></IconFrame>;
 }
 
+export function ServerIcon(props: IconProps) {
+  return <IconFrame {...props}><rect x="3" y="4" width="18" height="6" rx="1" /><rect x="3" y="14" width="18" height="6" rx="1" /><path d="M7 7h.01M7 17h.01" /></IconFrame>;
+}
+
 export function CodeIcon(props: IconProps) {
   return <IconFrame {...props}><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 6l-4 12" /></IconFrame>;
 }

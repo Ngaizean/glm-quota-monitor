@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { CloseIcon } from "../components/icons";
 import { Button } from "../components/ui/Button";
 import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { StatusNotice } from "../components/ui/StatusNotice";
@@ -13,8 +14,11 @@ export default function GeneralPane() {
   const { t, i18n } = useTranslation();
   const [refreshInterval, setRefreshInterval] = useState(5);
   const [autoStart, setAutoStart] = useState(false);
+  const [sub2apiEnabled, setSub2apiEnabled] = useState(false);
   const [defaultModel, setDefaultModel] = useState("");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [customModels, setCustomModels] = useState<string[]>([]);
+  const [customInput, setCustomInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
@@ -30,11 +34,13 @@ export default function GeneralPane() {
       const results = await Promise.allSettled([
         invoke<string | null>("get_setting", { key: "refresh_interval" }),
         invoke<string | null>("get_setting", { key: "auto_start" }),
+        invoke<string | null>("get_setting", { key: "sub2api_enabled" }),
         invoke<string>("get_default_model"),
+        invoke<string[]>("get_custom_models"),
       ]);
       if (disposed) return;
 
-      const [intervalResult, autoStartResult, modelResult] = results;
+      const [intervalResult, autoStartResult, sub2apiResult, modelResult, customModelsResult] = results;
       if (intervalResult.status === "fulfilled") {
         const value = Number(intervalResult.value);
         if (Number.isFinite(value) && value >= 1 && value <= 30) {
@@ -45,7 +51,13 @@ export default function GeneralPane() {
       if (autoStartResult.status === "fulfilled" && autoStartResult.value !== null) {
         setAutoStart(autoStartResult.value === "1");
       }
+      if (sub2apiResult.status === "fulfilled") {
+        setSub2apiEnabled(sub2apiResult.value === "true");
+      }
       if (modelResult.status === "fulfilled") setDefaultModel(modelResult.value);
+      if (customModelsResult.status === "fulfilled" && Array.isArray(customModelsResult.value)) {
+        setCustomModels(customModelsResult.value);
+      }
 
       if (results.some((result) => result.status === "rejected")) {
         setMessage({ kind: "error", text: t("generalPane.loadError") });
@@ -107,6 +119,22 @@ export default function GeneralPane() {
     }
   }
 
+  async function handleSub2apiToggle() {
+    const previous = sub2apiEnabled;
+    const next = !previous;
+    setSub2apiEnabled(next);
+    setSaving("sub2api");
+    try {
+      await invoke("set_setting", { key: "sub2api_enabled", value: next ? "true" : "false" });
+      showSaved();
+    } catch {
+      setSub2apiEnabled(previous);
+      setMessage({ kind: "error", text: t("generalPane.saveError") });
+    } finally {
+      setSaving(null);
+    }
+  }
+
   async function loadModels() {
     setModelsLoading(true);
     setMessage(null);
@@ -148,6 +176,35 @@ export default function GeneralPane() {
     }
   }
 
+  async function handleAddCustomModel() {
+    const model = customInput.trim();
+    if (!model) return;
+    setSaving("customModel");
+    try {
+      const next = await invoke<string[]>("add_custom_model", { model });
+      if (Array.isArray(next)) setCustomModels(next);
+      else setCustomModels(Array.from(new Set([...customModels, model])).sort());
+      setCustomInput("");
+      await handleModelSelect(model);
+    } catch {
+      setMessage({ kind: "error", text: t("generalPane.saveError") });
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  async function handleRemoveCustomModel(model: string) {
+    const previous = customModels;
+    setCustomModels((current) => current.filter((item) => item !== model));
+    try {
+      const next = await invoke<string[]>("remove_custom_model", { model });
+      setCustomModels(Array.isArray(next) ? next : previous.filter((item) => item !== model));
+    } catch {
+      setCustomModels(previous);
+      setMessage({ kind: "error", text: t("generalPane.saveError") });
+    }
+  }
+
   async function handleLanguageChange(language: "zh" | "en") {
     await i18n.changeLanguage(language);
     localStorage.setItem("lang", language);
@@ -155,9 +212,10 @@ export default function GeneralPane() {
   }
 
   const modelOptions = useMemo(() => {
-    if (!defaultModel || availableModels.includes(defaultModel)) return availableModels;
-    return [defaultModel, ...availableModels];
-  }, [availableModels, defaultModel]);
+    const all = Array.from(new Set([...availableModels, ...customModels])).sort();
+    if (!defaultModel || all.includes(defaultModel)) return all;
+    return [defaultModel, ...all];
+  }, [availableModels, customModels, defaultModel]);
 
   return (
     <div className="space-y-4">
@@ -208,6 +266,14 @@ export default function GeneralPane() {
             onCheckedChange={() => void handleAutoStartToggle()}
           />
         </SettingsRow>
+        <SettingsRow label={t("generalPane.sub2apiToggle")} description={t("generalPane.sub2apiToggleDesc")}>
+          <Toggle
+            aria-label={t("generalPane.sub2apiToggle")}
+            checked={sub2apiEnabled}
+            disabled={loading || saving === "sub2api"}
+            onCheckedChange={() => void handleSub2apiToggle()}
+          />
+        </SettingsRow>
         <SettingsRow label={t("generalPane.language")} description={t("generalPane.languageDesc")}>
           <SegmentedControl
             aria-label={t("generalPane.language")}
@@ -251,6 +317,53 @@ export default function GeneralPane() {
               {t("generalPane.loadModels")}
             </Button>
           </div>
+        </SettingsRow>
+        <SettingsRow
+          label={t("generalPane.customModel")}
+          description={t("generalPane.customModelDesc")}
+          htmlFor="custom-model-input"
+          stacked
+        >
+          <div className="flex items-center gap-2">
+            <input
+              id="custom-model-input"
+              value={customInput}
+              onChange={(event) => setCustomInput(event.target.value)}
+              placeholder={t("generalPane.customModelPlaceholder")}
+              spellCheck={false}
+              autoComplete="off"
+              className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 font-mono text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]"
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!customInput.trim()}
+              loading={saving === "customModel"}
+              onClick={() => { void handleAddCustomModel(); }}
+            >
+              {t("generalPane.addCustomModel")}
+            </Button>
+          </div>
+          {customModels.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {customModels.map((model) => (
+                <span
+                  key={model}
+                  className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-bg-secondary)] py-0.5 pl-2.5 pr-1"
+                >
+                  <span className="font-mono text-[11px] text-[var(--color-text-secondary)]">{model}</span>
+                  <button
+                    type="button"
+                    aria-label={t("generalPane.removeCustomModel", { model })}
+                    className="rounded-full p-0.5 text-[var(--color-text-tertiary)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)]"
+                    onClick={() => { void handleRemoveCustomModel(model); }}
+                  >
+                    <CloseIcon size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
         </SettingsRow>
       </SettingsSection>
     </div>

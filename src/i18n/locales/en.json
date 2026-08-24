@@ -20,13 +20,18 @@
       "zhipu": "Zhipu GLM",
       "codex": "Codex",
       "deepseek": "DeepSeek"
-    }
+    },
+    "radarUnavailable": "Codex Radar unavailable",
+    "radarUnavailableDesc": "Data source not ready — click to retry",
+    "radarRetry": "Retry"
   },
   "radar": {
     "title": "Codex Radar",
     "refresh": "Refresh radar",
     "iq": "Intelligence efficiency",
     "reset24h": "24h reset",
+    "dailyDevelopment": "Daily development",
+    "hardProblems": "Hard problems",
     "source": "Data from codexradar.com"
   },
   "account": {
@@ -124,6 +129,7 @@
     "spinDesc": "Auto-trigger quota timers",
     "codex": "Codex Auth",
     "codexLabel": "Auth Sync",
+    "sub2apiLabel": "Sub2API",
     "codexDesc": "Upload / sync auth files",
     "codexAccounts": "Codex Accounts",
     "codexAccountsLabel": "Accounts",
@@ -206,7 +212,10 @@
     "glmEmptyDescription": "Add your first Zhipu account to bind Claude Code or OpenClaw.",
     "codexCredential": "Local Codex credential",
     "codexEmptyDescription": "Sign in to Codex locally, then import the account from auth.json.",
-    "deepseekEmptyDescription": "Add a DeepSeek key to select a compatible Claude Code model."
+    "deepseekEmptyDescription": "Add a DeepSeek key to select a compatible Claude Code model.",
+    "customModelLabel": "Custom model",
+    "customModelPlaceholder": "Enter any model name",
+    "customModelBind": "Bind"
   },
   "alertsPane": {
     "token5h": "5h Quota Alert",
@@ -269,7 +278,17 @@
     "localAuthDetected": "Local ~/.codex/auth.json detected. Ready to import.",
     "noAccounts": "No Codex accounts yet",
     "importCodex": "Import Codex Account",
-    "codexImportDesc": "Import from local ~/.codex/auth.json. Enter an alias to auto-verify access_token.",
+    "codexImportDesc": "Import from local ~/.codex/auth.json, or paste JSON to batch import (sub2api export / K12 accounts supported).",
+    "pasteJsonImport": "Paste JSON",
+    "pasteJsonImportTitle": "Import Codex Accounts from JSON",
+    "pasteJsonImportHint": "Supports sub2api export (multiple accounts), auth.json format, or a bare access_token. Verified automatically on import.",
+    "pasteJsonPlaceholder": "Paste JSON content…",
+    "detectJson": "Detect",
+    "jsonImportConfirm": "Import {{count}} account(s)",
+    "jsonImportDone": "Imported {{count}} account(s)",
+    "jsonImportFailed": "{{count}} failed:",
+    "refreshable": "Auto-refreshable",
+    "noRefreshToken": "No refresh token",
     "importSuccess": "Codex account imported successfully",
     "gistConfig": "Gist Configuration",
     "proxyPlaceholder": "Proxy URL, e.g. http://127.0.0.1:50470",
@@ -341,7 +360,8 @@
     "sshCcBindSuccess": "Remote Claude Code endpoint updated (open a new session on the remote to take effect)",
     "sshCcUnbindSuccess": "Remote Claude Code endpoint cleared",
     "sshCcCheckFailed": "Check failed",
-    "sshCcNoAccount": "No GLM/DeepSeek account yet. Add one in Accounts first."
+    "sshCcNoAccount": "No GLM/DeepSeek account yet. Add one in Accounts first.",
+    "jsonImportEnabledSub2api": "Detected sub2api export format; Sub2API management is now enabled (toggle off in Settings → General)"
   },
   "spinPane": {
     "autoSpin": "Auto Spin",
@@ -425,7 +445,14 @@
     "language": "Language",
     "languageDesc": "Change display language",
     "zh": "中文",
-    "en": "English"
+    "en": "English",
+    "customModel": "Custom Models",
+    "customModelDesc": "Add GLM model names beyond the API list: they join the default-model dropdown and binding pickers, removable anytime.",
+    "customModelPlaceholder": "Enter model name (e.g. glm-5.2x)",
+    "addCustomModel": "Add & set default",
+    "removeCustomModel": "Remove custom model {{model}}",
+    "sub2apiToggle": "Sub2API Management",
+    "sub2apiToggleDesc": "Show the Sub2API gateway management page in settings (also auto-enabled when importing a sub2api account JSON)"
   },
   "aboutPane": {
     "appName": "GLM Quota Monitor",
@@ -497,7 +524,15 @@
     "balanceChartTitle": "Balance Trend"
   },
   "weekdays": {
-    "short": ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
+    "short": [
+      "Su",
+      "Mo",
+      "Tu",
+      "We",
+      "Th",
+      "Fr",
+      "Sa"
+    ]
   },
   "common": {
     "save": "Save",
@@ -509,5 +544,36 @@
     "error": "Error",
     "success": "Success",
     "back": "Back"
+  },
+  "sub2apiPane": {
+    "title": "Sub2API Gateway",
+    "desc": "Connect subscription accounts to a sub2api gateway and deploy to local & server Codex in one click",
+    "connectionTitle": "Connection",
+    "connectionDesc": "sub2api instance URL and admin credentials (password stored in system keychain)",
+    "baseUrlLabel": "Instance URL",
+    "baseUrlDesc": "e.g. http://localhost:8080 (Docker-deployed sub2api)",
+    "emailLabel": "Admin Email",
+    "passwordLabel": "Admin Password",
+    "passwordStored": "Password saved; leave empty to keep",
+    "modelLabel": "Default Model",
+    "modelDesc": "Model applied to Codex, e.g. gpt-5.6-sol / gpt-5.4",
+    "actionsLabel": "Actions",
+    "testConnection": "Save & Test Connection",
+    "deployTitle": "One-Click Deploy",
+    "deployDesc": "Paste a sub2api-export accounts JSON. Automatically: import accounts → bind group → create API key → wire up Codex",
+    "deployPlaceholder": "Paste sub2api export JSON (with accounts array)…",
+    "deployButton": "Deploy to Gateway",
+    "topup": "Top up balance (+100)",
+    "deploySummary": "Imported {{created}} account(s), group \"{{group}}\", API key:",
+    "copyKey": "Copy",
+    "applyLocal": "Apply to Local Codex",
+    "scanHosts": "Scan SSH Hosts",
+    "applyRemote": "Apply to Server Codex",
+    "lanIpHint": "Server will reach sub2api via this Mac's LAN IP {{ip}} (same network required)",
+    "statusTitle": "Gateway Status",
+    "statusDesc": "Accounts and groups in sub2api",
+    "refresh": "Refresh",
+    "empty": "No data yet. Deploy or refresh to load.",
+    "groupPrefix": "Group: "
   }
 }

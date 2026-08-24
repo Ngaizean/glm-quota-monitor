@@ -1,4 +1,6 @@
-import { lazy, Suspense, useMemo, useState, type ComponentType, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import {
   ArrowLeftIcon,
@@ -8,6 +10,7 @@ import {
   DownloadIcon,
   InfoIcon,
   PaletteIcon,
+  ServerIcon,
   SettingsIcon,
   UserIcon,
 } from "../components/icons";
@@ -18,6 +21,7 @@ const AccountsPane = lazy(() => import("./AccountsPane"));
 const AlertsPane = lazy(() => import("./AlertsPane"));
 const SpinPane = lazy(() => import("./SpinPane"));
 const CodexPane = lazy(() => import("./CodexPane"));
+const Sub2apiPane = lazy(() => import("./sub2api/Sub2apiPane"));
 const GeneralPane = lazy(() => import("./GeneralPane"));
 const ThemePane = lazy(() => import("./ThemePane"));
 const ExportPane = lazy(() => import("./ExportPane"));
@@ -28,6 +32,7 @@ type NavId =
   | "alerts"
   | "spin"
   | "codex"
+  | "sub2api"
   | "general"
   | "theme"
   | "export"
@@ -87,6 +92,14 @@ const NAV_GROUPS: NavGroup[] = [
         descriptionKey: "settings.codexDesc",
         component: CodexPane,
         icon: <CodeIcon size={17} />,
+      },
+      {
+        id: "sub2api",
+        labelKey: "settings.sub2apiLabel",
+        titleKey: "sub2apiPane.title",
+        descriptionKey: "sub2apiPane.desc",
+        component: Sub2apiPane,
+        icon: <ServerIcon size={17} />,
       },
     ],
   },
@@ -148,7 +161,35 @@ function getInitialNavId(): NavId {
 export default function Settings({ onBack, screenHeight }: { onBack: () => void; screenHeight: number }) {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<NavId>(getInitialNavId);
-  const items = useMemo(() => NAV_GROUPS.flatMap((group) => group.items), []);
+  // Sub2API 管理默认关闭；导入 sub2api 格式账号后自动开启（accounts-changed 时重读）
+  const [sub2apiEnabled, setSub2apiEnabled] = useState(false);
+
+  useEffect(() => {
+    let disposed = false;
+    const load = () => {
+      invoke<string | null>("get_setting", { key: "sub2api_enabled" })
+        .then((v) => {
+          if (!disposed) setSub2apiEnabled(v === "true");
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const unlisten = listen("accounts-changed", load);
+    return () => {
+      disposed = true;
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  const navGroups = useMemo(
+    () =>
+      NAV_GROUPS.map((group) => ({
+        ...group,
+        items: group.items.filter((item) => item.id !== "sub2api" || sub2apiEnabled),
+      })),
+    [sub2apiEnabled],
+  );
+  const items = useMemo(() => navGroups.flatMap((group) => group.items), [navGroups]);
   const activeItem = items.find((item) => item.id === activeTab) ?? items[0];
   const ActivePane = activeItem.component;
 
@@ -168,7 +209,7 @@ export default function Settings({ onBack, screenHeight }: { onBack: () => void;
         </button>
 
         <nav className="scroll-area flex-1 space-y-5" aria-label={t("settings.navigation")}>
-          {NAV_GROUPS.map((group) => (
+          {navGroups.map((group) => (
             <div key={group.labelKey}>
               <div className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
                 {t(group.labelKey)}

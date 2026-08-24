@@ -105,6 +105,25 @@ export default function Popover({ onOpenSettings, screenHeight }: PopoverProps) 
             onRefresh={() => void refreshRadar()}
           />
         )}
+        {!radar && initialized && (
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-[var(--color-border)] px-4 py-3 text-left transition-colors hover:bg-[var(--color-bg-tertiary)]"
+            onClick={() => void refreshRadar()}
+          >
+            <span className="min-w-0">
+              <span className="block text-[12px] font-medium text-[var(--color-text-secondary)]">
+                {t("popover.radarUnavailable")}
+              </span>
+              <span className="block text-[11px] text-[var(--color-text-tertiary)]">
+                {t("popover.radarUnavailableDesc")}
+              </span>
+            </span>
+            <span className="shrink-0 text-[11px] font-medium text-[var(--color-accent)]">
+              {radarRefreshing ? t("common.loading") : t("popover.radarRetry")}
+            </span>
+          </button>
+        )}
 
         {!initialized && (
           <div className="dashboard-skeleton" aria-label={t("common.loading")}>

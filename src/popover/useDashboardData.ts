@@ -15,6 +15,8 @@ export interface CodexRadarData {
   probability_24h: number;
   probability_level: string;
   updated_at: string;
+  daily_models: string[];
+  hard_problem_models: string[];
 }
 
 function rejectionMessage(reason: unknown): string {

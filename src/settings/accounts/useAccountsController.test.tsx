@@ -162,4 +162,101 @@ describe("useAccountsController", () => {
     expect(result.current.picker?.accountId).toBe("glm-b");
     expect(result.current.pickerModels).toEqual(["glm-b-only"]);
   });
+
+  it("自定义模型绑定：trim 后先持久化模型名再绑定，并合并进 picker 列表", async () => {
+    const target = account("glm-1", "zhipu", "Work");
+    mockInitialLoad([target]);
+    invokeMock.mockImplementation((command: string, args?: { model?: string }) => {
+      if (command === "list_accounts") return Promise.resolve([target]);
+      if (command === "get_agent_bindings") return Promise.resolve([]);
+      if (command === "get_default_model") return Promise.resolve("glm-5.2");
+      if (command === "read_local_codex_auth") return Promise.resolve({ exists: true });
+      if (command === "add_custom_model") return Promise.resolve([args?.model]);
+      if (command === "bind_agent") return Promise.resolve();
+      if (command === "fetch_models") return Promise.resolve(["glm-5.2"]);
+      return Promise.resolve(undefined);
+    });
+    const { result } = renderHook(() => useAccountsController());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let success = false;
+    await act(async () => {
+      success = await result.current.submitCustomModel("claude_code", "glm-1", "  glm-x  ");
+    });
+
+    expect(success).toBe(true);
+    expect(invokeMock).toHaveBeenCalledWith("add_custom_model", { model: "glm-x" });
+    expect(invokeMock).toHaveBeenCalledWith("bind_agent", {
+      agent: "claude_code",
+      accountId: "glm-1",
+      model: "glm-x",
+    });
+    expect(result.current.customModels).toEqual(["glm-x"]);
+
+    // 自定义模型与 API 缓存列表去重合并后出现在 picker
+    await act(async () => {
+      await result.current.openPicker("claude_code", "glm-1");
+    });
+    expect(result.current.pickerModels).toEqual(["glm-5.2", "glm-x"]);
+  });
+
+  it("DeepSeek 账号的 picker 不并入 GLM 自定义模型", async () => {
+    const glm = account("glm-1", "zhipu");
+    const deepseek = account("ds-1", "deepseek");
+    invokeMock.mockImplementation((command: string, args?: { accountId?: string }) => {
+      if (command === "list_accounts") return Promise.resolve([glm, deepseek]);
+      if (command === "get_agent_bindings") return Promise.resolve([]);
+      if (command === "get_default_model") return Promise.resolve("glm-5.2");
+      if (command === "read_local_codex_auth") return Promise.resolve({ exists: true });
+      if (command === "get_custom_models") return Promise.resolve(["glm-custom"]);
+      if (command === "fetch_models") {
+        return Promise.resolve(args?.accountId === "ds-1" ? ["deepseek-chat"] : ["glm-5.2"]);
+      }
+      return Promise.resolve(undefined);
+    });
+    const { result } = renderHook(() => useAccountsController());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.customModels).toEqual(["glm-custom"]);
+
+    await act(async () => {
+      await result.current.openPicker("claude_code", "ds-1");
+    });
+    expect(result.current.pickerModels).toEqual(["deepseek-chat"]);
+
+    await act(async () => {
+      await result.current.openPicker("claude_code", "glm-1");
+    });
+    expect(result.current.pickerModels).toEqual(["glm-5.2", "glm-custom"]);
+  });
+
+  it("自定义模型绑定：空白模型名直接拒绝，持久化失败时不绑定", async () => {
+    const target = account("glm-1", "zhipu", "Work");
+    mockInitialLoad([target]);
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_accounts") return Promise.resolve([target]);
+      if (command === "get_agent_bindings") return Promise.resolve([]);
+      if (command === "get_default_model") return Promise.resolve("glm-5.2");
+      if (command === "read_local_codex_auth") return Promise.resolve({ exists: true });
+      if (command === "add_custom_model") return Promise.reject(new Error("保存失败"));
+      return Promise.resolve(undefined);
+    });
+    const { result } = renderHook(() => useAccountsController());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let success = true;
+    await act(async () => {
+      success = await result.current.submitCustomModel("claude_code", "glm-1", "   ");
+    });
+    expect(success).toBe(false);
+    expect(invokeMock.mock.calls.some(([command]) => command === "add_custom_model")).toBe(false);
+
+    invokeMock.mockClear();
+    await act(async () => {
+      success = await result.current.submitCustomModel("claude_code", "glm-1", "glm-bad");
+    });
+    expect(success).toBe(false);
+    expect(invokeMock).toHaveBeenCalledWith("add_custom_model", { model: "glm-bad" });
+    expect(invokeMock.mock.calls.some(([command]) => command === "bind_agent")).toBe(false);
+    expect(result.current.accountErrors["glm-1"]).toContain("保存失败");
+  });
 });

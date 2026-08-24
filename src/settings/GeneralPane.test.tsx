@@ -91,4 +91,45 @@ describe("GeneralPane", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("设置保存失败");
     vi.useRealTimers();
   });
+
+  it("添加自定义模型会持久化并设为默认，删除后从选项移除", async () => {
+    let customModels: string[] = [];
+    mockLoadedSettings();
+    invokeMock.mockImplementation((command: string, args?: { key?: string; model?: string }) => {
+      if (command === "get_setting" && args?.key === "refresh_interval") return Promise.resolve("5");
+      if (command === "get_setting" && args?.key === "auto_start") return Promise.resolve("0");
+      if (command === "get_default_model") return Promise.resolve("glm-current");
+      if (command === "get_custom_models") return Promise.resolve(customModels);
+      if (command === "add_custom_model") {
+        customModels = Array.from(new Set([...customModels, args!.model!])).sort();
+        return Promise.resolve(customModels);
+      }
+      if (command === "remove_custom_model") {
+        customModels = customModels.filter((model) => model !== args!.model);
+        return Promise.resolve(customModels);
+      }
+      if (command === "set_default_model") return Promise.resolve();
+      return Promise.resolve(undefined);
+    });
+    render(<GeneralPane />);
+    const input = await screen.findByLabelText(/自定义模型/);
+    await waitFor(() => expect(input).toBeEnabled());
+
+    // 空输入时按钮禁用
+    expect(screen.getByRole("button", { name: "添加并设为默认" })).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: "  glm-custom  " } });
+    fireEvent.click(screen.getByRole("button", { name: "添加并设为默认" }));
+
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("add_custom_model", { model: "glm-custom" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("set_default_model", { model: "glm-custom" }));
+    // chip（删除按钮）与下拉 option 同时出现
+    expect(await screen.findByRole("button", { name: "删除自定义模型 glm-custom" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "glm-custom" })).toBeInTheDocument();
+
+    // 删除自定义模型后 chip 消失（option 因仍是当前默认模型而保留）
+    fireEvent.click(screen.getByRole("button", { name: "删除自定义模型 glm-custom" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("remove_custom_model", { model: "glm-custom" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "删除自定义模型 glm-custom" })).not.toBeInTheDocument());
+  });
 });

@@ -61,5 +61,27 @@ export function getLevelStyle(level: PlanLevel | null | undefined): string {
   if (lv === "pro") {
     return "bg-violet-500/10 text-violet-400";
   }
+  if (lv === "k12") {
+    return "bg-emerald-500/10 text-emerald-400";
+  }
   return "bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)]";
+}
+
+/** 计划级别徽章文案：原始 slug 转友好名称（wham/usage 的 plan_type 值域） */
+export function formatPlanLevel(level: PlanLevel | null | undefined): string {
+  if (!level) return "";
+  switch (level.toLowerCase()) {
+    case "k12":
+      return "K12 教育版";
+    case "prolite":
+      return "Pro Lite";
+    case "plus":
+      return "Plus";
+    case "pro":
+      return "Pro";
+    case "max":
+      return "Max";
+    default:
+      return level;
+  }
 }

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { formatRelativeTime, resolveDisplayLocale } from "../lib/formatters";
 import { getQuotaSummary } from "../lib/quota";
-import { getAvatarGradient, getLevelStyle } from "../lib/ui";
+import { getAvatarGradient, getLevelStyle, formatPlanLevel } from "../lib/ui";
 import type { Account, QuotaData } from "../types";
 import CostBar from "./CostBar";
 import DeepSeekBalanceBadge from "./DeepSeekBalanceBadge";
@@ -155,7 +155,7 @@ export default function AccountList({
                 </span>
                 <span className="account-row__identity">
                   <span className="account-row__name" title={account.alias}>{account.alias}</span>
-                  {quota?.level && <span className={`plan-badge ${getLevelStyle(quota.level)}`}>{quota.level}</span>}
+                  {quota?.level && <span className={`plan-badge ${getLevelStyle(quota.level)}`}>{formatPlanLevel(quota.level)}</span>}
                 </span>
                 {loading && !quota && <span className="ui-spinner" aria-label={t("common.loading")} />}
                 {account.platform === "deepseek"

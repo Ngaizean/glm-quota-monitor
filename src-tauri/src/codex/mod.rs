@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod client;
 pub mod crypto;
+pub mod import_json;
 pub mod ssh;
 pub mod sync;
 pub mod types;

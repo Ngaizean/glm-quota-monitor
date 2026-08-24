@@ -10,5 +10,6 @@ pub mod history;
 pub mod quota;
 pub mod settings;
 pub mod spin;
+pub mod sub2api;
 pub mod summary;
 pub mod tool_usage;

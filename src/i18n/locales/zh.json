@@ -20,13 +20,18 @@
       "zhipu": "智谱 GLM",
       "codex": "Codex",
       "deepseek": "DeepSeek"
-    }
+    },
+    "radarUnavailable": "Codex 雷达暂不可用",
+    "radarUnavailableDesc": "数据源未就绪，点击重试",
+    "radarRetry": "重试"
   },
   "radar": {
     "title": "Codex 雷达",
     "refresh": "刷新雷达",
     "iq": "智力效率",
     "reset24h": "24h 重置",
+    "dailyDevelopment": "日常开发",
+    "hardProblems": "难题攻坚",
     "source": "数据来自 codexradar.com"
   },
   "account": {
@@ -124,6 +129,7 @@
     "spinDesc": "自动触发额度计时器",
     "codex": "Codex 鉴权",
     "codexLabel": "鉴权分发",
+    "sub2apiLabel": "Sub2API",
     "codexDesc": "上传 / 同步鉴权文件",
     "codexAccounts": "Codex 账号",
     "codexAccountsLabel": "账号",
@@ -206,7 +212,10 @@
     "glmEmptyDescription": "添加第一个智谱账号后，即可绑定 Claude Code 或 OpenClaw。",
     "codexCredential": "本机 Codex 凭据",
     "codexEmptyDescription": "先在本机登录 Codex，再从 auth.json 导入账号。",
-    "deepseekEmptyDescription": "添加 DeepSeek Key 后，可为 Claude Code 选择兼容模型。"
+    "deepseekEmptyDescription": "添加 DeepSeek Key 后，可为 Claude Code 选择兼容模型。",
+    "customModelLabel": "自定义模型",
+    "customModelPlaceholder": "输入模型名，不限于列表",
+    "customModelBind": "绑定"
   },
   "alertsPane": {
     "token5h": "5h 额度预警",
@@ -269,7 +278,17 @@
     "localAuthDetected": "已检测到本机 ~/.codex/auth.json，可导入账号",
     "noAccounts": "暂无 Codex 账号",
     "importCodex": "导入 Codex 账号",
-    "codexImportDesc": "从本机 ~/.codex/auth.json 导入，输入别名后自动验证 access_token",
+    "codexImportDesc": "从本机 ~/.codex/auth.json 导入，或粘贴 JSON 批量导入（支持 sub2api 导出格式 / K12 教育版账号）",
+    "pasteJsonImport": "粘贴 JSON 导入",
+    "pasteJsonImportTitle": "粘贴 JSON 导入 Codex 账号",
+    "pasteJsonImportHint": "支持 sub2api 导出格式（可含多个账号）、auth.json 格式或裸 access_token，识别后自动验证并导入",
+    "pasteJsonPlaceholder": "粘贴 JSON 内容…",
+    "detectJson": "识别",
+    "jsonImportConfirm": "导入 {{count}} 个账号",
+    "jsonImportDone": "成功导入 {{count}} 个账号",
+    "jsonImportFailed": "{{count}} 个账号导入失败：",
+    "refreshable": "可自动刷新",
+    "noRefreshToken": "无刷新令牌",
     "importSuccess": "Codex 账号导入成功",
     "gistConfig": "Gist 配置",
     "proxyPlaceholder": "代理地址，如 http://127.0.0.1:50470",
@@ -341,7 +360,8 @@
     "sshCcBindSuccess": "远程 Claude Code 端点已更新（需在远程新开会话生效）",
     "sshCcUnbindSuccess": "已清除远程 Claude Code 端点",
     "sshCcCheckFailed": "检测失败",
-    "sshCcNoAccount": "本机暂无 GLM/DeepSeek 账号，请先在账号管理添加"
+    "sshCcNoAccount": "本机暂无 GLM/DeepSeek 账号，请先在账号管理添加",
+    "jsonImportEnabledSub2api": "检测到 sub2api 导出格式，已自动启用 Sub2API 管理功能（可在 设置→通用 关闭）"
   },
   "spinPane": {
     "autoSpin": "自动空转",
@@ -425,7 +445,14 @@
     "language": "界面语言",
     "languageDesc": "切换显示语言",
     "zh": "中文",
-    "en": "English"
+    "en": "English",
+    "customModel": "自定义模型",
+    "customModelDesc": "添加 API 列表之外的 GLM 模型名：加入默认模型下拉与账号绑定列表，可随时删除。",
+    "customModelPlaceholder": "输入模型名（如 glm-5.2x）",
+    "addCustomModel": "添加并设为默认",
+    "removeCustomModel": "删除自定义模型 {{model}}",
+    "sub2apiToggle": "Sub2API 管理",
+    "sub2apiToggleDesc": "启用后设置页显示 Sub2API 网关管理入口（导入 sub2api 账号 JSON 时也会自动开启）"
   },
   "aboutPane": {
     "appName": "GLM Quota Monitor",
@@ -497,7 +524,15 @@
     "balanceChartTitle": "余额趋势"
   },
   "weekdays": {
-    "short": ["日", "一", "二", "三", "四", "五", "六"]
+    "short": [
+      "日",
+      "一",
+      "二",
+      "三",
+      "四",
+      "五",
+      "六"
+    ]
   },
   "common": {
     "save": "保存",
@@ -509,5 +544,36 @@
     "error": "错误",
     "success": "成功",
     "back": "返回"
+  },
+  "sub2apiPane": {
+    "title": "Sub2API 网关",
+    "desc": "把订阅账号接入 sub2api 网关，一键部署到本机与服务器 Codex",
+    "connectionTitle": "连接配置",
+    "connectionDesc": "sub2api 实例地址与管理员账号（密码存入系统钥匙串）",
+    "baseUrlLabel": "实例地址",
+    "baseUrlDesc": "如 http://localhost:8080（Docker 部署的 sub2api）",
+    "emailLabel": "管理员邮箱",
+    "passwordLabel": "管理员密码",
+    "passwordStored": "已保存密码，留空则沿用",
+    "modelLabel": "默认模型",
+    "modelDesc": "应用到 Codex 的模型，如 gpt-5.6-sol / gpt-5.4",
+    "actionsLabel": "操作",
+    "testConnection": "保存并测试连接",
+    "deployTitle": "一键部署",
+    "deployDesc": "粘贴 sub2api 导出格式的账号 JSON，自动完成：导入账号 → 绑定分组 → 生成 API Key → 接入 Codex",
+    "deployPlaceholder": "粘贴 sub2api 导出的 JSON（包含 accounts 数组）…",
+    "deployButton": "部署到网关",
+    "topup": "充值余额（+100）",
+    "deploySummary": "已导入 {{created}} 个账号，分组「{{group}}」，API Key：",
+    "copyKey": "复制",
+    "applyLocal": "应用到本机 Codex",
+    "scanHosts": "扫描 SSH 服务器",
+    "applyRemote": "应用到服务器 Codex",
+    "lanIpHint": "服务器将通过本机局域网 IP {{ip}} 访问 sub2api（需同一网络）",
+    "statusTitle": "网关状态",
+    "statusDesc": "sub2api 中的账号与分组",
+    "refresh": "刷新",
+    "empty": "暂无数据，部署或刷新后显示",
+    "groupPrefix": "分组："
   }
 }

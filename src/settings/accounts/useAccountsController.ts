@@ -27,6 +27,7 @@ export function useAccountsController() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bindings, setBindings] = useState<Record<string, string | null>>({});
   const [defaultModel, setDefaultModel] = useState("glm-5.2");
+  const [customModels, setCustomModels] = useState<string[]>([]);
   const [codexAuthExists, setCodexAuthExists] = useState(false);
   const [maskedKeys, setMaskedKeys] = useState<Record<string, string>>({});
   const [accountErrors, setAccountErrors] = useState<Record<string, string>>({});
@@ -70,12 +71,14 @@ export function useAccountsController() {
     if (showLoading) setLoading(true);
     setGlobalError("");
 
-    const [accountsResult, bindingsResult, modelResult, authResult] = await Promise.allSettled([
-      invoke<Account[]>("list_accounts"),
-      invoke<AgentBinding[]>("get_agent_bindings"),
-      invoke<string>("get_default_model"),
-      invoke<{ exists: boolean }>("read_local_codex_auth"),
-    ]);
+    const [accountsResult, bindingsResult, modelResult, authResult, customModelsResult] =
+      await Promise.allSettled([
+        invoke<Account[]>("list_accounts"),
+        invoke<AgentBinding[]>("get_agent_bindings"),
+        invoke<string>("get_default_model"),
+        invoke<{ exists: boolean }>("read_local_codex_auth"),
+        invoke<string[]>("get_custom_models"),
+      ]);
     if (!mountedRef.current || requestId !== refreshRequestRef.current) return;
 
     const loadErrors: string[] = [];
@@ -102,6 +105,12 @@ export function useAccountsController() {
       setCodexAuthExists(authResult.value.exists);
     } else {
       loadErrors.push(toErrorMessage(authResult.reason));
+    }
+    if (customModelsResult.status === "fulfilled") {
+      // 旧后端可能返回 undefined：仅在拿到数组时更新，避免误清空刚添加的自定义模型。
+      if (Array.isArray(customModelsResult.value)) setCustomModels(customModelsResult.value);
+    } else {
+      loadErrors.push(toErrorMessage(customModelsResult.reason));
     }
 
     if (loadedAccounts) {
@@ -230,6 +239,22 @@ export function useAccountsController() {
     if (success && agent === "claude_code") setNotice(t("accountsPane.ccRestartNotice"));
   }, [closePicker, refresh, runAccountOperation, t]);
 
+  /// 自定义模型绑定：先把模型名存入自定义列表（picker 列表随之合并展示），再按该模型绑定。
+  const submitCustomModel = useCallback(async (agent: AgentType, accountId: string, model: string) => {
+    const trimmed = model.trim();
+    if (!trimmed) return false;
+    setNotice("");
+    const success = await runAccountOperation(accountId, "bind", async () => {
+      const next = await invoke<string[]>("add_custom_model", { model: trimmed });
+      if (mountedRef.current && Array.isArray(next)) setCustomModels(next);
+      await invoke("bind_agent", { agent, accountId, model: trimmed });
+      closePicker();
+      await refresh(false);
+    });
+    if (success && agent === "claude_code") setNotice(t("accountsPane.ccRestartNotice"));
+    return success;
+  }, [closePicker, refresh, runAccountOperation, t]);
+
   const addGlmAccount = useCallback(async (alias: string, purpose: string, apiKey: string) => {
     return runAccountOperation(NEW_ACCOUNT_OPERATION_IDS.zhipu, "create", async () => {
       await invoke("add_account", { alias: alias.trim(), purpose: purpose.trim(), apiKey: apiKey.trim() });
@@ -242,6 +267,42 @@ export function useAccountsController() {
       await invoke("add_codex_account", { alias: alias.trim() });
       await refresh(false);
     });
+  }, [refresh, runAccountOperation]);
+
+  /** 粘贴 JSON 导入 Codex 账号的预览结果（后端已脱敏，不含 token） */
+  const previewCodexJson = useCallback(async (json: string) => {
+    return invoke<Array<{
+      suggested_alias: string;
+      email: string | null;
+      plan_type: string | null;
+      account_id: string;
+      has_refresh_token: boolean;
+      format: "sub2api" | "authjson" | "bare";
+    }>>("parse_codex_accounts_json_preview", { json });
+  }, []);
+
+  const importCodexFromJson = useCallback(async (json: string) => {
+    const box: {
+      results: Array<{ alias: string; success: boolean; error: string | null }> | null;
+    } = { results: null };
+    const success = await runAccountOperation(
+      NEW_ACCOUNT_OPERATION_IDS.codex,
+      "create",
+      async () => {
+        const results = await invoke<
+          Array<{ alias: string; success: boolean; error: string | null }>
+        >("add_codex_accounts_from_json", { json });
+        await refresh(false);
+        box.results = results;
+        const failed = results.filter((result) => !result.success);
+        if (results.length > 0 && failed.length === results.length) {
+          throw new Error(
+            failed.map((item) => `${item.alias}: ${item.error ?? "未知错误"}`).join("; "),
+          );
+        }
+      },
+    );
+    return success ? box.results : null;
   }, [refresh, runAccountOperation]);
 
   const addDeepseekAccount = useCallback(async (alias: string, apiKey: string) => {
@@ -310,15 +371,24 @@ export function useAccountsController() {
     setSecretDialog(success ? { account, secret: loadedSecret, loading: false } : null);
   }, [runAccountOperation]);
 
-  const pickerModels = useMemo(
-    () => picker ? (modelCache[picker.accountId] ?? []) : [],
-    [modelCache, picker],
-  );
+  // picker 列表 = API 模型（可能被后端合并过自定义模型）+ 当前自定义模型，去重排序。
+  // 客户端再合并一次，保证缓存早于新添加的自定义模型时列表也能立即跟进。
+  // 自定义模型仅用于 GLM 账号（与后端 fetch_models 的平台门控一致）：DeepSeek 不并入，
+  // 否则 GLM 模型名会被绑定到 DeepSeek 端点造成静默坏绑定。
+  const pickerModels = useMemo(() => {
+    if (!picker) return [];
+    const api = modelCache[picker.accountId] ?? [];
+    const isDeepseek =
+      accounts.find((item) => item.id === picker.accountId)?.platform === "deepseek";
+    const merged = isDeepseek ? api : [...api, ...customModels];
+    return Array.from(new Set(merged)).sort();
+  }, [accounts, customModels, modelCache, picker]);
 
   return {
     accounts,
     bindings,
     defaultModel,
+    customModels,
     codexAuthExists,
     maskedKeys,
     accountErrors,
@@ -339,8 +409,11 @@ export function useAccountsController() {
     openPicker,
     closePicker,
     bindAgent,
+    submitCustomModel,
     addGlmAccount,
     importCodexAccount,
+    previewCodexJson,
+    importCodexFromJson,
     addDeepseekAccount,
     requestDelete,
     closeDeleteDialog,

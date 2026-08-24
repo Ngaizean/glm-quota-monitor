@@ -129,6 +129,7 @@ export function DeepSeekAccountsPanel({ controller }: DeepSeekAccountsPanelProps
               agent="claude_code"
               agentLabel="Claude Code"
               defaultModel={DEEPSEEK_DEFAULT_MODEL}
+              allowCustomModel={false}
             />
           </AccountRow>
         )) : !adding && (

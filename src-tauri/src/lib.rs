@@ -7,6 +7,7 @@ mod db;
 mod deepseek;
 mod platform;
 mod pricing;
+mod sub2api;
 
 use api::client::ZhipuClient;
 use api::types::QuotaData;
@@ -28,9 +29,16 @@ const POPOVER_LABEL: &str = "popover";
 const DEFAULT_REFRESH_INTERVAL_SECS: u64 = 300;
 
 static MAX_PERCENTAGE: AtomicI32 = AtomicI32::new(-1);
-static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
-
 /// Codex/Gist 专用代理 client（chatgpt.com / github.com 等境外端点）
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    // 绕过 macOS 系统代理（HTTP/HTTPS/SOCKS=127.0.0.1:50470）：GLM/DeepSeek 均为
+    // 国内直连服务，reqwest 默认读系统代理会导致 DeepSeek 请求被代理劫持而超时
+    //（表现为"额度总离线"）。Codex/Gist 境外端点仍走 PROXY_CLIENT。
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+});
 /// 智谱 API 继续用 HTTP_CLIENT 直连（国内）
 static PROXY_CLIENT: LazyLock<RwLock<reqwest::Client>> =
     LazyLock::new(|| RwLock::new(build_proxy_client("")));
@@ -351,12 +359,37 @@ fn fetch_deepseek_account_quota(
     db: &Database,
     account_id: &str,
 ) -> Result<(QuotaData, i32, f64, f64), String> {
-    let api_key = deepseek::auth::get_api_key(account_id)?;
-    let balance = tauri::async_runtime::block_on(deepseek::client::DeepSeekClient::get_balance(
-        &HTTP_CLIENT,
-        &api_key,
-    ))
-    .map_err(|e| commands::deepseek::deepseek_error_msg(&e))?;
+    let api_key = match deepseek::auth::get_api_key(account_id) {
+        Ok(k) => k,
+        Err(e) => {
+            log_deepseek(&format!(
+                "fetch get_api_key FAILED account={account_id} err={e}"
+            ));
+            return Err(format!("读取 DeepSeek API Key 失败: {e}"));
+        }
+    };
+    let started = std::time::Instant::now();
+    let fallback = proxy_http_client();
+    let balance = tauri::async_runtime::block_on(
+        deepseek::client::DeepSeekClient::get_balance_with_fallback(
+            &HTTP_CLIENT,
+            &fallback,
+            &api_key,
+        ),
+    )
+    .map_err(|e| {
+        let msg = commands::deepseek::deepseek_error_msg(&e);
+        log_deepseek(&format!(
+            "fetch FAILED account={account_id} {:?} err={msg}",
+            started.elapsed()
+        ));
+        msg
+    })?;
+    log_deepseek(&format!(
+        "fetch OK account={account_id} {:?} total={:?}",
+        started.elapsed(),
+        balance.balance_infos.first().map(|i| &i.total_balance)
+    ));
 
     let quota = deepseek::balance_to_quota_data(&balance);
 
@@ -365,6 +398,28 @@ fn fetch_deepseek_account_quota(
     }
 
     Ok((quota, 0, 0.0, 0.0))
+}
+
+/// 把 DeepSeek 拉取诊断追加到 app_data_dir/deepseek.log（release 无 stderr，便于定位"总离线"）
+fn log_deepseek(msg: &str) {
+    use std::io::Write;
+    let Some(base) = dirs::data_dir().map(|d| d.join("com.ngaizean.glm-quota-monitor")) else {
+        return;
+    };
+    let path = base.join("deepseek.log");
+    let _ = std::fs::create_dir_all(&base);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(
+            f,
+            "[{}] {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+            msg
+        );
+    }
 }
 
 /// 检查 JWT access_token 是否在 N 天内过期
@@ -1592,6 +1647,9 @@ pub fn run() {
             commands::agent::fetch_models,
             commands::agent::get_default_model,
             commands::agent::set_default_model,
+            commands::agent::get_custom_models,
+            commands::agent::add_custom_model,
+            commands::agent::remove_custom_model,
             commands::spin::spin_now,
             commands::spin::set_spin_config,
             commands::spin::get_spin_status,
@@ -1621,6 +1679,16 @@ pub fn run() {
             commands::codex::get_codex_quota,
             commands::codex::read_local_codex_auth,
             commands::codex::add_codex_account,
+            commands::codex::parse_codex_accounts_json_preview,
+            commands::codex::add_codex_accounts_from_json,
+            commands::sub2api::get_sub2api_config,
+            commands::sub2api::set_sub2api_config,
+            commands::sub2api::sub2api_test_connection,
+            commands::sub2api::sub2api_deploy,
+            commands::sub2api::sub2api_apply_local,
+            commands::sub2api::sub2api_apply_remote,
+            commands::sub2api::sub2api_status,
+            commands::sub2api::sub2api_topup,
             commands::codex::upload_codex_auth,
             commands::codex::sync_codex_auth,
             commands::codex::test_codex_connection,

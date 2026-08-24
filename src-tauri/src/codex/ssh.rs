@@ -557,6 +557,93 @@ pub fn unbind_remote_cc_env(alias: &str, password: Option<&str>) -> Result<(), S
     Ok(())
 }
 
+/// 远程把 sub2api 接入 ~/.codex/config.toml（幂等 merge）。
+/// 与 write_remote_cc_env 相同的 stdin-JSON 模式：api_key 不进远程命令行/ps。
+/// merge 规则与本地 sub2api::codex_config::merge_codex_config 一致：
+/// 已有 [model_providers.sub2api] 段则原位替换，否则追加；顶层 model/model_provider
+/// 只在第一个表头之前替换或插入；写前备份为 config.toml.bak-quota-monitor。
+pub fn write_remote_codex_config(
+    alias: &str,
+    password: Option<&str>,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+) -> Result<(), String> {
+    for (label, value) in [
+        ("base_url", base_url),
+        ("api_key", api_key),
+        ("model", model),
+    ] {
+        validate_remote_config_value(label, value)?;
+    }
+    write_remote_codex_config_unchecked(alias, password, base_url, api_key, model)
+}
+
+fn validate_remote_config_value(label: &str, value: &str) -> Result<(), String> {
+    if value
+        .chars()
+        .any(|character| character == '"' || character == '\\' || character.is_control())
+    {
+        return Err(format!("{label} 含远程配置不支持的字符"));
+    }
+    Ok(())
+}
+
+fn write_remote_codex_config_unchecked(
+    alias: &str,
+    password: Option<&str>,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+) -> Result<(), String> {
+    validate_ssh_alias(alias)?;
+    let script = "python3 -c 'import json,os,sys,re,shutil\nv=json.loads(sys.stdin.readline())\np=os.path.expanduser(\"~/.codex/config.toml\")\nos.makedirs(os.path.dirname(p),exist_ok=True)\ncontent=open(p).read() if os.path.exists(p) else \"\"\nif os.path.exists(p): shutil.copy2(p,p+\".bak-quota-monitor\")\nblock=\"[model_providers.sub2api]\\n\"+\"name = \\\"Sub2API Gateway\\\"\\n\"+\"base_url = \\\"\"+v[\"base_url\"]+\"\\\"\\n\"+\"wire_api = \\\"responses\\\"\\n\"+\"requires_openai_auth = false\\n\"+\"experimental_bearer_token = \\\"\"+v[\"api_key\"]+\"\\\"\\n\"+\"supports_websockets = false\\n\"\nhdr=\"[model_providers.sub2api]\"\nif hdr in content:\n i=content.find(hdr)\n j=content.find(\"\\n[\",i+1)\n j=len(content) if j<0 else j+1\n content=content[:i]+block+content[j:]\nelse:\n content=content.rstrip()+\"\\n\\n\"+block if content.strip() else block\nnl=content.find(\"\\n[\")\nnl=len(content) if nl<0 else nl\nhead,tail=content[:nl],content[nl:]\ndef rep(t,k,val):\n pref=k+\" =\"\n lines=t.split(\"\\n\")\n for n,l in enumerate(lines):\n  if l.strip().startswith(pref) and not (k==\"model\" and l.strip().startswith(\"model_\")):\n   lines[n]=pref+\" \\\"\"+val+\"\\\"\"\n   return \"\\n\".join(lines)\n lines.insert(0,pref+\" \\\"\"+val+\"\\\"\")\n return \"\\n\".join(lines)\nhead=rep(head,\"model\",v[\"model\"])\nhead=rep(head,\"model_provider\",\"sub2api\")\nif head and not head.endswith(\"\\n\"): head+=\"\\n\"\ncontent=head+tail\ntmp=p+\".glm-quota-monitor.\"+str(os.getpid())+\".tmp\"\nwith open(tmp,\"w\") as f: f.write(content); f.flush(); os.fsync(f.fileno())\nos.chmod(tmp,0o600)\nos.replace(tmp,p)'";
+
+    let payload = serde_json::json!({
+        "base_url": base_url,
+        "api_key": api_key,
+        "model": model,
+    })
+    .to_string();
+
+    let mut cmd = base_cmd("ssh", password)?;
+    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
+    cmd.arg("-o").arg("ConnectTimeout=10");
+    cmd.arg("-o").arg("NumberOfPasswordPrompts=1");
+    if password.is_none() {
+        cmd.arg("-o").arg("BatchMode=yes");
+    }
+    cmd.arg("--").arg(alias);
+    cmd.arg(script);
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| format!("ssh 执行失败: {e}"))?;
+    let stdin_result = if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(payload.as_bytes())
+            .and_then(|_| stdin.write_all(b"\n"))
+            .map_err(|e| format!("向远程命令传入配置失败: {e}"))
+    } else {
+        Err("无法打开远程命令标准输入".to_string())
+    };
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("ssh 等待失败: {e}"))?;
+    stdin_result?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if err.is_empty() {
+            "远程写入 config.toml 失败（可能是远程未安装 python3 或没有 codex）".to_string()
+        } else {
+            format!("远程写入 config.toml 失败: {err}")
+        });
+    }
+    Ok(())
+}
+
 /// run_ssh 的完整输出版本（保留 status/stdout/stderr），unbind 需要判断退出码而非只看 stdout。
 fn run_ssh_full(
     alias: &str,
@@ -578,7 +665,15 @@ fn run_ssh_full(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_ssh_config, validate_ssh_alias};
+    use super::{parse_ssh_config, validate_remote_config_value, validate_ssh_alias};
+
+    #[test]
+    fn remote_codex_config_rejects_toml_escape_characters() {
+        assert!(validate_remote_config_value("model", "gpt-5.6-sol").is_ok());
+        assert!(validate_remote_config_value("model", "gpt\n[evil]").is_err());
+        assert!(validate_remote_config_value("api_key", "sk-\"quoted").is_err());
+        assert!(validate_remote_config_value("base_url", r"http://host\path").is_err());
+    }
 
     #[test]
     fn rejects_ssh_aliases_that_can_be_parsed_as_options() {

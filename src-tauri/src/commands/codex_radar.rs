@@ -13,6 +13,7 @@ use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 
 const RADAR_METRICS_URL: &str = "https://codexradar.com/api/intelligence-efficiency-metrics";
+const RADAR_INSIGHTS_URL: &str = "https://codexradar.com/api/radar-insights";
 const RADAR_STATUS_URL: &str = "https://codexradar.com/current.json";
 
 /// 缓存的雷达摘要（前端渲染所需的最小字段集）
@@ -28,6 +29,17 @@ pub struct CodexRadarData {
     pub probability_level: String,
     /// 网站智力效率快照的来源时间（ISO 时间）
     pub updated_at: String,
+    /// Codex 站“日常开发”当前推荐，按网站顺序保留前两项。
+    pub daily_models: Vec<String>,
+    /// Codex 站“难题攻坚”当前推荐，按网站顺序保留前两项。
+    pub hard_problem_models: Vec<String>,
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct RadarRecommendations {
+    daily_models: Vec<String>,
+    hard_problem_models: Vec<String>,
+    updated_at: String,
 }
 
 /// 全局缓存 state：后台线程写，command 读
@@ -89,11 +101,16 @@ fn pretty_model(model: &str, effort: &str) -> String {
 /// 按网站 `compactIqSnapshot` 的当前约束解析智力效率卡片，并选择最高 IQ 点。
 /// 模型、effort 和 IQ 始终来自同一个 point，避免把一个档位的名字和另一个档位的
 /// 分数拼在一起。
+/// 2026-08-19 起上游将 schema 2 / mode weighted_latest_3 升级为 schema 3 /
+/// mode equal_latest_3（points 结构与 source_updated_at 字段实测兼容），
+/// 这里接受 schema 2..=3 并放宽 mode 校验，避免接口升级导致雷达整卡消失。
 fn parse_metrics(v: &serde_json::Value) -> Result<CodexRadarData, String> {
-    if v.get("schema").and_then(|value| value.as_u64()) != Some(2)
-        || v.get("mode").and_then(|value| value.as_str()) != Some("weighted_latest_3")
-    {
-        return Err("智力效率接口版本不受支持".to_string());
+    let schema = v
+        .get("schema")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    if !(2..=3).contains(&schema) {
+        return Err(format!("智力效率接口版本不受支持: schema={schema}"));
     }
 
     let points = v
@@ -127,7 +144,78 @@ fn parse_metrics(v: &serde_json::Value) -> Result<CodexRadarData, String> {
         probability_24h: 0.0,
         probability_level: String::new(),
         updated_at: updated_at.to_string(),
+        daily_models: Vec::new(),
+        hard_problem_models: Vec::new(),
     })
+}
+
+/// 解析网站 Codex 站“站长推荐”。推荐规则由网站维护，应用只同步结果，
+/// 避免在本地用最高 IQ 或成本重新推断而与页面产生偏差。
+fn parse_recommendations(v: &serde_json::Value) -> Result<RadarRecommendations, String> {
+    let groups = v
+        .get("recommendations")
+        .or_else(|| v.get("station_recommendations"))
+        .or_else(|| v.get("station_recs"))
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "雷达推荐响应缺少 recommendations".to_string())?;
+
+    let parse_items = |group: &serde_json::Value| {
+        group
+            .get("items")
+            .or_else(|| group.get("models"))
+            .or_else(|| group.get("recommendations"))
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                let model = item.get("model")?.as_str()?.trim();
+                let effort = item.get("effort")?.as_str()?.trim();
+                if model.is_empty() || effort.is_empty() || model.starts_with("deepseek") {
+                    return None;
+                }
+                Some(pretty_model(model, effort))
+            })
+            .take(2)
+            .collect::<Vec<_>>()
+    };
+
+    let mut result = RadarRecommendations {
+        updated_at: v
+            .get("source_updated_at")
+            .or_else(|| v.get("generated_at"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
+        ..Default::default()
+    };
+
+    for group in groups {
+        let key = group
+            .get("key")
+            .or_else(|| group.get("id"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim()
+            .replace('_', "-");
+        match key.as_str() {
+            "daily-development" => result.daily_models = parse_items(group),
+            "hard-problems" => result.hard_problem_models = parse_items(group),
+            _ => {}
+        }
+    }
+
+    if result.daily_models.is_empty() && result.hard_problem_models.is_empty() {
+        return Err("雷达推荐响应缺少目标分类".to_string());
+    }
+    Ok(result)
+}
+
+fn apply_recommendations(data: &mut CodexRadarData, recommendations: RadarRecommendations) {
+    data.daily_models = recommendations.daily_models;
+    data.hard_problem_models = recommendations.hard_problem_models;
+    if !recommendations.updated_at.is_empty() && recommendations.updated_at > data.updated_at {
+        data.updated_at = recommendations.updated_at;
+    }
 }
 
 /// prediction 属于状态接口的独立数据域，只合并概率，不覆盖 metrics 选出的 IQ 对。
@@ -177,7 +265,7 @@ async fn fetch_json(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_prediction, parse_metrics};
+    use super::{apply_prediction, parse_metrics, parse_recommendations};
 
     #[test]
     fn metrics_pick_highest_iq_with_matching_model_and_effort() {
@@ -209,6 +297,25 @@ mod tests {
         assert!(parse_metrics(&value).is_err());
     }
 
+    /// 2026-08-19 上游升级到 schema 3 / equal_latest_3,points 结构不变。
+    #[test]
+    fn metrics_accept_schema3_equal_latest() {
+        let value = serde_json::json!({
+            "schema": 3,
+            "mode": "equal_latest_3",
+            "source_updated_at": "2026-08-19T04:00:00+00:00",
+            "points": [
+                { "model": "gpt-5.6-sol", "effort": "max", "iq": 150.0 },
+                { "model": "gpt-5.6-terra", "effort": "ultra", "iq": 120.0 }
+            ]
+        });
+
+        let result = parse_metrics(&value).expect("schema3 payload should parse");
+        assert_eq!(result.best_model, "GPT-5.6 Sol max");
+        assert_eq!(result.best_score, 150.0);
+        assert_eq!(result.updated_at, "2026-08-19T04:00:00+00:00");
+    }
+
     #[test]
     fn prediction_is_merged_without_changing_the_iq_pair() {
         let metrics = serde_json::json!({
@@ -238,18 +345,99 @@ mod tests {
         assert_eq!(result.probability_24h, 0.14);
         assert_eq!(result.probability_level, "low");
     }
+
+    #[test]
+    fn recommendations_follow_codex_station_categories_and_order() {
+        let value = serde_json::json!({
+            "schema": 1,
+            "source_updated_at": "2026-08-24T02:01:30+00:00",
+            "recommendations": [
+                {
+                    "key": "daily_development",
+                    "items": [
+                        { "model": "gpt-5.6-sol", "effort": "medium", "iq": 92.02 },
+                        { "model": "gpt-5.6-sol", "effort": "high", "iq": 93.34 },
+                        { "model": "", "effort": "low", "iq": 99.0 }
+                    ]
+                },
+                {
+                    "key": "hard_problems",
+                    "items": [
+                        { "model": "gpt-5.6-sol", "effort": "ultra", "iq": 103.04 },
+                        { "model": "gpt-5.6-sol", "effort": "max", "iq": 102.74 }
+                    ]
+                },
+                {
+                    "key": "background_automation",
+                    "items": [{ "model": "gpt-5.6-luna", "effort": "high", "iq": 80.0 }]
+                }
+            ]
+        });
+
+        let result = parse_recommendations(&value).expect("recommendations should parse");
+        assert_eq!(
+            result.daily_models,
+            vec!["GPT-5.6 Sol medium", "GPT-5.6 Sol high"]
+        );
+        assert_eq!(
+            result.hard_problem_models,
+            vec!["GPT-5.6 Sol ultra", "GPT-5.6 Sol max"]
+        );
+        assert_eq!(result.updated_at, "2026-08-24T02:01:30+00:00");
+    }
+
+    #[test]
+    fn recommendations_require_at_least_one_target_category() {
+        let value = serde_json::json!({
+            "schema": 1,
+            "recommendations": [{
+                "key": "lobster_tasks",
+                "items": [{ "model": "gpt-5.6-luna", "effort": "low" }]
+            }]
+        });
+
+        assert!(parse_recommendations(&value).is_err());
+    }
 }
 
 /// 同时拉取网站智力效率卡片与状态预测。走代理 client（境外 Cloudflare 站点）。
 async fn fetch_radar(force: bool) -> Result<CodexRadarData, String> {
     let client = crate::proxy_http_client();
-    let (metrics, status) = tokio::join!(
+    let (metrics, status, insights) = tokio::join!(
         fetch_json(&client, RADAR_METRICS_URL, force, "智力效率"),
-        fetch_json(&client, RADAR_STATUS_URL, force, "重置预测")
+        fetch_json(&client, RADAR_STATUS_URL, force, "重置预测"),
+        fetch_json(&client, RADAR_INSIGHTS_URL, force, "站长推荐")
     );
     let mut data = parse_metrics(&metrics?)?;
     apply_prediction(&mut data, &status?);
+    match insights.and_then(|value| parse_recommendations(&value)) {
+        Ok(recommendations) => apply_recommendations(&mut data, recommendations),
+        Err(error) => eprintln!("codex radar recommendations unavailable: {error}"),
+    }
     Ok(data)
+}
+
+/// 推荐接口短暂不可用时保留上一次成功同步的分类，避免刷新让卡片内容倒退。
+fn preserve_cached_recommendations(app: &tauri::AppHandle, data: &mut CodexRadarData) {
+    if !data.daily_models.is_empty() && !data.hard_problem_models.is_empty() {
+        return;
+    }
+    let Some(state) = app.try_state::<CodexRadarState>() else {
+        return;
+    };
+    let Ok(cache) = state.0.lock() else {
+        return;
+    };
+    let Some(cached) = cache.as_ref() else {
+        return;
+    };
+    if data.daily_models.is_empty() {
+        data.daily_models.clone_from(&cached.daily_models);
+    }
+    if data.hard_problem_models.is_empty() {
+        data.hard_problem_models
+            .clone_from(&cached.hard_problem_models);
+    }
 }
 
 /// 把雷达刷新日志追加到 app_data_dir/codex_radar.log（release 无 stderr，便于诊断连通性）
@@ -278,7 +466,8 @@ fn log_radar(app: &tauri::AppHandle, msg: &str) {
 /// 失败仅打日志，不影响已有缓存。
 pub fn refresh_once(app: &tauri::AppHandle) {
     match tauri::async_runtime::block_on(fetch_radar(false)) {
-        Ok(data) => {
+        Ok(mut data) => {
+            preserve_cached_recommendations(app, &mut data);
             log_radar(
                 app,
                 &format!(
@@ -311,7 +500,8 @@ pub fn get_codex_radar(state: State<'_, CodexRadarState>) -> Option<CodexRadarDa
 #[tauri::command]
 pub async fn refresh_codex_radar(app: tauri::AppHandle) -> Result<CodexRadarData, String> {
     match fetch_radar(true).await {
-        Ok(data) => {
+        Ok(mut data) => {
+            preserve_cached_recommendations(&app, &mut data);
             log_radar(
                 &app,
                 &format!(

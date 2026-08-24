@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDownIcon } from "../../components/icons";
 import { Button } from "../../components/ui/Button";
@@ -61,12 +62,29 @@ interface AccountModelPickerProps {
   agent: AgentType;
   agentLabel: string;
   defaultModel: string;
+  /** 是否展示自定义模型输入表单：自定义模型列表仅用于 GLM，DeepSeek 账号应关闭。 */
+  allowCustomModel?: boolean;
 }
 
-export function AccountModelPicker({ controller, accountId, agent, agentLabel, defaultModel }: AccountModelPickerProps) {
+export function AccountModelPicker({
+  controller,
+  accountId,
+  agent,
+  agentLabel,
+  defaultModel,
+  allowCustomModel = true,
+}: AccountModelPickerProps) {
   const { t } = useTranslation();
+  const [customInput, setCustomInput] = useState("");
   const open = controller.picker?.accountId === accountId && controller.picker.agent === agent;
   if (!open) return null;
+
+  async function submitCustomModel() {
+    const model = customInput.trim();
+    if (!model) return;
+    const success = await controller.submitCustomModel(agent, accountId, model);
+    if (success) setCustomInput("");
+  }
 
   return (
     <div className="border-t border-[var(--color-border-subtle)] px-3.5 pb-3.5 pt-3">
@@ -105,6 +123,34 @@ export function AccountModelPicker({ controller, accountId, agent, agentLabel, d
             <div className="px-3 py-2 text-[11px] text-[var(--color-text-tertiary)]">{t("accountsPane.noModels")}</div>
           )}
         </div>
+        {allowCustomModel && (
+          <form
+            className="mt-2 flex items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitCustomModel();
+            }}
+          >
+            <input
+              value={customInput}
+              onChange={(event) => setCustomInput(event.target.value)}
+              aria-label={t("accountsPane.customModelLabel")}
+              placeholder={t("accountsPane.customModelPlaceholder")}
+              spellCheck={false}
+              autoComplete="off"
+              className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 font-mono text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]"
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              type="submit"
+              disabled={!customInput.trim()}
+              loading={controller.isPending(accountId, "bind")}
+            >
+              {t("accountsPane.customModelBind")}
+            </Button>
+          </form>
+        )}
       </div>
     </div>
   );

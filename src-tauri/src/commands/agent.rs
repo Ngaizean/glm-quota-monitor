@@ -15,6 +15,8 @@ pub struct AgentBinding {
 const AGENTS: &[(&str, &str)] = &[("claude_code", "Claude Code"), ("openclaw", "OpenClaw")];
 
 const DEFAULT_MODEL_KEY: &str = "default_model";
+/// 用户自定义模型列表（JSON 数组存储于 app_settings）：允许绑定 API 模型列表之外的 GLM 模型名。
+const CUSTOM_MODELS_KEY: &str = "custom_models";
 /// 兜底默认模型：升级后未显式配置时取当前最新旗舰（GLM 5.x 代际）。
 /// 注意：绑定"使用默认模型"时会优先从 GLM API 动态取最新模型，此常量仅作离线/失败兜底。
 const FALLBACK_MODEL: &str = "glm-5.2";
@@ -101,6 +103,36 @@ fn read_default_model(conn: &rusqlite::Connection) -> Option<String> {
         |row| row.get(0),
     )
     .ok()
+}
+
+/// 读取自定义模型列表（缺失或格式异常时返回空列表，兼容旧数据）。
+fn read_custom_models(conn: &rusqlite::Connection) -> Vec<String> {
+    conn.query_row(
+        "SELECT value FROM app_settings WHERE key = ?1",
+        rusqlite::params![CUSTOM_MODELS_KEY],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+    .unwrap_or_default()
+}
+
+fn write_custom_models(conn: &rusqlite::Connection, models: &[String]) -> Result<(), String> {
+    let raw = serde_json::to_string(models).map_err(|e| format!("序列化失败: {}", e))?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+        rusqlite::params![CUSTOM_MODELS_KEY, raw],
+    )
+    .map_err(|e| format!("保存自定义模型失败: {}", e))?;
+    Ok(())
+}
+
+/// 合并 API 模型列表与自定义模型：去重 + 字典序，保证 picker 展示稳定。
+fn merge_models(api: &[String], custom: &[String]) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    seen.extend(api.iter().cloned());
+    seen.extend(custom.iter().cloned());
+    seen.into_iter().collect()
 }
 
 const ANTHROPIC_BASE_URL: &str = "https://open.bigmodel.cn/api/anthropic";
@@ -467,37 +499,51 @@ pub fn unbind_agent(db: State<'_, Database>, agent: String) -> Result<(), String
 
 #[tauri::command]
 pub fn fetch_models(db: State<'_, Database>, account_id: String) -> Result<Vec<String>, String> {
-    // 按账号平台分发：DeepSeek 走其 /models（v4-flash/v4-pro），GLM 走智谱模型列表
-    let platform: String = {
+    // 按账号平台分发：DeepSeek 走其 /models（v4-flash/v4-pro），GLM 走智谱模型列表 + 自定义模型合并
+    let (platform, custom_models): (String, Vec<String>) = {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-        conn.query_row(
-            "SELECT platform FROM accounts WHERE id = ?1",
-            rusqlite::params![account_id],
-            |row| row.get(0),
-        )
-        .map_err(|_| format!("账号不存在: {}", account_id))?
+        let platform: String = conn
+            .query_row(
+                "SELECT platform FROM accounts WHERE id = ?1",
+                rusqlite::params![account_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| format!("账号不存在: {}", account_id))?;
+        (platform, read_custom_models(&conn))
     };
 
-    let mut models: Vec<String> = match platform.as_str() {
+    let models: Vec<String> = match platform.as_str() {
         "deepseek" => {
             let api_key = crate::deepseek::auth::get_api_key(&account_id)
                 .map_err(|e| format!("获取 API Key 失败: {}", e))?;
+            let fallback = crate::proxy_http_client();
             let resp = tauri::async_runtime::block_on(
-                crate::deepseek::client::DeepSeekClient::get_models(&crate::HTTP_CLIENT, &api_key),
+                crate::deepseek::client::DeepSeekClient::get_models_with_fallback(
+                    &crate::HTTP_CLIENT,
+                    &fallback,
+                    &api_key,
+                ),
             )
             .map_err(|e| format!("获取模型列表失败: {}", e))?;
-            resp.data.into_iter().map(|m| m.id).collect()
+            let mut models: Vec<String> = resp.data.into_iter().map(|m| m.id).collect();
+            models.sort();
+            models
         }
         _ => {
             let api_key = crypto::get_api_key(&account_id)
                 .map_err(|e| format!("获取 API Key 失败: {}", e))?;
             let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
-            let resp = tauri::async_runtime::block_on(client.list_models())
-                .map_err(|e| format!("获取模型列表失败: {}", e))?;
-            resp.data.into_iter().map(|m| m.id).collect()
+            match tauri::async_runtime::block_on(client.list_models()) {
+                Ok(resp) => {
+                    let api_models: Vec<String> = resp.data.into_iter().map(|m| m.id).collect();
+                    merge_models(&api_models, &custom_models)
+                }
+                // API 拉取失败时降级：已有自定义模型则返回之（自定义模型不依赖 API 列表），否则维持报错
+                Err(_) if !custom_models.is_empty() => custom_models,
+                Err(e) => return Err(format!("获取模型列表失败: {}", e)),
+            }
         }
     };
-    models.sort();
     Ok(models)
 }
 
@@ -518,9 +564,59 @@ pub fn set_default_model(db: State<'_, Database>, model: String) -> Result<(), S
     Ok(())
 }
 
+/// 读取用户自定义模型列表。
+#[tauri::command]
+pub fn get_custom_models(db: State<'_, Database>) -> Result<Vec<String>, String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+    Ok(read_custom_models(&conn))
+}
+
+/// 添加自定义模型（trim + 非空校验 + 去重），返回更新后的列表。
+fn add_custom_model_impl(
+    conn: &rusqlite::Connection,
+    model: String,
+) -> Result<Vec<String>, String> {
+    let model = model.trim().to_string();
+    if model.is_empty() {
+        return Err("模型名不能为空".to_string());
+    }
+    let mut models = read_custom_models(conn);
+    if !models.contains(&model) {
+        models.push(model);
+        models.sort();
+        write_custom_models(conn, &models)?;
+    }
+    Ok(models)
+}
+
+fn remove_custom_model_impl(
+    conn: &rusqlite::Connection,
+    model: String,
+) -> Result<Vec<String>, String> {
+    let mut models = read_custom_models(conn);
+    models.retain(|m| *m != model);
+    write_custom_models(conn, &models)?;
+    Ok(models)
+}
+
+#[tauri::command]
+pub fn add_custom_model(db: State<'_, Database>, model: String) -> Result<Vec<String>, String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+    add_custom_model_impl(&conn, model)
+}
+
+#[tauri::command]
+pub fn remove_custom_model(db: State<'_, Database>, model: String) -> Result<Vec<String>, String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+    remove_custom_model_impl(&conn, model)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_glm_version, pick_latest_glm_model};
+    use super::{
+        add_custom_model_impl, merge_models, parse_glm_version, pick_latest_glm_model,
+        read_custom_models, remove_custom_model_impl,
+    };
 
     #[test]
     fn parses_standard_glm_versions_and_suffixes() {
@@ -541,5 +637,59 @@ mod tests {
         ];
 
         assert_eq!(pick_latest_glm_model(&models).as_deref(), Some("glm-5.2"));
+    }
+
+    #[test]
+    fn merges_api_and_custom_models_dedup_sorted() {
+        let api = vec!["glm-5.2".to_string(), "glm-4.5-air".to_string()];
+        let custom = vec!["glm-custom".to_string(), "glm-5.2".to_string()];
+
+        assert_eq!(
+            merge_models(&api, &custom),
+            vec![
+                "glm-4.5-air".to_string(),
+                "glm-5.2".to_string(),
+                "glm-custom".to_string()
+            ]
+        );
+        assert!(merge_models(&[], &[]).is_empty());
+    }
+
+    fn test_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(crate::db::migrations::MIGRATION_SQL)
+            .unwrap();
+        conn
+    }
+
+    #[test]
+    fn custom_models_add_remove_roundtrip() {
+        let conn = test_conn();
+        assert!(read_custom_models(&conn).is_empty());
+
+        // 添加两个 + 重复添加去重
+        assert_eq!(
+            add_custom_model_impl(&conn, " glm-custom ".to_string()).unwrap(),
+            vec!["glm-custom".to_string()]
+        );
+        assert_eq!(
+            add_custom_model_impl(&conn, "glm-5.2".to_string()).unwrap(),
+            vec!["glm-5.2".to_string(), "glm-custom".to_string()]
+        );
+        assert_eq!(
+            add_custom_model_impl(&conn, "glm-custom".to_string()).unwrap(),
+            vec!["glm-5.2".to_string(), "glm-custom".to_string()]
+        );
+        // 空名校验
+        assert!(add_custom_model_impl(&conn, "   ".to_string()).is_err());
+
+        // 删除后持久化生效
+        assert_eq!(
+            remove_custom_model_impl(&conn, "glm-custom".to_string()).unwrap(),
+            vec!["glm-5.2".to_string()]
+        );
+        assert_eq!(read_custom_models(&conn), vec!["glm-5.2".to_string()]);
+        // 删除不存在的模型不报错
+        assert!(remove_custom_model_impl(&conn, "glm-none".to_string()).is_ok());
     }
 }

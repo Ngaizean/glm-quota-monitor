@@ -1,4 +1,17 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// JSON 字段显式为 null 时回退默认值。
+/// #[serde(default)] 只覆盖「字段缺失」，不覆盖「字段为 null」；
+/// Plus 账号的 wham/usage 返回 "additional_rate_limits": null，
+/// 直接反序列化 Vec 会报 "invalid type: null, expected a sequence"。
+fn null_to_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let opt = Option::<T>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
 
 /// GET /backend-api/wham/usage 的响应
 /// 实际结构（已验证）：
@@ -15,8 +28,13 @@ pub struct UsageResponse {
     pub plan_type: Option<String>,
     #[serde(default)]
     pub rate_limit: Option<RateLimitRoot>,
-    /// 额外模型额度（如 GPT-5.3-Codex-Spark），每个含独立的 primary/secondary 窗口
-    #[serde(default, rename = "additional_rate_limits")]
+    /// 额外模型额度（如 GPT-5.3-Codex-Spark），每个含独立的 primary/secondary 窗口。
+    /// Plus 账号此字段为 null，用 null_to_default 兜底为空数组。
+    #[serde(
+        default,
+        deserialize_with = "null_to_default",
+        rename = "additional_rate_limits"
+    )]
     pub additional_rate_limits: Vec<AdditionalRateLimit>,
 }
 
@@ -112,5 +130,38 @@ impl AuthJson {
         let v: serde_json::Value = serde_json::from_slice(&payload).ok()?;
         let exp = v.get("exp")?.as_i64()?;
         chrono::DateTime::from_timestamp(exp, 0).map(|dt| dt.to_rfc3339())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Plus 账号 wham/usage 真实响应（2026-08 抓取）：
+    /// additional_rate_limits / secondary_window 显式为 null。
+    /// Pro 账号这两个字段是数组/对象，换 Plus 后解析失败导致导入报错。
+    #[test]
+    fn deserialize_plus_usage_with_null_fields() {
+        let json = r#"{
+            "user_id": "user-xxx",
+            "plan_type": "plus",
+            "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "primary_window": {
+                    "used_percent": 0,
+                    "limit_window_seconds": 604800,
+                    "reset_after_seconds": 604800,
+                    "reset_at": 1787709983
+                },
+                "secondary_window": null
+            },
+            "additional_rate_limits": null
+        }"#;
+        let usage: UsageResponse = serde_json::from_str(json).expect("Plus 响应应能解析");
+        assert_eq!(usage.plan_type.as_deref(), Some("plus"));
+        assert!(usage.additional_rate_limits.is_empty());
+        let rate_limit = usage.rate_limit.expect("rate_limit 应存在");
+        assert!(rate_limit.secondary_window.is_none());
     }
 }

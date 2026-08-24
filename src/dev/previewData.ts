@@ -40,4 +40,6 @@ export const PREVIEW_RADAR: CodexRadarData = {
   probability_24h: 0.14,
   probability_level: "low",
   updated_at: new Date(Date.now() - 6 * 60_000).toISOString(),
+  daily_models: ["GPT-5.6 Sol medium", "GPT-5.6 Sol high"],
+  hard_problem_models: ["GPT-5.6 Sol ultra", "GPT-5.6 Sol max"],
 };

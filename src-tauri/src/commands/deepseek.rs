@@ -20,6 +20,26 @@ pub(crate) fn deepseek_error_msg(e: &DeepSeekApiError) -> String {
     }
 }
 
+fn fetch_balance(
+    api_key: &str,
+) -> Result<crate::deepseek::types::BalanceResponse, DeepSeekApiError> {
+    let fallback = crate::proxy_http_client();
+    tauri::async_runtime::block_on(DeepSeekClient::get_balance_with_fallback(
+        &crate::HTTP_CLIENT,
+        &fallback,
+        api_key,
+    ))
+}
+
+fn fetch_models(api_key: &str) -> Result<crate::deepseek::types::ModelsResponse, DeepSeekApiError> {
+    let fallback = crate::proxy_http_client();
+    tauri::async_runtime::block_on(DeepSeekClient::get_models_with_fallback(
+        &crate::HTTP_CLIENT,
+        &fallback,
+        api_key,
+    ))
+}
+
 /// 读取账号在 deepseek_snapshots 中最近一次快照的所有币种条目。
 ///
 /// DeepSeek 一次拉取的多个币种共享同一 timestamp（record_deepseek_snapshot 一并写入），
@@ -76,9 +96,8 @@ pub fn add_deepseek_account(
     api_key: String,
 ) -> Result<Account, String> {
     // 1. 验证 Key（拉一次余额）
-    let balance =
-        tauri::async_runtime::block_on(DeepSeekClient::get_balance(&crate::HTTP_CLIENT, &api_key))
-            .map_err(|e| format!("API Key 验证失败: {}", deepseek_error_msg(&e)))?;
+    let balance = fetch_balance(&api_key)
+        .map_err(|e| format!("API Key 验证失败: {}", deepseek_error_msg(&e)))?;
 
     // 2. 入库
     let now = Utc::now().to_rfc3339();
@@ -144,9 +163,7 @@ pub fn get_deepseek_balance(
     account_id: String,
 ) -> Result<DeepSeekBalanceView, String> {
     let api_key = deepseek::auth::get_api_key(&account_id)?;
-    let http = &crate::HTTP_CLIENT;
-
-    let balance = tauri::async_runtime::block_on(DeepSeekClient::get_balance(http, &api_key));
+    let balance = fetch_balance(&api_key);
 
     match balance {
         Ok(b) => {
@@ -155,17 +172,16 @@ pub fn get_deepseek_balance(
                 let _ = crate::db::record_deepseek_snapshot(&conn, &account_id, &b);
             }
             // 模型列表：失败不致命，置空即可
-            let models: Vec<String> =
-                tauri::async_runtime::block_on(DeepSeekClient::get_models(http, &api_key))
-                    .ok()
-                    .map(|m| {
-                        m.data
-                            .into_iter()
-                            .map(|e| e.id)
-                            .filter(|s| !s.is_empty())
-                            .collect()
-                    })
-                    .unwrap_or_default();
+            let models: Vec<String> = fetch_models(&api_key)
+                .ok()
+                .map(|m| {
+                    m.data
+                        .into_iter()
+                        .map(|e| e.id)
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
 
             Ok(DeepSeekBalanceView {
                 is_available: b.is_available,
@@ -206,9 +222,7 @@ pub fn get_deepseek_models(
     account_id: String,
 ) -> Result<crate::deepseek::types::ModelsResponse, String> {
     let api_key = deepseek::auth::get_api_key(&account_id)?;
-    let resp =
-        tauri::async_runtime::block_on(DeepSeekClient::get_models(&crate::HTTP_CLIENT, &api_key))
-            .map_err(|e| deepseek_error_msg(&e))?;
+    let resp = fetch_models(&api_key).map_err(|e| deepseek_error_msg(&e))?;
     Ok(resp)
 }
 
@@ -249,9 +263,8 @@ pub fn get_deepseek_balance_history(
 /// 验证 DeepSeek API Key 有效性，成功返回「币种 余额」摘要（兼作校验回显）。
 #[tauri::command]
 pub fn validate_deepseek_api_key(api_key: String) -> Result<String, String> {
-    let balance =
-        tauri::async_runtime::block_on(DeepSeekClient::get_balance(&crate::HTTP_CLIENT, &api_key))
-            .map_err(|e| format!("API Key 验证失败: {}", deepseek_error_msg(&e)))?;
+    let balance = fetch_balance(&api_key)
+        .map_err(|e| format!("API Key 验证失败: {}", deepseek_error_msg(&e)))?;
     let entry = balance_view_entries(&balance)
         .into_iter()
         .next()
@@ -282,11 +295,8 @@ pub fn update_deepseek_api_key(
     new_api_key: String,
 ) -> Result<(), String> {
     // 1. 验证新 Key
-    let balance = tauri::async_runtime::block_on(DeepSeekClient::get_balance(
-        &crate::HTTP_CLIENT,
-        &new_api_key,
-    ))
-    .map_err(|e| format!("API Key 验证失败: {}", deepseek_error_msg(&e)))?;
+    let balance = fetch_balance(&new_api_key)
+        .map_err(|e| format!("API Key 验证失败: {}", deepseek_error_msg(&e)))?;
 
     // 2. 覆盖 Keychain
     deepseek::auth::store_api_key(&account_id, &new_api_key)
