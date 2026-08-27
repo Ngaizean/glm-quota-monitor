@@ -48,4 +48,15 @@ describe("quota helpers", () => {
     expect(summary.maxPercentage).toBe(91);
     expect(summary.status).toBe("critical");
   });
+
+  it("中转余额单独分类且不参与百分比风险计算", () => {
+    const relay = limit({ type: "RELAY_BALANCE", currentValue: 480, remaining: 480 });
+    const result = partitionQuotaLimits([relay]);
+    const summary = getQuotaSummary([relay]);
+
+    expect(result.relayBalance).toBe(relay);
+    expect(result.other).toEqual([]);
+    expect(summary.primary).toBeNull();
+    expect(summary.maxPercentage).toBe(0);
+  });
 });

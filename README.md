@@ -1,6 +1,6 @@
 # GLM Quota Monitor
 
-一款跨平台桌面工具，专注智谱 GLM Coding Plan 的额度管理、用量统计、多账号管理和智能预警。
+一款跨平台桌面工具，统一监测智谱 GLM、Codex 官方账号与中转站、DeepSeek 的额度和余额，支持多账号管理、用量统计、智能预警及 Codex SSH 配置分发。
 
 ## 开发
 

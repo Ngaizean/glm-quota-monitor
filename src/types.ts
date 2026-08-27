@@ -9,7 +9,16 @@ export interface Account {
   is_primary: boolean;
 }
 
-export type QuotaLimitType = "TIME_LIMIT" | "TOKENS_LIMIT" | "MCP_MONTHLY" | "DEEPSEEK_BALANCE" | (string & {});
+export type QuotaLimitType =
+  | "TIME_LIMIT"
+  | "TOKENS_LIMIT"
+  | "MCP_MONTHLY"
+  | "DEEPSEEK_BALANCE"
+  | "RELAY_BALANCE"
+  | "CODEX_CREDITS"
+  | "CODE_REVIEW_5H"
+  | "CODE_REVIEW_WEEKLY"
+  | (string & {});
 
 export interface QuotaLimit {
   type: QuotaLimitType;
@@ -69,6 +78,27 @@ export interface DeepSeekBalancePoint {
   totalBalance: number;
   grantedBalance: number;
   toppedUpBalance: number;
+}
+
+export interface RelayUsageBucket {
+  cost: number;
+  actualCost: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  requests: number;
+}
+
+export interface RelayUsageView {
+  isValid: boolean;
+  planName: string;
+  mode: string;
+  balance: number;
+  remaining: number;
+  unit: string;
+  today: RelayUsageBucket;
+  total: RelayUsageBucket;
+  fetchedAt: string;
 }
 
 export interface TokenUsagePeriod {

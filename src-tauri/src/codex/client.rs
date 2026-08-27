@@ -22,20 +22,34 @@ pub enum CodexApiError {
 /// wham/usage 端点用 access_token 作为 Bearer 认证
 pub struct CodexClient;
 
+fn build_usage_request(
+    http: &reqwest::Client,
+    access_token: &str,
+    account_id: &str,
+) -> reqwest::RequestBuilder {
+    let request = http
+        .get(USAGE_URL)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Accept", "application/json");
+    if account_id.trim().is_empty() {
+        request
+    } else {
+        request.header("ChatGPT-Account-Id", account_id.trim())
+    }
+}
+
 impl CodexClient {
     /// 用 access_token 查询额度
     pub async fn get_usage(
         http: &reqwest::Client,
         access_token: &str,
+        account_id: &str,
     ) -> Result<UsageResponse, CodexApiError> {
         if access_token.is_empty() {
             return Err(CodexApiError::NoAccessToken);
         }
 
-        let resp = http
-            .get(USAGE_URL)
-            .header("Authorization", format!("Bearer {}", access_token))
-            .header("Accept", "application/json")
+        let resp = build_usage_request(http, access_token, account_id)
             .send()
             .await?;
 
@@ -73,13 +87,35 @@ impl CodexClient {
         primary: &reqwest::Client,
         fallback: &reqwest::Client,
         access_token: &str,
+        account_id: &str,
     ) -> Result<UsageResponse, CodexApiError> {
-        match Self::get_usage(primary, access_token).await {
+        match Self::get_usage(primary, access_token, account_id).await {
             Err(CodexApiError::Request(primary_error)) => {
                 eprintln!("Codex usage 代理请求失败，尝试直连重试: {}", primary_error);
-                Self::get_usage(fallback, access_token).await
+                Self::get_usage(fallback, access_token, account_id).await
             }
             result => result,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn official_usage_request_carries_chatgpt_account_id() {
+        let client = reqwest::Client::new();
+        let request = build_usage_request(&client, "access-token", "account-123")
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            request
+                .headers()
+                .get("ChatGPT-Account-Id")
+                .and_then(|value| value.to_str().ok()),
+            Some("account-123")
+        );
     }
 }

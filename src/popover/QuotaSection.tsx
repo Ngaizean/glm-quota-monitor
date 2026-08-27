@@ -80,7 +80,7 @@ interface Props {
  * 注意：API 可能返回多个同 type 的额度（如两个 TOKENS_LIMIT），
  * 必须按 (type, unit) 组合查找，不能用 find() 只取第一个。
  */
-type QuotaCategory = "hourly" | "weekly" | "time" | "mcp" | "sparkHourly" | "sparkWeekly";
+type QuotaCategory = "hourly" | "weekly" | "time" | "mcp" | "sparkHourly" | "sparkWeekly" | "codeReviewHourly" | "codeReviewWeekly";
 
 const CATEGORY_TITLE_KEY: Record<QuotaCategory, string> = {
   hourly: "quota.token5hTitle",
@@ -89,10 +89,12 @@ const CATEGORY_TITLE_KEY: Record<QuotaCategory, string> = {
   mcp: "quota.mcpMonthlyTitle",
   sparkHourly: "quota.spark5hTitle",
   sparkWeekly: "quota.sparkWeeklyTitle",
+  codeReviewHourly: "quota.codeReview5hTitle",
+  codeReviewWeekly: "quota.codeReviewWeeklyTitle",
 };
 
 /** 渲染顺序：5h 窗口 → 周额度 → Spark 5h → Spark 周 → 月度 */
-const RENDER_ORDER: QuotaCategory[] = ["hourly", "weekly", "sparkHourly", "sparkWeekly", "time", "mcp"];
+const RENDER_ORDER: QuotaCategory[] = ["hourly", "weekly", "sparkHourly", "sparkWeekly", "codeReviewHourly", "codeReviewWeekly", "time", "mcp"];
 
 export default function QuotaSection({ limits, isOffline }: Props) {
   const { t } = useTranslation();
@@ -102,7 +104,8 @@ export default function QuotaSection({ limits, isOffline }: Props) {
     const limit = partitioned[category];
     return limit ? [{ category, limit }] : [];
   });
-  const unknown = partitioned.other.filter((limit) => limit.type !== "DEEPSEEK_BALANCE");
+  const unknown = partitioned.other;
+  const credits = partitioned.codexCredits?.currentValue;
 
   return (
     <div className="px-4 py-3 space-y-3.5 relative">
@@ -122,6 +125,12 @@ export default function QuotaSection({ limits, isOffline }: Props) {
           />
         );
       })}
+      {credits !== undefined && credits !== null && (
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-medium text-[var(--color-text-secondary)]">{t("quota.codexCreditsTitle")}</span>
+          <span className="font-bold text-emerald-500 tabular-nums">{credits.toFixed(2)}</span>
+        </div>
+      )}
       {unknown.map((limit, index) => (
         <QuotaBar
           key={`${limit.type}-${limit.unit ?? "unknown"}-${index}`}
@@ -130,7 +139,7 @@ export default function QuotaSection({ limits, isOffline }: Props) {
           resetTime={limit.nextResetTime}
         />
       ))}
-      {ordered.length === 0 && unknown.length === 0 && (
+      {ordered.length === 0 && unknown.length === 0 && credits == null && (
         <div className="text-[11px] text-[var(--color-text-tertiary)] py-2">{t('usage.noData')}</div>
       )}
     </div>

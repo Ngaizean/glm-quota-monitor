@@ -2,6 +2,7 @@ pub mod auth;
 pub mod client;
 pub mod crypto;
 pub mod import_json;
+pub mod relay;
 pub mod ssh;
 pub mod sync;
 pub mod types;
@@ -53,7 +54,59 @@ pub fn usage_to_quota_data(usage: &UsageResponse) -> QuotaData {
         }
     }
 
+    if let Some(ref rate_limit) = usage.code_review_rate_limit {
+        if let Some(ref window) = rate_limit.primary_window {
+            quota.limits.push(window_to_quota_limit(
+                window,
+                code_review_limit_type(window),
+                None,
+            ));
+        }
+        if let Some(ref window) = rate_limit.secondary_window {
+            quota.limits.push(window_to_quota_limit(
+                window,
+                code_review_limit_type(window),
+                None,
+            ));
+        }
+    }
+
+    if let Some(balance) = usage
+        .credits
+        .as_ref()
+        .filter(|credits| credits.has_credits && !credits.unlimited)
+        .and_then(|credits| credits.balance.as_ref())
+        .and_then(json_number)
+    {
+        quota.limits.push(QuotaLimit {
+            limit_type: "CODEX_CREDITS".to_string(),
+            percentage: 0.0,
+            next_reset_time: 0,
+            unit: None,
+            number: None,
+            usage: None,
+            current_value: Some(balance),
+            remaining: Some(balance),
+            usage_details: None,
+        });
+    }
+
     quota
+}
+
+fn code_review_limit_type(window: &Window) -> &'static str {
+    if classify_window_unit(window) == Some(6.0) {
+        "CODE_REVIEW_WEEKLY"
+    } else {
+        "CODE_REVIEW_5H"
+    }
+}
+
+fn json_number(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|text| text.trim().parse().ok()))
+        .filter(|number| number.is_finite())
 }
 
 /// 按窗口总时长推断前端分类用的 unit：
@@ -90,5 +143,35 @@ fn window_to_quota_limit(window: &Window, limit_type: &str, unit: Option<f64>) -
         current_value: None,
         remaining: None,
         usage_details: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_official_credits_and_code_review_windows() {
+        let usage: UsageResponse = serde_json::from_str(r#"{
+            "plan_type": "pro",
+            "credits": {"has_credits": true, "unlimited": false, "overage_limit_reached": false, "balance": "12.50"},
+            "code_review_rate_limit": {
+                "primary_window": {"used_percent": 25, "limit_window_seconds": 18000, "reset_at": 1787800000},
+                "secondary_window": {"used_percent": 50, "limit_window_seconds": 604800, "reset_at": 1787900000}
+            }
+        }"#).unwrap();
+
+        let quota = usage_to_quota_data(&usage);
+        assert!(quota.limits.iter().any(|limit| {
+            limit.limit_type == "CODEX_CREDITS" && limit.current_value == Some(12.5)
+        }));
+        assert!(quota
+            .limits
+            .iter()
+            .any(|limit| { limit.limit_type == "CODE_REVIEW_5H" && limit.percentage == 25.0 }));
+        assert!(quota
+            .limits
+            .iter()
+            .any(|limit| { limit.limit_type == "CODE_REVIEW_WEEKLY" && limit.percentage == 50.0 }));
     }
 }

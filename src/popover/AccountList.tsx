@@ -6,10 +6,12 @@ import { getQuotaSummary } from "../lib/quota";
 import { getAvatarGradient, getLevelStyle, formatPlanLevel } from "../lib/ui";
 import type { Account, QuotaData } from "../types";
 import CostBar from "./CostBar";
+import CodexRelayBalanceBadge from "./CodexRelayBalanceBadge";
 import DeepSeekBalanceBadge from "./DeepSeekBalanceBadge";
 import DeepSeekBalanceBar from "./DeepSeekBalanceBar";
 import DeepSeekModelList from "./DeepSeekModelList";
 import QuotaSection from "./QuotaSection";
+import RelayUsagePanel from "./RelayUsagePanel";
 import ToolUsageSection from "./ToolUsageSection";
 import UsageSummary from "./UsageSummary";
 
@@ -50,6 +52,7 @@ function AccountDetails({ account, quota, refreshKey }: {
   const { t, i18n } = useTranslation();
   const [tab, setTab] = useState<DetailTab>("overview");
   const platform = account.platform ?? "zhipu";
+  const isRelay = platform === "codex" && Boolean(quota?.limits.some((limit) => limit.type === "RELAY_BALANCE"));
   const options = platform === "zhipu"
     ? [
         { value: "overview" as const, label: t("account.tabs.overview") },
@@ -57,7 +60,9 @@ function AccountDetails({ account, quota, refreshKey }: {
         { value: "cost" as const, label: t("account.tabs.cost") },
         { value: "tools" as const, label: t("account.tabs.tools") },
       ]
-    : [
+    : isRelay
+      ? [{ value: "overview" as const, label: t("account.tabs.overview") }]
+      : [
         { value: "overview" as const, label: t("account.tabs.overview") },
         { value: "trend" as const, label: t("account.tabs.trend") },
       ];
@@ -89,7 +94,8 @@ function AccountDetails({ account, quota, refreshKey }: {
             <DeepSeekModelList accountId={account.id} refreshKey={refreshKey} />
           </>
         )}
-        {tab === "overview" && platform !== "deepseek" && (
+        {tab === "overview" && isRelay && <RelayUsagePanel refreshKey={refreshKey} />}
+        {tab === "overview" && platform !== "deepseek" && !isRelay && (
           <>
             {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}
             {platform !== "codex" && (
@@ -139,6 +145,7 @@ export default function AccountList({
       {accounts.map((account) => {
         const expanded = expandedIds.has(account.id);
         const quota = quotas[account.id];
+        const isRelay = account.platform === "codex" && Boolean(quota?.limits.some((limit) => limit.type === "RELAY_BALANCE"));
         const detailId = `account-details-${account.id}`;
         return (
           <article className="account-card" data-expanded={expanded || undefined} key={account.id}>
@@ -160,7 +167,9 @@ export default function AccountList({
                 {loading && !quota && <span className="ui-spinner" aria-label={t("common.loading")} />}
                 {account.platform === "deepseek"
                   ? <DeepSeekBalanceBadge quota={quota} />
-                  : <QuotaSummaryBadge quota={quota} />}
+                  : isRelay
+                    ? <CodexRelayBalanceBadge quota={quota} />
+                    : <QuotaSummaryBadge quota={quota} />}
                 <span className="account-row__chevron"><ChevronIcon open={expanded} /></span>
               </button>
               <button

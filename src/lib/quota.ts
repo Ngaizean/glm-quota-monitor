@@ -10,6 +10,10 @@ export interface PartitionedQuotaLimits {
   sparkHourly?: QuotaLimit;
   sparkWeekly?: QuotaLimit;
   balance?: QuotaLimit;
+  relayBalance?: QuotaLimit;
+  codexCredits?: QuotaLimit;
+  codeReviewHourly?: QuotaLimit;
+  codeReviewWeekly?: QuotaLimit;
   other: QuotaLimit[];
 }
 
@@ -53,6 +57,14 @@ export function partitionQuotaLimits(limits: readonly QuotaLimit[]): Partitioned
       key = "sparkWeekly";
     } else if (type === "DEEPSEEK_BALANCE") {
       key = "balance";
+    } else if (type === "RELAY_BALANCE") {
+      key = "relayBalance";
+    } else if (type === "CODEX_CREDITS") {
+      key = "codexCredits";
+    } else if (type === "CODE_REVIEW_5H") {
+      key = "codeReviewHourly";
+    } else if (type === "CODE_REVIEW_WEEKLY") {
+      key = "codeReviewWeekly";
     }
 
     if (!key) {
@@ -80,10 +92,12 @@ export function getQuotaSummary(limits: readonly QuotaLimit[]): QuotaSummary {
   const primary = firstDistinct([
     parts.hourly,
     parts.sparkHourly,
+    parts.codeReviewHourly,
     parts.time,
     parts.mcp,
     parts.weekly,
     parts.sparkWeekly,
+    parts.codeReviewWeekly,
   ]);
   const secondary = firstDistinct([
     parts.weekly,
@@ -101,6 +115,8 @@ export function getQuotaSummary(limits: readonly QuotaLimit[]): QuotaSummary {
     parts.mcp,
     parts.sparkHourly,
     parts.sparkWeekly,
+    parts.codeReviewHourly,
+    parts.codeReviewWeekly,
     ...parts.other,
   ].filter((limit): limit is QuotaLimit => Boolean(limit));
   const maxPercentage = percentageLimits.reduce(

@@ -36,6 +36,22 @@ pub struct UsageResponse {
         rename = "additional_rate_limits"
     )]
     pub additional_rate_limits: Vec<AdditionalRateLimit>,
+    #[serde(default)]
+    pub code_review_rate_limit: Option<RateLimitRoot>,
+    #[serde(default)]
+    pub credits: Option<Credits>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct Credits {
+    #[serde(default)]
+    pub has_credits: bool,
+    #[serde(default)]
+    pub unlimited: bool,
+    #[serde(default)]
+    pub overage_limit_reached: bool,
+    #[serde(default)]
+    pub balance: Option<serde_json::Value>,
 }
 
 /// 额外模型的额度限制（如 Spark）

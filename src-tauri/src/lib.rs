@@ -278,17 +278,57 @@ fn fetch_zhipu_account_quota(
 }
 
 /// Codex 账号额度查询
-/// 优先使用本机 auth.json；必要时刷新 token 并同步到 Keychain。
+/// 第零步：中转站模式（config.toml 指向非官方 base_url 且配有 API Key），
+/// 改拉中转站 /v1/usage（钱包余额），官方 wham/usage 的百分比模型不适用；
+/// 中转站失败时回落到官方 ChatGPT 登录通路（本机可能保留了 tokens）。
+/// 官方通路：优先使用本机 auth.json；必要时刷新 token 并同步到 Keychain。
 fn fetch_codex_account_quota(
     db: &Database,
     account_id: &str,
 ) -> Result<(QuotaData, i32, f64, f64), String> {
+    // 第零步：中转站（relay）模式
+    let mut relay_err: Option<String> = None;
+    if let Some(relay_cfg) = codex::relay::detect_local_relay_config() {
+        let api_key = codex::auth::read_local_auth_json()
+            .ok()
+            .and_then(|a| codex::relay::api_key_from_auth(&a));
+        if let Some(api_key) = api_key {
+            let proxy = proxy_http_client();
+            let started = std::time::Instant::now();
+            match tauri::async_runtime::block_on(codex::relay::fetch_relay_usage(
+                &HTTP_CLIENT,
+                &proxy,
+                &relay_cfg.base_url,
+                &api_key,
+            )) {
+                Ok(usage) => {
+                    log_codex_relay(&format!(
+                        "fetch OK provider={} base={} {:?} balance={:?} plan={:?}",
+                        relay_cfg.provider_name,
+                        relay_cfg.base_url,
+                        started.elapsed(),
+                        usage.balance,
+                        usage.plan_name
+                    ));
+                    return Ok(finalize_relay_quota(db, account_id, &usage));
+                }
+                Err(e) => {
+                    log_codex_relay(&format!(
+                        "fetch FAILED provider={} base={} err={e}",
+                        relay_cfg.provider_name, relay_cfg.base_url
+                    ));
+                    relay_err = Some(e);
+                }
+            }
+        }
+    }
+
     // 第一步：尝试本机 auth.json（Codex CLI 维护的，总是最新源）
     let local_auth = codex::auth::read_local_auth_json()
         .or_else(|_| codex::auth::read_auth_from_keychain(account_id))?;
 
     if local_auth.tokens.access_token.is_empty() {
-        return Err("无 access_token".to_string());
+        return Err(relay_err.unwrap_or_else(|| "无 access_token".to_string()));
     }
 
     // 检查 token 是否快过期（<2天），如果是则自动刷新
@@ -322,6 +362,7 @@ fn fetch_codex_account_quota(
             &proxy,
             &HTTP_CLIENT,
             &auth.tokens.access_token,
+            &auth.tokens.account_id,
         ));
 
     let usage = match usage_result {
@@ -341,13 +382,18 @@ fn fetch_codex_account_quota(
                 &proxy,
                 &HTTP_CLIENT,
                 &refreshed.tokens.access_token,
+                &refreshed.tokens.account_id,
             ))
             .map_err(|e| format!("wham/usage 重试失败: {}", e))?
         }
         Err(e) => return Err(format!("wham/usage 调用失败: {}", e)),
     };
 
-    Ok(finalize_codex_quota(db, account_id, &usage))
+    let (mut quota, pct, today_tokens, today_calls) = finalize_codex_quota(db, account_id, &usage);
+    if let Some(error) = relay_err {
+        quota.error = Some(format!("中转站额度查询失败，当前显示官方额度：{error}"));
+    }
+    Ok((quota, pct, today_tokens, today_calls))
 }
 
 /// DeepSeek 账号额度查询：拉 /user/balance → 转 minimal QuotaData（DEEPSEEK_BALANCE）→ 写快照。
@@ -468,6 +514,48 @@ fn finalize_codex_quota(
     }
 
     (quota, pct, 0.0, 0.0)
+}
+
+/// 中转站（relay）额度收尾：更新账号等级（planName），不写百分比快照。
+///
+/// 中转站是绝对货币余额（同 DeepSeek），`record_quota_snapshot` 只认
+/// TIME/TOKENS/MCP 百分比列，写入只会得到全 0 行并污染 Codex 趋势图，故跳过。
+/// 返回 `(quota, 0, 0.0, 0.0)`：余额无百分比概念，徽标走 RELAY_BALANCE 字段。
+fn finalize_relay_quota(
+    db: &Database,
+    account_id: &str,
+    usage: &codex::relay::RelayUsageResponse,
+) -> (QuotaData, i32, f64, f64) {
+    let quota = codex::relay::relay_usage_to_quota_data(usage);
+    if let Ok(conn) = db.conn.lock() {
+        let _ = conn.execute(
+            "UPDATE accounts SET level = ?1 WHERE id = ?2",
+            rusqlite::params![quota.level, account_id],
+        );
+    }
+    (quota, 0, 0.0, 0.0)
+}
+
+/// 把中转站拉取诊断追加到 app_data_dir/codex_relay.log（release 无 stderr）
+fn log_codex_relay(msg: &str) {
+    use std::io::Write;
+    let Some(base) = dirs::data_dir().map(|d| d.join("com.ngaizean.glm-quota-monitor")) else {
+        return;
+    };
+    let path = base.join("codex_relay.log");
+    let _ = std::fs::create_dir_all(&base);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(
+            f,
+            "[{}] {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+            msg
+        );
+    }
 }
 
 /// Codex 活跃检测：对比周额度百分比变化（Codex 仅有周额度，5h 窗口已废弃）。
@@ -855,10 +943,16 @@ fn refresh_all_accounts(app: &tauri::AppHandle) -> RefreshResult {
                         max_pct = pct;
                     }
                     if *is_primary {
+                        // 中转站模式：quota 带 RELAY_BALANCE 时托盘显绝对余额（同 DeepSeek）
+                        let relay_balance = quota
+                            .limits
+                            .iter()
+                            .find(|l| l.limit_type == codex::relay::LIMIT_TYPE_RELAY_BALANCE)
+                            .and_then(|l| l.remaining.or(l.current_value));
                         primary_items.push(PrimaryDisplay {
                             platform: "codex".to_string(),
                             pct,
-                            balance: None,
+                            balance: relay_balance,
                         });
                     }
 
@@ -1217,7 +1311,7 @@ fn try_codex_auto_upload(db: &Database) -> Result<(), String> {
 }
 
 /// SSH 自动覆盖调度
-/// 每 5 分钟检测一次：对开启自动覆盖的主机，若本机 auth.json 有变化（指纹），
+/// 每 5 分钟检测一次：对开启自动覆盖的主机，若本机鉴权或中转配置有变化（指纹），
 /// 且该主机「免密」或「已存储密码」才执行推送；非免密且无密码的主机跳过
 /// （由用户手动弹框输入密码后开启）。
 fn run_ssh_auto_override(app: &tauri::AppHandle) {
@@ -1227,18 +1321,25 @@ fn run_ssh_auto_override(app: &tauri::AppHandle) {
 
     loop {
         if let Some(db) = app.try_state::<Database>() {
-            // 本机 auth.json 变化指纹（与 run_codex_auto_upload 一致）
+            // 指纹只保存哈希，不在内存映射或日志里保留 API Key/token 明文。
             let current_sig = codex::auth::read_local_auth_json().ok().map(|auth| {
-                let token_fingerprint = if auth.tokens.access_token.len() >= 16 {
-                    &auth.tokens.access_token[..16]
-                } else {
-                    &auth.tokens.access_token
-                };
-                format!(
-                    "{}|{}",
-                    auth.last_refresh.clone().unwrap_or_default(),
-                    token_fingerprint
-                )
+                use std::hash::{DefaultHasher, Hash, Hasher};
+                let mut hasher = DefaultHasher::new();
+                auth.last_refresh.hash(&mut hasher);
+                auth.tokens.access_token.hash(&mut hasher);
+                auth.openai_api_key
+                    .as_ref()
+                    .and_then(|value| value.as_str())
+                    .hash(&mut hasher);
+                if let Some(config) = codex::relay::detect_local_relay_distribution_config() {
+                    config.provider_name.hash(&mut hasher);
+                    config.base_url.hash(&mut hasher);
+                    config.model.hash(&mut hasher);
+                    config.reasoning_effort.hash(&mut hasher);
+                    config.wire_api.hash(&mut hasher);
+                    config.requires_openai_auth.hash(&mut hasher);
+                }
+                format!("{:016x}", hasher.finish())
             });
 
             if let Some(sig) = current_sig {
@@ -1272,9 +1373,9 @@ fn run_ssh_auto_override(app: &tauri::AppHandle) {
                     // 认证方式：免密优先，其次已存密码，否则跳过。
                     // 跳过时不记录指纹，这样用户补存密码后下一轮（5 分钟内）自动生效。
                     let result = if codex::ssh::is_passwordless(host) {
-                        codex::ssh::push_auth_json(host, None)
+                        codex::ssh::push_codex_setup(host, None)
                     } else if let Some(pw) = codex::ssh::read_ssh_password(host) {
-                        codex::ssh::push_auth_json(host, Some(&pw))
+                        codex::ssh::push_codex_setup(host, Some(&pw))
                     } else {
                         eprintln!(
                             "SSH auto-override skip {host}: 非免密且未存储密码，不做自动覆盖"
@@ -1283,7 +1384,7 @@ fn run_ssh_auto_override(app: &tauri::AppHandle) {
                     };
                     match result {
                         Ok(()) => {
-                            eprintln!("SSH auto-override ok: {host} 已覆盖 auth.json");
+                            eprintln!("SSH auto-override ok: {host} 已同步 Codex 鉴权与配置");
                             last_signatures.insert(host.clone(), sig.clone());
                         }
                         Err(e) => {
@@ -1677,6 +1778,7 @@ pub fn run() {
             commands::export::export_usage_csv,
             commands::export::export_usage_json,
             commands::codex::get_codex_quota,
+            commands::codex::get_relay_usage,
             commands::codex::read_local_codex_auth,
             commands::codex::add_codex_account,
             commands::codex::parse_codex_accounts_json_preview,

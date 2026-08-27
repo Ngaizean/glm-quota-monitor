@@ -62,6 +62,7 @@ fn fetch_codex_usage(_db: &Database, account_id: &str) -> Result<QuotaData, Stri
             &proxy,
             &crate::HTTP_CLIENT,
             &auth.tokens.access_token,
+            &auth.tokens.account_id,
         ))
         .map_err(|e| e.to_string())?;
 
@@ -69,9 +70,32 @@ fn fetch_codex_usage(_db: &Database, account_id: &str) -> Result<QuotaData, Stri
     Ok(quota)
 }
 
-/// 查询 Codex 账号额度（写入快照，复用现有 record_quota_snapshot）
+/// 中转站模式：config.toml 指向非官方端点且 auth.json 配有 API Key 时拉 /v1/usage。
+/// 未配置中转站或拉取失败返回 None（调用方回落官方通路）。
+fn fetch_relay_quota_if_configured() -> Option<QuotaData> {
+    let cfg = codex::relay::detect_local_relay_config()?;
+    let api_key = codex::auth::read_local_auth_json()
+        .ok()
+        .and_then(|a| codex::relay::api_key_from_auth(&a))?;
+    let proxy = crate::proxy_http_client();
+    let usage = tauri::async_runtime::block_on(codex::relay::fetch_relay_usage(
+        &crate::HTTP_CLIENT,
+        &proxy,
+        &cfg.base_url,
+        &api_key,
+    ))
+    .ok()?;
+    Some(codex::relay::relay_usage_to_quota_data(&usage))
+}
+
+/// 查询 Codex 账号额度（官方通路写入快照，复用现有 record_quota_snapshot）
 #[tauri::command]
 pub fn get_codex_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaData, String> {
+    // 中转站模式：钱包余额，无百分比列，不写快照（避免 0 值污染趋势图）
+    if let Some(relay_quota) = fetch_relay_quota_if_configured() {
+        return Ok(relay_quota);
+    }
+
     let quota = fetch_codex_usage(&db, &account_id)?;
 
     if let Ok(conn) = db.conn.lock() {
@@ -80,6 +104,23 @@ pub fn get_codex_quota(db: State<'_, Database>, account_id: String) -> Result<Qu
     }
 
     Ok(quota)
+}
+
+/// 查询中转站 /v1/usage 富视图（余额 + 今日/累计用量）。
+/// 未配置中转站或 auth.json 无 API Key 时返回错误说明。
+#[tauri::command]
+pub async fn get_relay_usage() -> Result<codex::relay::RelayUsageView, String> {
+    let cfg = codex::relay::detect_local_relay_config()
+        .ok_or("未检测到中转站配置（config.toml 的 model_provider 需指向非官方 base_url）")?;
+    let auth =
+        codex::auth::read_local_auth_json().map_err(|e| format!("读取 auth.json 失败: {e}"))?;
+    let api_key =
+        codex::relay::api_key_from_auth(&auth).ok_or("auth.json 中没有可用的 OPENAI_API_KEY")?;
+    let proxy = crate::proxy_http_client();
+    let usage =
+        codex::relay::fetch_relay_usage(&crate::HTTP_CLIENT, &proxy, &cfg.base_url, &api_key)
+            .await?;
+    Ok(codex::relay::relay_usage_to_view(&usage))
 }
 
 /// 读取本机 ~/.codex/auth.json 摘要（脱敏）
@@ -98,23 +139,39 @@ pub async fn add_codex_account(
     // 1. 读取本机 auth.json
     let auth = codex::auth::read_local_auth_json()?;
 
-    if auth.tokens.access_token.is_empty() {
-        return Err("auth.json 中无 access_token".to_string());
-    }
-
-    // 2. 验证：用 access_token 调 wham/usage
+    // 2. 按当前本机配置验证：中转站用 API Key，官方用 access_token。
     let proxy = crate::proxy_http_client();
-    let usage = codex::client::CodexClient::get_usage_with_fallback(
-        &proxy,
-        &crate::HTTP_CLIENT,
-        &auth.tokens.access_token,
-    )
-    .await
-    .map_err(|e| format!("验证失败（access_token 可能已失效）: {}", e))?;
+    let level = if let (Some(config), Some(api_key)) = (
+        codex::relay::detect_local_relay_config(),
+        codex::relay::api_key_from_auth(&auth),
+    ) {
+        let usage = codex::relay::fetch_relay_usage(
+            &crate::HTTP_CLIENT,
+            &proxy,
+            &config.base_url,
+            &api_key,
+        )
+        .await
+        .map_err(|e| format!("中转站验证失败: {e}"))?;
+        usage.plan_name.unwrap_or(config.provider_name)
+    } else {
+        if auth.tokens.access_token.is_empty() {
+            return Err("auth.json 中既无中转站 API Key，也无官方 access_token".to_string());
+        }
+        codex::client::CodexClient::get_usage_with_fallback(
+            &proxy,
+            &crate::HTTP_CLIENT,
+            &auth.tokens.access_token,
+            &auth.tokens.account_id,
+        )
+        .await
+        .map_err(|e| format!("官方 Codex 验证失败: {e}"))?
+        .plan_type
+        .unwrap_or_default()
+    };
 
     // 3. 存库 + Keychain
-    let account =
-        store_codex_account(&app, &db, alias, usage.plan_type.unwrap_or_default(), &auth)?;
+    let account = store_codex_account(&app, &db, alias, level, &auth)?;
 
     let _ = app.emit("accounts-changed", ());
     Ok(account)
@@ -256,6 +313,7 @@ pub async fn add_codex_accounts_from_json(
             &proxy,
             &crate::HTTP_CLIENT,
             &item.auth.tokens.access_token,
+            &item.auth.tokens.account_id,
         )
         .await;
 
@@ -444,6 +502,7 @@ pub async fn test_codex_connection(
         &proxy,
         &crate::HTTP_CLIENT,
         &auth.tokens.access_token,
+        &auth.tokens.account_id,
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -608,11 +667,11 @@ pub fn check_ssh_passwordless(host: String) -> bool {
     codex::ssh::is_passwordless(&host)
 }
 
-/// 手动推送本机 auth.json 到远程覆盖
+/// 手动同步本机 Codex 鉴权及当前中转配置到远程
 /// password: Some = 密码登录；None = 免密
 #[tauri::command]
 pub fn ssh_push_auth(host: String, password: Option<String>) -> Result<(), String> {
-    codex::ssh::push_auth_json(&host, password.as_deref())
+    codex::ssh::push_codex_setup(&host, password.as_deref())
 }
 
 /// 单个主机的 SSH 覆盖状态（前端展示用）

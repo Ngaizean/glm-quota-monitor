@@ -1,11 +1,11 @@
-//! SSH 远程覆盖 —— 将本机 ~/.codex/auth.json 同步到远程服务器
+//! SSH 远程覆盖 —— 将本机 Codex 鉴权及当前中转配置同步到远程服务器
 //!
 //! 实现方式：shell 调用系统 ssh / scp，连接目标解析自 ~/.ssh/config 的 Host 别名。
 //! 密码认证依赖 sshpass（macOS: /opt/homebrew/bin/sshpass），密码通过 SSHPASS
 //! 环境变量传递，避免出现在命令行参数里（ps 可见）。
 //!
 //! 定时覆盖调度见 lib.rs 的 run_ssh_auto_override 线程：仅对「免密」或「已存储密码」
-//! 的主机自动推送，非免密且无密码的主机一律跳过（由用户手动弹框输入密码）。
+//! 的主机自动同步，非免密且无密码的主机一律跳过（由用户手动弹框输入密码）。
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -302,6 +302,51 @@ fn run_ssh(alias: &str, password: Option<&str>, remote_cmd: &str) -> Result<Stri
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+fn run_ssh_with_stdin(
+    alias: &str,
+    password: Option<&str>,
+    remote_cmd: &str,
+    input: &[u8],
+) -> Result<String, String> {
+    validate_ssh_alias(alias)?;
+    let mut cmd = base_cmd("ssh", password)?;
+    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
+    cmd.arg("-o").arg("ConnectTimeout=10");
+    cmd.arg("-o").arg("NumberOfPasswordPrompts=1");
+    if password.is_none() {
+        cmd.arg("-o").arg("BatchMode=yes");
+    }
+    cmd.arg("--").arg(alias).arg(remote_cmd);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| format!("ssh 执行失败: {e}"))?;
+    let stdin_result = child
+        .stdin
+        .take()
+        .ok_or_else(|| "无法打开远程命令标准输入".to_string())
+        .and_then(|mut stdin| {
+            use std::io::Write;
+            stdin
+                .write_all(input)
+                .map_err(|e| format!("向远程命令传入配置失败: {e}"))
+        });
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("ssh 等待失败: {e}"))?;
+    stdin_result?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() {
+            "ssh 命令失败".to_string()
+        } else {
+            error
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// 检查主机是否可免密（key-based）登录，无交互、超时 5s。
 pub fn is_passwordless(alias: &str) -> bool {
     if validate_ssh_alias(alias).is_err() {
@@ -362,6 +407,39 @@ pub fn push_auth_json(alias: &str, password: Option<&str>) -> Result<(), String>
         password,
         &format!("chmod 600 {remote_temp} && mv -f {remote_temp} ~/.codex/auth.json"),
     )?;
+    Ok(())
+}
+
+fn write_remote_relay_config(
+    alias: &str,
+    password: Option<&str>,
+    config: &super::relay::RelayDistributionConfig,
+) -> Result<(), String> {
+    let existing = run_ssh(
+        alias,
+        password,
+        "cat ~/.codex/config.toml 2>/dev/null || true",
+    )?;
+    let merged = super::relay::merge_relay_config(&existing, config)?;
+    let temp_name = format!(".config.toml.{}.tmp", uuid::Uuid::new_v4().simple());
+    let remote_cmd = format!(
+        "set -eu; mkdir -p ~/.codex; umask 077; tmp=~/.codex/{temp_name}; cat > \"$tmp\"; chmod 600 \"$tmp\"; if [ -f ~/.codex/config.toml ]; then cp -p ~/.codex/config.toml ~/.codex/config.toml.bak-quota-monitor; fi; mv -f \"$tmp\" ~/.codex/config.toml"
+    );
+    run_ssh_with_stdin(alias, password, &remote_cmd, merged.as_bytes())?;
+    Ok(())
+}
+
+/// 同步鉴权文件；本机使用非官方 provider 时，再合并其运行所需配置。
+pub fn push_codex_setup(alias: &str, password: Option<&str>) -> Result<(), String> {
+    let relay_config = super::relay::detect_local_relay_distribution_config();
+    if let Some(config) = &relay_config {
+        // 连接前完成字段校验，避免 auth.json 已覆盖后才因非法配置失败。
+        super::relay::merge_relay_config("", config)?;
+    }
+    push_auth_json(alias, password)?;
+    if let Some(config) = relay_config {
+        write_remote_relay_config(alias, password, &config)?;
+    }
     Ok(())
 }
 

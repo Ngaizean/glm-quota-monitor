@@ -133,15 +133,19 @@ pub fn update_tray(
     }
 }
 
-/// 格式化状态栏文本：G42% C0% D10（G=GLM，C=Codex，D=DeepSeek）
+/// 格式化状态栏文本：G42% C0% C480 D10（G=GLM，C=Codex，D=DeepSeek）
 ///
 /// DeepSeek 是绝对货币余额，显 `D{balance}`（无 %，四舍五入到整数）；
-/// GLM/Codex 仍 `{prefix}{pct}%`。currency 不进托盘（空间有限），仅显数值。
+/// Codex 官方登录显 `C{pct}%`，中转站（钱包余额）显 `C{balance}`；
+/// GLM 仍 `G{pct}%`。currency 不进托盘（空间有限），仅显数值。
 pub fn format_tray_items(items: &[crate::PrimaryDisplay]) -> String {
     items
         .iter()
         .map(|i| match i.platform.as_str() {
-            "codex" => format!("C{}%", i.pct),
+            "codex" => match i.balance {
+                Some(balance) => format!("C{balance:.0}"),
+                None => format!("C{}%", i.pct),
+            },
             "deepseek" => format!("D{:.0}", i.balance.unwrap_or(0.0)),
             _ => format!("G{}%", i.pct),
         })
@@ -151,7 +155,30 @@ pub fn format_tray_items(items: &[crate::PrimaryDisplay]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_position_to_work_area, WorkArea};
+    use super::{clamp_position_to_work_area, format_tray_items, WorkArea};
+
+    #[test]
+    fn formats_codex_official_and_relay_distinctly() {
+        let items = vec![
+            crate::PrimaryDisplay {
+                platform: "zhipu".to_string(),
+                pct: 42,
+                balance: None,
+            },
+            crate::PrimaryDisplay {
+                platform: "codex".to_string(),
+                pct: 0,
+                balance: Some(480.0),
+            },
+            crate::PrimaryDisplay {
+                platform: "codex".to_string(),
+                pct: 12,
+                balance: None,
+            },
+        ];
+        // 中转站（余额）无 %，官方登录（百分比）带 %
+        assert_eq!(format_tray_items(&items), "G42% C480 C12%");
+    }
 
     #[test]
     fn clamps_420_window_at_left_and_top_edges() {
