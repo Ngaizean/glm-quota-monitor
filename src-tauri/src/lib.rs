@@ -289,9 +289,11 @@ fn fetch_codex_account_quota(
     // 第零步：中转站（relay）模式
     let mut relay_err: Option<String> = None;
     if let Some(relay_cfg) = codex::relay::detect_local_relay_config() {
-        let api_key = codex::auth::read_local_auth_json()
-            .ok()
-            .and_then(|a| codex::relay::api_key_from_auth(&a));
+        let api_key = relay_cfg.bearer_token.clone().or_else(|| {
+            codex::auth::read_local_auth_json()
+                .ok()
+                .and_then(|a| codex::relay::api_key_from_auth(&a))
+        });
         if let Some(api_key) = api_key {
             let proxy = proxy_http_client();
             let started = std::time::Instant::now();
@@ -323,9 +325,9 @@ fn fetch_codex_account_quota(
         }
     }
 
-    // 第一步：尝试本机 auth.json（Codex CLI 维护的，总是最新源）
-    let local_auth = codex::auth::read_local_auth_json()
-        .or_else(|_| codex::auth::read_auth_from_keychain(account_id))?;
+    // 每个已导入账号以自己的 Keychain 存档为准；全局 auth.json 只代表当前活动账号。
+    let local_auth = codex::auth::read_auth_from_keychain(account_id)
+        .or_else(|_| codex::auth::read_local_auth_json())?;
 
     if local_auth.tokens.access_token.is_empty() {
         return Err(relay_err.unwrap_or_else(|| "无 access_token".to_string()));
@@ -335,7 +337,7 @@ fn fetch_codex_account_quota(
     let auth = if is_token_expiring_soon(&local_auth.tokens.access_token, 2) {
         eprintln!("Codex token 即将过期，尝试自动刷新...");
         let proxy = proxy_http_client();
-        match codex::auth::refresh_and_sync_with_fallback(
+        match codex::auth::refresh_and_store_with_fallback(
             &proxy,
             &HTTP_CLIENT,
             &local_auth,
@@ -370,7 +372,7 @@ fn fetch_codex_account_quota(
         Err(codex::client::CodexApiError::Http(reqwest::StatusCode::UNAUTHORIZED)) => {
             eprintln!("Codex token 返回 401，尝试刷新后重试...");
             let proxy = proxy_http_client();
-            let refreshed = codex::auth::refresh_and_sync_with_fallback(
+            let refreshed = codex::auth::refresh_and_store_with_fallback(
                 &proxy,
                 &HTTP_CLIENT,
                 &auth,
@@ -1322,22 +1324,27 @@ fn run_ssh_auto_override(app: &tauri::AppHandle) {
     loop {
         if let Some(db) = app.try_state::<Database>() {
             // 指纹只保存哈希，不在内存映射或日志里保留 API Key/token 明文。
-            let current_sig = codex::auth::read_local_auth_json().ok().map(|auth| {
+            let auth = codex::auth::read_local_auth_json().ok();
+            let relay = codex::relay::detect_local_relay_distribution_config();
+            let current_sig = (auth.is_some() || relay.is_some()).then(|| {
                 use std::hash::{DefaultHasher, Hash, Hasher};
                 let mut hasher = DefaultHasher::new();
-                auth.last_refresh.hash(&mut hasher);
-                auth.tokens.access_token.hash(&mut hasher);
-                auth.openai_api_key
-                    .as_ref()
-                    .and_then(|value| value.as_str())
-                    .hash(&mut hasher);
-                if let Some(config) = codex::relay::detect_local_relay_distribution_config() {
+                if let Some(auth) = &auth {
+                    auth.last_refresh.hash(&mut hasher);
+                    auth.tokens.access_token.hash(&mut hasher);
+                    auth.openai_api_key
+                        .as_ref()
+                        .and_then(|value| value.as_str())
+                        .hash(&mut hasher);
+                }
+                if let Some(config) = &relay {
                     config.provider_name.hash(&mut hasher);
                     config.base_url.hash(&mut hasher);
                     config.model.hash(&mut hasher);
                     config.reasoning_effort.hash(&mut hasher);
                     config.wire_api.hash(&mut hasher);
                     config.requires_openai_auth.hash(&mut hasher);
+                    config.bearer_token.hash(&mut hasher);
                 }
                 format!("{:016x}", hasher.finish())
             });
@@ -1780,6 +1787,11 @@ pub fn run() {
             commands::codex::get_codex_quota,
             commands::codex::get_relay_usage,
             commands::codex::read_local_codex_auth,
+            commands::codex::get_codex_runtime_config,
+            commands::codex::set_codex_relay_config,
+            commands::codex::get_codex_relay_key,
+            commands::codex::switch_codex_runtime,
+            commands::codex::login_codex_official,
             commands::codex::add_codex_account,
             commands::codex::parse_codex_accounts_json_preview,
             commands::codex::add_codex_accounts_from_json,

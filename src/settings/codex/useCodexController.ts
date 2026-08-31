@@ -5,6 +5,8 @@ import type {
   Account,
   AuthSummary,
   CodexRole,
+  CodexRuntimeConfig,
+  CodexRuntimeMode,
   PasswordRequest,
   RemoteBindingRequest,
   RemoteCcState,
@@ -130,6 +132,12 @@ export function useCodexController() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const [runtimeConfig, setRuntimeConfig] = useState<CodexRuntimeConfig | null>(null);
+  const [relayBaseUrl, setRelayBaseUrl] = useState("");
+  const [relayModel, setRelayModel] = useState("");
+  const [relayApiKey, setRelayApiKeyState] = useState("");
+  const [relayKeyLoaded, setRelayKeyLoaded] = useState(false);
+  const [runtimeBusy, setRuntimeBusy] = useState("");
 
   const [hosts, setHosts] = useState<SshHost[]>([]);
   const [hostsLoaded, setHostsLoaded] = useState(false);
@@ -184,6 +192,7 @@ export function useCodexController() {
         invoke<boolean>("get_codex_auto_upload"),
         invoke<string | null>("get_codex_proxy"),
         invoke<boolean>("get_codex_auto_sync"),
+        invoke<CodexRuntimeConfig>("get_codex_runtime_config"),
       ] as const);
       const supportResultsPromise = Promise.allSettled([
         invoke<SshOverrideState[]>("get_ssh_override_state"),
@@ -193,7 +202,7 @@ export function useCodexController() {
       if (cancelled) return;
 
       const failures: string[] = [];
-      const [roleResult, gistResult, authResult, syncResult, uploadResult, proxyResult, autoSyncResult] = coreResults;
+      const [roleResult, gistResult, authResult, syncResult, uploadResult, proxyResult, autoSyncResult, runtimeResult] = coreResults;
       if (roleResult.status === "fulfilled") roleSetting.load(normalizeRole(roleResult.value));
       else failures.push(errorMessage(roleResult.reason));
       if (gistResult.status === "fulfilled") setGistUrl(gistResult.value ?? "");
@@ -208,6 +217,11 @@ export function useCodexController() {
       else failures.push(errorMessage(proxyResult.reason));
       if (autoSyncResult.status === "fulfilled") autoSyncSetting.load(autoSyncResult.value);
       else failures.push(errorMessage(autoSyncResult.reason));
+      if (runtimeResult.status === "fulfilled" && runtimeResult.value) {
+        setRuntimeConfig(runtimeResult.value);
+        setRelayBaseUrl(runtimeResult.value.relay_base_url);
+        setRelayModel(runtimeResult.value.relay_model);
+      } else if (runtimeResult.status === "rejected") failures.push(errorMessage(runtimeResult.reason));
 
       const [overridesResult, accountsResult] = supportResults;
       if (overridesResult.status === "fulfilled") setAutoOverrides(overridesByHost(overridesResult.value));
@@ -275,6 +289,107 @@ export function useCodexController() {
     setError("");
     await roleSetting.update(nextRole);
   }, [initializing, roleSetting.update]);
+
+  const setRelayApiKey = useCallback((value: string) => {
+    setRelayKeyLoaded(true);
+    setRelayApiKeyState(value);
+  }, []);
+
+  const revealRelayKey = useCallback(async () => {
+    if (initializing || runtimeBusy) return "";
+    setRuntimeBusy("key");
+    setError("");
+    try {
+      const key = await invoke<string>("get_codex_relay_key");
+      setRelayApiKeyState(key);
+      setRelayKeyLoaded(true);
+      return key;
+    } catch (caught) {
+      setError(errorMessage(caught));
+      return "";
+    } finally {
+      setRuntimeBusy("");
+    }
+  }, [initializing, runtimeBusy]);
+
+  const copyRelayKey = useCallback(async () => {
+    const key = relayKeyLoaded ? relayApiKey : await revealRelayKey();
+    if (!key) return;
+    try {
+      await navigator.clipboard.writeText(key);
+      setInfo(t("codexPane.relayKeyCopied"));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }, [relayApiKey, relayKeyLoaded, revealRelayKey, t]);
+
+  const saveRelayConfig = useCallback(async () => {
+    if (initializing || runtimeBusy) return false;
+    setRuntimeBusy("save-relay");
+    setError("");
+    try {
+      const next = await invoke<CodexRuntimeConfig>("set_codex_relay_config", {
+        baseUrl: relayBaseUrl,
+        model: relayModel,
+        apiKey: relayKeyLoaded ? relayApiKey : null,
+      });
+      if (next) {
+        setRuntimeConfig(next);
+        setRelayBaseUrl(next.relay_base_url);
+        setRelayModel(next.relay_model);
+      }
+      setRelayApiKeyState("");
+      setRelayKeyLoaded(false);
+      setInfo(t("codexPane.relaySaved"));
+      return true;
+    } catch (caught) {
+      setError(errorMessage(caught));
+      return false;
+    } finally {
+      setRuntimeBusy("");
+    }
+  }, [initializing, relayApiKey, relayBaseUrl, relayKeyLoaded, relayModel, runtimeBusy, t]);
+
+  const switchRuntime = useCallback(async (mode: CodexRuntimeMode, accountId: string | null = null) => {
+    if (initializing || runtimeBusy) return false;
+    setRuntimeBusy(`switch-${mode}`);
+    setError("");
+    try {
+      const next = await invoke<CodexRuntimeConfig>("switch_codex_runtime", { mode, accountId });
+      if (next) setRuntimeConfig(next);
+      else setRuntimeConfig((current) => current ? { ...current, active_mode: mode } : current);
+      setAuthSummary(await invoke<AuthSummary>("read_local_codex_auth"));
+      setInfo(t("codexPane.runtimeSwitched"));
+      return true;
+    } catch (caught) {
+      setError(errorMessage(caught));
+      return false;
+    } finally {
+      setRuntimeBusy("");
+    }
+  }, [initializing, runtimeBusy, t]);
+
+  const loginOfficial = useCallback(async () => {
+    if (initializing || runtimeBusy) return;
+    setRuntimeBusy("login");
+    setError("");
+    try {
+      await invoke<Account>("login_codex_official", { alias: null });
+      const [nextAccounts, nextAuth, nextRuntime] = await Promise.all([
+        invoke<Account[]>("list_accounts"),
+        invoke<AuthSummary>("read_local_codex_auth"),
+        invoke<CodexRuntimeConfig>("get_codex_runtime_config"),
+      ]);
+      setAccounts(nextAccounts);
+      setAuthSummary(nextAuth);
+      setRuntimeConfig(nextRuntime);
+      setInfo(t("codexPane.officialLoginSuccess"));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setRuntimeBusy("");
+    }
+  }, [initializing, runtimeBusy, t]);
 
   const saveConnectionSetting = useCallback(async (command: string, args: Record<string, string>) => {
     if (initializing) return;
@@ -543,6 +658,10 @@ export function useCodexController() {
     const platform = account.platform ?? "zhipu";
     return platform === "zhipu" || platform === "deepseek";
   }), [accounts]);
+  const officialAccounts = useMemo(
+    () => accounts.filter((account) => (account.platform ?? "") === "codex"),
+    [accounts],
+  );
 
   return {
     initializing,
@@ -565,6 +684,13 @@ export function useCodexController() {
     refreshing,
     error,
     info,
+    runtimeConfig,
+    relayBaseUrl,
+    relayModel,
+    relayApiKey,
+    relayKeyLoaded,
+    runtimeBusy,
+    officialAccounts,
     hosts,
     hostsLoaded,
     scanningHosts,
@@ -579,6 +705,14 @@ export function useCodexController() {
     passwordRequest,
     bindingRequest,
     setRole,
+    setRelayBaseUrl,
+    setRelayModel,
+    setRelayApiKey,
+    revealRelayKey,
+    copyRelayKey,
+    saveRelayConfig,
+    switchRuntime,
+    loginOfficial,
     setGistUrl,
     setGithubToken,
     loadGithubToken,

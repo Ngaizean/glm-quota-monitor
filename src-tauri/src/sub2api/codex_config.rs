@@ -27,6 +27,65 @@ fn matches_key(line: &str, key: &str) -> bool {
     t.starts_with(&format!("{key} =")) || t.starts_with(&format!("{key}\t=")) || t == key
 }
 
+pub fn normalize_relay_base_url(value: &str) -> Result<String, String> {
+    let mut url = reqwest::Url::parse(value.trim())
+        .map_err(|_| "中转地址必须是完整的 HTTP(S) URL".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("中转地址仅支持 HTTP 或 HTTPS".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("中转地址不能包含用户名或密码".to_string());
+    }
+    if url.host_str().is_none() {
+        return Err("中转地址缺少主机名".to_string());
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    let path = url.path().trim_end_matches('/');
+    let normalized_path = if path.is_empty() {
+        "/v1".to_string()
+    } else if path.ends_with("/v1") {
+        path.to_string()
+    } else {
+        format!("{path}/v1")
+    };
+    url.set_path(&normalized_path);
+    Ok(url.to_string().trim_end_matches('/').to_string())
+}
+
+pub fn merge_official_config(content: &str) -> String {
+    let first_table = if content.starts_with('[') {
+        0
+    } else {
+        content
+            .find("\n[")
+            .map(|index| index + 1)
+            .unwrap_or(content.len())
+    };
+    let (head, tail) = content.split_at(first_table);
+    let switching_from_relay = head.lines().any(|line| matches_key(line, "model_provider"));
+    let mut lines: Vec<&str> = head
+        .lines()
+        .filter(|line| {
+            !matches_key(line, "model_provider")
+                && !(switching_from_relay && matches_key(line, "model"))
+        })
+        .collect();
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    let head = replace_top_level(&lines.join("\n"), "cli_auth_credentials_store", "file");
+    let mut result = head.trim_end().to_string();
+    if !result.is_empty() && !tail.is_empty() {
+        result.push_str("\n\n");
+    }
+    result.push_str(tail.trim_start_matches('\n'));
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
 /// 在只含顶层键的文本里替换/插入 `key = "value"`
 fn replace_top_level(text: &str, key: &str, value: &str) -> String {
     let target = format!("{key} = {}", toml_string(value));
@@ -83,6 +142,7 @@ pub fn merge_codex_config(content: &str, base_url: &str, api_key: &str, model: &
     // 先 model 后 model_provider：两者都缺失时 model_provider 最终插在最前
     let head = replace_top_level(head, "model", model);
     let head = replace_top_level(&head, "model_provider", "sub2api");
+    let head = replace_top_level(&head, "cli_auth_credentials_store", "file");
 
     let mut result = head;
     if !result.ends_with('\n') {
@@ -92,22 +152,21 @@ pub fn merge_codex_config(content: &str, base_url: &str, api_key: &str, model: &
     result
 }
 
-/// 备份并写回本机 ~/.codex/config.toml，返回备份路径
-pub fn apply_local_config(base_url: &str, api_key: &str, model: &str) -> Result<String, String> {
+fn local_config_path() -> Result<std::path::PathBuf, String> {
     let home = dirs::home_dir().ok_or("无法定位用户主目录")?;
     let config_dir = home.join(".codex");
     std::fs::create_dir_all(&config_dir).map_err(|e| format!("创建 ~/.codex 失败: {e}"))?;
-    let path = config_dir.join("config.toml");
+    Ok(config_dir.join("config.toml"))
+}
 
-    let original = std::fs::read_to_string(&path).unwrap_or_default();
-    let merged = merge_codex_config(&original, base_url, api_key, model);
-
+fn write_local_config(path: &std::path::Path, content: &str) -> Result<String, String> {
+    let config_dir = path.parent().ok_or("无法定位 ~/.codex 目录")?;
     let backup = config_dir.join(format!(
         "config.toml.bak-quota-monitor-{}",
         chrono::Local::now().format("%Y%m%d-%H%M%S")
     ));
     if path.exists() {
-        std::fs::copy(&path, &backup).map_err(|e| format!("备份失败: {e}"))?;
+        std::fs::copy(path, &backup).map_err(|e| format!("备份失败: {e}"))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -115,10 +174,23 @@ pub fn apply_local_config(base_url: &str, api_key: &str, model: &str) -> Result<
                 .map_err(|e| format!("收紧备份文件权限失败: {e}"))?;
         }
     }
-
-    crate::codex::auth::write_sensitive_file(&path, merged.as_bytes())
+    crate::codex::auth::write_sensitive_file(path, content.as_bytes())
         .map_err(|e| format!("写入 config.toml 失败: {e}"))?;
     Ok(backup.to_string_lossy().to_string())
+}
+
+/// 备份并写回本机 ~/.codex/config.toml，返回备份路径
+pub fn apply_local_config(base_url: &str, api_key: &str, model: &str) -> Result<String, String> {
+    let path = local_config_path()?;
+    let original = std::fs::read_to_string(&path).unwrap_or_default();
+    let merged = merge_codex_config(&original, base_url, api_key, model);
+    write_local_config(&path, &merged)
+}
+
+pub fn apply_official_local_config() -> Result<String, String> {
+    let path = local_config_path()?;
+    let original = std::fs::read_to_string(&path).unwrap_or_default();
+    write_local_config(&path, &merge_official_config(&original))
 }
 
 /// 探测本机局域网 IP（UDP connect 惯用法，不实际发包）
@@ -137,6 +209,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn normalizes_relay_base_urls() {
+        assert_eq!(
+            normalize_relay_base_url("https://pixarsubtoapi.stream").unwrap(),
+            "https://pixarsubtoapi.stream/v1"
+        );
+        assert_eq!(
+            normalize_relay_base_url("https://pixarsubtoapi.stream/v1/").unwrap(),
+            "https://pixarsubtoapi.stream/v1"
+        );
+        assert!(normalize_relay_base_url("file:///tmp/relay").is_err());
+        assert!(normalize_relay_base_url("https://user:pass@example.com").is_err());
+    }
+
+    #[test]
+    fn switches_back_to_official_without_losing_other_tables() {
+        let original = r#"model = "gpt-5.6-sol"
+model_provider = "sub2api"
+
+[model_providers.sub2api]
+base_url = "https://relay.example/v1"
+experimental_bearer_token = "sk-secret"
+
+[mcp_servers.keep]
+command = "keep-me"
+"#;
+        let out = merge_official_config(original);
+
+        assert!(!out
+            .lines()
+            .any(|line| line.trim_start().starts_with("model_provider =")));
+        assert!(!out
+            .lines()
+            .any(|line| line.trim_start().starts_with("model =")));
+        assert!(out.contains("[model_providers.sub2api]"));
+        assert!(out.contains("experimental_bearer_token = \"sk-secret\""));
+        assert!(out.contains("[mcp_servers.keep]"));
+        assert!(out.contains("command = \"keep-me\""));
+        assert!(out.contains("cli_auth_credentials_store = \"file\""));
+    }
+
+    #[test]
+    fn keeps_official_custom_model_when_no_relay_is_active() {
+        let out = merge_official_config("model = \"gpt-official\"\n");
+
+        assert!(out.contains("model = \"gpt-official\""));
+        assert!(out.contains("cli_auth_credentials_store = \"file\""));
+    }
+
+    #[test]
     fn merges_into_empty_config() {
         let out = merge_codex_config("", "http://localhost:8080/v1", "sk-1", "gpt-5.6-sol");
         assert!(out.contains("model_provider = \"sub2api\""));
@@ -144,6 +265,7 @@ mod tests {
         assert!(out.contains("[model_providers.sub2api]"));
         assert!(out.contains("base_url = \"http://localhost:8080/v1\""));
         assert!(out.contains("experimental_bearer_token = \"sk-1\""));
+        assert!(out.contains("cli_auth_credentials_store = \"file\""));
     }
 
     #[test]
@@ -170,7 +292,9 @@ mod tests {
         let original = "[profiles.x]\nmodel_provider = \"other\"\n";
         let out = merge_codex_config(original, "http://l:1/v1", "sk", "m");
         // 顶层没有 model_provider → 插入开头；子表里的保持原样
-        assert!(out.starts_with("model_provider = \"sub2api\""));
+        let head = out.split("[profiles.x]").next().unwrap_or_default();
+        assert!(head.contains("model_provider = \"sub2api\""));
+        assert!(head.contains("cli_auth_credentials_store = \"file\""));
         assert!(out.contains("[profiles.x]\nmodel_provider = \"other\""));
     }
 

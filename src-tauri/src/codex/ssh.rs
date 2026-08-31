@@ -410,6 +410,15 @@ pub fn push_auth_json(alias: &str, password: Option<&str>) -> Result<(), String>
     Ok(())
 }
 
+fn write_remote_config(alias: &str, password: Option<&str>, merged: &str) -> Result<(), String> {
+    let temp_name = format!(".config.toml.{}.tmp", uuid::Uuid::new_v4().simple());
+    let remote_cmd = format!(
+        "set -eu; mkdir -p ~/.codex; umask 077; tmp=~/.codex/{temp_name}; cat > \"$tmp\"; chmod 600 \"$tmp\"; if [ -f ~/.codex/config.toml ]; then cp -p ~/.codex/config.toml ~/.codex/config.toml.bak-quota-monitor; chmod 600 ~/.codex/config.toml.bak-quota-monitor; fi; mv -f \"$tmp\" ~/.codex/config.toml"
+    );
+    run_ssh_with_stdin(alias, password, &remote_cmd, merged.as_bytes())?;
+    Ok(())
+}
+
 fn write_remote_relay_config(
     alias: &str,
     password: Option<&str>,
@@ -421,12 +430,17 @@ fn write_remote_relay_config(
         "cat ~/.codex/config.toml 2>/dev/null || true",
     )?;
     let merged = super::relay::merge_relay_config(&existing, config)?;
-    let temp_name = format!(".config.toml.{}.tmp", uuid::Uuid::new_v4().simple());
-    let remote_cmd = format!(
-        "set -eu; mkdir -p ~/.codex; umask 077; tmp=~/.codex/{temp_name}; cat > \"$tmp\"; chmod 600 \"$tmp\"; if [ -f ~/.codex/config.toml ]; then cp -p ~/.codex/config.toml ~/.codex/config.toml.bak-quota-monitor; fi; mv -f \"$tmp\" ~/.codex/config.toml"
-    );
-    run_ssh_with_stdin(alias, password, &remote_cmd, merged.as_bytes())?;
-    Ok(())
+    write_remote_config(alias, password, &merged)
+}
+
+fn write_remote_official_config(alias: &str, password: Option<&str>) -> Result<(), String> {
+    let existing = run_ssh(
+        alias,
+        password,
+        "cat ~/.codex/config.toml 2>/dev/null || true",
+    )?;
+    let merged = crate::sub2api::codex_config::merge_official_config(&existing);
+    write_remote_config(alias, password, &merged)
 }
 
 /// 同步鉴权文件；本机使用非官方 provider 时，再合并其运行所需配置。
@@ -436,9 +450,17 @@ pub fn push_codex_setup(alias: &str, password: Option<&str>) -> Result<(), Strin
         // 连接前完成字段校验，避免 auth.json 已覆盖后才因非法配置失败。
         super::relay::merge_relay_config("", config)?;
     }
-    push_auth_json(alias, password)?;
     if let Some(config) = relay_config {
+        // requires_openai_auth=false 的中转档案只依赖 provider 内的 bearer token。
+        // 本机若另有官方 auth 则一并同步，但不把它作为中转分发的前置条件。
+        if super::auth::auth_json_path()?.exists() {
+            push_auth_json(alias, password)?;
+        }
         write_remote_relay_config(alias, password, &config)?;
+    } else {
+        push_auth_json(alias, password)?;
+        // 只推 auth.json 不足以切回官方：远端可能仍选中了旧中转 provider。
+        write_remote_official_config(alias, password)?;
     }
     Ok(())
 }

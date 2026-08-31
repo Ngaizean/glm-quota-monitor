@@ -1,6 +1,15 @@
 import type { Account, RemoteCcState } from "../../types";
 
 export type CodexRole = "owner" | "consumer";
+export type CodexRuntimeMode = "official" | "relay";
+
+export interface CodexRuntimeConfig {
+  active_mode: CodexRuntimeMode;
+  relay_base_url: string;
+  relay_model: string;
+  relay_key_configured: boolean;
+  active_official_account_id: string | null;
+}
 
 export interface AuthSummary {
   exists: boolean;
@@ -41,4 +50,3 @@ export interface RemoteBindingRequest {
 }
 
 export type { Account, RemoteCcState };
-

@@ -11,6 +11,13 @@ use uuid::Uuid;
 const GIST_URL_KEY: &str = "codex_gist_url";
 const GITHUB_TOKEN_KEY: &str = "codex_github_token";
 const CODEX_ROLE_KEY: &str = "codex_role";
+const CODEX_RUNTIME_MODE_KEY: &str = "codex_runtime_mode";
+const CODEX_RELAY_URL_KEY: &str = "codex_relay_base_url";
+const CODEX_RELAY_MODEL_KEY: &str = "codex_relay_model";
+const CODEX_RELAY_SECRET_KEY: &str = "codex_relay_api_key";
+const CODEX_ACTIVE_OFFICIAL_ACCOUNT_KEY: &str = "codex_active_official_account";
+const DEFAULT_RELAY_URL: &str = "https://pixarsubtoapi.stream/v1";
+const DEFAULT_RELAY_MODEL: &str = "gpt-5.6-sol";
 
 /// 读取设置值
 fn read_setting(db: &Database, key: &str) -> Option<String> {
@@ -31,6 +38,304 @@ fn delete_setting(db: &Database, key: &str) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn write_setting(db: &Database, key: &str, value: &str) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {e}"))?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+        rusqlite::params![key, value],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodexRuntimeConfig {
+    pub active_mode: String,
+    pub relay_base_url: String,
+    pub relay_model: String,
+    pub relay_key_configured: bool,
+    pub active_official_account_id: Option<String>,
+}
+
+fn runtime_config(db: &Database) -> CodexRuntimeConfig {
+    let detected_relay = codex::relay::detect_local_relay_config();
+    let detected_distribution = codex::relay::detect_local_relay_distribution_config();
+    let active_mode = if detected_relay.is_some() {
+        "relay".to_string()
+    } else {
+        "official".to_string()
+    };
+    CodexRuntimeConfig {
+        active_mode,
+        relay_base_url: read_setting(db, CODEX_RELAY_URL_KEY)
+            .or_else(|| {
+                detected_relay
+                    .as_ref()
+                    .map(|config| config.base_url.clone())
+            })
+            .unwrap_or_else(|| DEFAULT_RELAY_URL.to_string()),
+        relay_model: read_setting(db, CODEX_RELAY_MODEL_KEY)
+            .or_else(|| detected_distribution.map(|config| config.model))
+            .unwrap_or_else(|| DEFAULT_RELAY_MODEL.to_string()),
+        relay_key_configured: read_relay_secret().is_ok(),
+        active_official_account_id: read_setting(db, CODEX_ACTIVE_OFFICIAL_ACCOUNT_KEY),
+    }
+}
+
+fn read_relay_secret() -> Result<String, String> {
+    if let Ok(key) = crate::crypto::get_api_key(CODEX_RELAY_SECRET_KEY) {
+        if !key.trim().is_empty() {
+            return Ok(key);
+        }
+    }
+    if let Some(config) = codex::relay::detect_local_relay_config() {
+        if let Some(key) = config.bearer_token {
+            if !key.trim().is_empty() {
+                return Ok(key);
+            }
+        }
+        return codex::auth::read_local_auth_json()
+            .ok()
+            .and_then(|auth| codex::relay::api_key_from_auth(&auth))
+            .ok_or_else(|| "没有可用的中转 Key".to_string());
+    }
+    Err("没有可用的中转 Key".to_string())
+}
+
+#[tauri::command]
+pub fn get_codex_runtime_config(db: State<'_, Database>) -> CodexRuntimeConfig {
+    runtime_config(&db)
+}
+
+#[tauri::command]
+pub fn set_codex_relay_config(
+    db: State<'_, Database>,
+    base_url: String,
+    model: String,
+    api_key: Option<String>,
+) -> Result<CodexRuntimeConfig, String> {
+    let normalized = crate::sub2api::codex_config::normalize_relay_base_url(&base_url)?;
+    let model = model.trim();
+    if model.is_empty() || model.chars().any(char::is_control) {
+        return Err("中转模型不能为空或包含控制字符".to_string());
+    }
+    if let Some(key) = api_key {
+        let key = key.trim();
+        if key.is_empty() {
+            let _ = crate::crypto::delete_api_key(CODEX_RELAY_SECRET_KEY);
+        } else {
+            crate::crypto::store_api_key(CODEX_RELAY_SECRET_KEY, key)
+                .map_err(|e| format!("保存中转 Key 失败: {e}"))?;
+        }
+    }
+    write_setting(&db, CODEX_RELAY_URL_KEY, &normalized)?;
+    write_setting(&db, CODEX_RELAY_MODEL_KEY, model)?;
+    Ok(runtime_config(&db))
+}
+
+#[tauri::command]
+pub fn get_codex_relay_key() -> Result<String, String> {
+    read_relay_secret().map_err(|e| format!("读取中转 Key 失败: {e}"))
+}
+
+#[tauri::command]
+pub fn switch_codex_runtime(
+    db: State<'_, Database>,
+    mode: String,
+    account_id: Option<String>,
+) -> Result<CodexRuntimeConfig, String> {
+    match mode.as_str() {
+        "official" => {
+            if let Some(id) = account_id.as_deref() {
+                let auth = codex::auth::read_auth_from_keychain(id)?;
+                codex::auth::write_local_auth_json(&auth)?;
+                write_setting(&db, CODEX_ACTIVE_OFFICIAL_ACCOUNT_KEY, id)?;
+            } else {
+                let auth = codex::auth::read_local_auth_json()?;
+                if auth.tokens.access_token.trim().is_empty() {
+                    return Err("当前没有可用的官方 Codex 登录".to_string());
+                }
+            }
+            crate::sub2api::codex_config::apply_official_local_config()?;
+        }
+        "relay" => {
+            let config = runtime_config(&db);
+            let key = read_relay_secret().map_err(|_| "请先保存中转 Key".to_string())?;
+            if key.trim().is_empty() {
+                return Err("请先保存中转 Key".to_string());
+            }
+            crate::sub2api::codex_config::apply_local_config(
+                &config.relay_base_url,
+                &key,
+                &config.relay_model,
+            )?;
+        }
+        _ => return Err("Codex 运行模式仅支持 official 或 relay".to_string()),
+    }
+    write_setting(&db, CODEX_RUNTIME_MODE_KEY, &mode)?;
+    Ok(runtime_config(&db))
+}
+
+fn find_codex_binary() -> Result<std::path::PathBuf, String> {
+    if let Ok(output) = std::process::Command::new("which").arg("codex").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(path.into());
+            }
+        }
+    }
+    for path in [
+        "/opt/homebrew/bin/codex",
+        "/usr/local/bin/codex",
+        "/usr/bin/codex",
+    ] {
+        let candidate = std::path::PathBuf::from(path);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("未找到 codex CLI，请先安装并确认 codex 在 PATH 中".to_string())
+}
+
+fn run_official_login() -> Result<codex::types::AuthJson, String> {
+    let temp_home = std::env::temp_dir().join(format!(
+        "glm-quota-monitor-codex-login-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_home).map_err(|e| format!("创建登录临时目录失败: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temp_home, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("收紧登录临时目录权限失败: {e}"))?;
+    }
+    let result = (|| {
+        codex::auth::write_sensitive_file(
+            &temp_home.join("config.toml"),
+            b"cli_auth_credentials_store = \"file\"\n",
+        )?;
+        let output = std::process::Command::new(find_codex_binary()?)
+            .arg("login")
+            .env("CODEX_HOME", &temp_home)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| format!("启动 codex login 失败: {e}"))?;
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if error.is_empty() {
+                "Codex 官方登录未完成".to_string()
+            } else {
+                format!("Codex 官方登录失败: {error}")
+            });
+        }
+        let content = std::fs::read_to_string(temp_home.join("auth.json"))
+            .map_err(|e| format!("登录成功但未找到 auth.json: {e}"))?;
+        let auth: codex::types::AuthJson =
+            serde_json::from_str(&content).map_err(|e| format!("解析登录凭据失败: {e}"))?;
+        if auth.tokens.access_token.trim().is_empty() || auth.tokens.account_id.trim().is_empty() {
+            return Err("登录凭据缺少 access_token 或 account_id".to_string());
+        }
+        Ok(auth)
+    })();
+    let _ = std::fs::remove_dir_all(&temp_home);
+    result
+}
+
+#[tauri::command]
+pub async fn login_codex_official(
+    app: tauri::AppHandle,
+    db: State<'_, Database>,
+    alias: Option<String>,
+) -> Result<Account, String> {
+    let auth = tauri::async_runtime::spawn_blocking(run_official_login)
+        .await
+        .map_err(|e| format!("等待 Codex 登录失败: {e}"))??;
+    let proxy = crate::proxy_http_client();
+    let usage = codex::client::CodexClient::get_usage_with_fallback(
+        &proxy,
+        &crate::HTTP_CLIENT,
+        &auth.tokens.access_token,
+        &auth.tokens.account_id,
+    )
+    .await
+    .map_err(|e| format!("登录凭据验证失败: {e}"))?;
+
+    let existing_accounts: Vec<Account> = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {e}"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, alias, purpose, platform, level, is_active, is_primary, created_at, updated_at
+                 FROM accounts WHERE platform = 'codex' AND is_active = 1",
+            )
+            .map_err(|e| e.to_string())?;
+        let accounts = stmt
+            .query_map([], |row| {
+                Ok(Account {
+                    id: row.get(0)?,
+                    alias: row.get(1)?,
+                    purpose: row.get(2)?,
+                    platform: row.get(3)?,
+                    level: row.get(4)?,
+                    is_active: row.get::<_, i32>(5)? == 1,
+                    is_primary: row.get::<_, i32>(6)? == 1,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+        accounts
+    };
+    let ids: Vec<String> = existing_accounts
+        .iter()
+        .map(|account| account.id.clone())
+        .collect();
+    let matched_id = find_matching_account_id(&ids, &auth.tokens.account_id, |id| {
+        codex::auth::read_auth_from_keychain(id)
+            .ok()
+            .map(|stored| stored.tokens.account_id)
+    });
+    let level = usage.plan_type.unwrap_or_default();
+    let account = if let Some(id) = matched_id {
+        codex::auth::store_auth_to_keychain(&id, &auth)?;
+        let now = Utc::now().to_rfc3339();
+        {
+            let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {e}"))?;
+            conn.execute(
+                "UPDATE accounts SET level = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![level, now, id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let mut account = existing_accounts
+            .into_iter()
+            .find(|account| account.id == id)
+            .ok_or_else(|| "官方账号档案已发生变化，请重试".to_string())?;
+        account.level = Some(level);
+        account.updated_at = now;
+        account
+    } else {
+        let existing_aliases: Vec<String> = existing_accounts
+            .iter()
+            .map(|account| account.alias.clone())
+            .collect();
+        let requested = alias
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("官方订阅");
+        let account_alias = unique_codex_alias(&existing_aliases, requested);
+        store_codex_account(&app, &db, account_alias, level, &auth)?
+    };
+    codex::auth::write_local_auth_json(&auth)?;
+    crate::sub2api::codex_config::apply_official_local_config()?;
+    write_setting(&db, CODEX_ACTIVE_OFFICIAL_ACCOUNT_KEY, &account.id)?;
+    write_setting(&db, CODEX_RUNTIME_MODE_KEY, "official")?;
+    Ok(account)
 }
 
 /// 从系统 Keychain 读取 GitHub Token；首次读取时自动迁移旧版 SQLite 明文。
@@ -74,9 +379,11 @@ fn fetch_codex_usage(_db: &Database, account_id: &str) -> Result<QuotaData, Stri
 /// 未配置中转站或拉取失败返回 None（调用方回落官方通路）。
 fn fetch_relay_quota_if_configured() -> Option<QuotaData> {
     let cfg = codex::relay::detect_local_relay_config()?;
-    let api_key = codex::auth::read_local_auth_json()
-        .ok()
-        .and_then(|a| codex::relay::api_key_from_auth(&a))?;
+    let api_key = cfg.bearer_token.clone().or_else(|| {
+        codex::auth::read_local_auth_json()
+            .ok()
+            .and_then(|a| codex::relay::api_key_from_auth(&a))
+    })?;
     let proxy = crate::proxy_http_client();
     let usage = tauri::async_runtime::block_on(codex::relay::fetch_relay_usage(
         &crate::HTTP_CLIENT,
@@ -112,10 +419,15 @@ pub fn get_codex_quota(db: State<'_, Database>, account_id: String) -> Result<Qu
 pub async fn get_relay_usage() -> Result<codex::relay::RelayUsageView, String> {
     let cfg = codex::relay::detect_local_relay_config()
         .ok_or("未检测到中转站配置（config.toml 的 model_provider 需指向非官方 base_url）")?;
-    let auth =
-        codex::auth::read_local_auth_json().map_err(|e| format!("读取 auth.json 失败: {e}"))?;
-    let api_key =
-        codex::relay::api_key_from_auth(&auth).ok_or("auth.json 中没有可用的 OPENAI_API_KEY")?;
+    let api_key = cfg
+        .bearer_token
+        .clone()
+        .or_else(|| {
+            codex::auth::read_local_auth_json()
+                .ok()
+                .and_then(|auth| codex::relay::api_key_from_auth(&auth))
+        })
+        .ok_or("当前中转档案没有可用的 API Key")?;
     let proxy = crate::proxy_http_client();
     let usage =
         codex::relay::fetch_relay_usage(&crate::HTTP_CLIENT, &proxy, &cfg.base_url, &api_key)
@@ -280,6 +592,19 @@ fn unique_codex_alias(existing: &[String], suggested: &str) -> String {
     }
 }
 
+fn find_matching_account_id<F>(
+    ids: &[String],
+    openai_account_id: &str,
+    mut load_identity: F,
+) -> Option<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    ids.iter()
+        .find(|id| load_identity(id).as_deref() == Some(openai_account_id))
+        .cloned()
+}
+
 /// 从粘贴的 JSON 批量导入 Codex 账号：解析 → 逐个验证（wham/usage）→ 入库。
 /// 单个失败不影响其余账号，结果逐条返回。
 #[tauri::command]
@@ -357,7 +682,7 @@ pub async fn add_codex_accounts_from_json(
 
 #[cfg(test)]
 mod tests {
-    use super::unique_codex_alias;
+    use super::{find_matching_account_id, unique_codex_alias};
 
     #[test]
     fn batch_import_aliases_skip_all_existing_suffixes() {
@@ -368,6 +693,19 @@ mod tests {
         ];
         assert_eq!(unique_codex_alias(&existing, "new"), "new");
         assert_eq!(unique_codex_alias(&existing, "team"), "team-4");
+    }
+
+    #[test]
+    fn official_login_reuses_matching_openai_identity() {
+        let ids = vec!["local-a".to_string(), "local-b".to_string()];
+        let matched = find_matching_account_id(&ids, "openai-b", |id| match id {
+            "local-a" => Some("openai-a".to_string()),
+            "local-b" => Some("openai-b".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(matched.as_deref(), Some("local-b"));
+        assert_eq!(find_matching_account_id(&ids, "openai-c", |_| None), None);
     }
 }
 
@@ -451,7 +789,7 @@ pub async fn apply_codex_auth(encrypted: &str, db: &Database) -> Result<(), Stri
     // 写入本机 ~/.codex/auth.json
     codex::auth::write_local_auth_json(&auth)?;
 
-    // 更新所有已导入 codex 账号的 Keychain 凭证
+    // 只更新同一 OpenAI account_id 的存档，避免同步一个账号时抹掉其他官方账号。
     {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let mut stmt = conn
@@ -466,7 +804,11 @@ pub async fn apply_codex_auth(encrypted: &str, db: &Database) -> Result<(), Stri
         drop(conn);
 
         for id in &ids {
-            let _ = codex::auth::store_auth_to_keychain(id, &auth);
+            let same_identity = codex::auth::read_auth_from_keychain(id)
+                .is_ok_and(|stored| stored.tokens.account_id == auth.tokens.account_id);
+            if same_identity {
+                let _ = codex::auth::store_auth_to_keychain(id, &auth);
+            }
         }
     }
 

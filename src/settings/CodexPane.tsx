@@ -5,6 +5,7 @@ import { LocalAuthSection } from "./codex/LocalAuthSection";
 import { PasswordDialog } from "./codex/PasswordDialog";
 import { RemoteBindingDialog } from "./codex/RemoteBindingDialog";
 import { RemoteHostsSection } from "./codex/RemoteHostsSection";
+import { RuntimeProfileSection } from "./codex/RuntimeProfileSection";
 import { useCodexController } from "./codex/useCodexController";
 
 export default function CodexPane() {
@@ -25,6 +26,7 @@ export default function CodexPane() {
       {controller.error && <StatusNotice tone="danger">{controller.error}</StatusNotice>}
       {controller.info && <StatusNotice tone="success">{controller.info}</StatusNotice>}
 
+      <RuntimeProfileSection controller={controller} />
       <LocalAuthSection controller={controller} />
       <CloudSyncSection controller={controller} />
       <RemoteHostsSection controller={controller} />

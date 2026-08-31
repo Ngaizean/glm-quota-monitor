@@ -253,6 +253,33 @@ pub fn refresh_and_sync(
     Ok(new_auth)
 }
 
+/// 刷新指定账号的存档凭据，不改写当前 `auth.json`。
+/// 后台轮询多账号时必须使用此路径，避免刷新非活动账号造成隐式切号。
+pub fn refresh_and_store(
+    http: &reqwest::Client,
+    auth: &AuthJson,
+    account_id: &str,
+) -> Result<AuthJson, String> {
+    let new_auth = refresh_access_token(http, auth)?;
+    store_auth_to_keychain(account_id, &new_auth)?;
+    Ok(new_auth)
+}
+
+pub fn refresh_and_store_with_fallback(
+    primary: &reqwest::Client,
+    fallback: &reqwest::Client,
+    auth: &AuthJson,
+    account_id: &str,
+) -> Result<AuthJson, String> {
+    match refresh_and_store(primary, auth, account_id) {
+        Err(primary_error) if primary_error.starts_with("刷新请求失败:") => {
+            eprintln!("Codex token 代理刷新失败，尝试直连重试: {}", primary_error);
+            refresh_and_store(fallback, auth, account_id)
+        }
+        result => result,
+    }
+}
+
 /// 优先用代理刷新 token，网络失败时回退直连。
 pub fn refresh_and_sync_with_fallback(
     primary: &reqwest::Client,

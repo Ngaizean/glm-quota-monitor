@@ -22,6 +22,7 @@ pub const LIMIT_TYPE_RELAY_BALANCE: &str = "RELAY_BALANCE";
 pub struct RelayConfig {
     pub provider_name: String,
     pub base_url: String,
+    pub bearer_token: Option<String>,
 }
 
 /// 可安全分发到远程 Codex 的完整中转配置。
@@ -33,6 +34,7 @@ pub struct RelayDistributionConfig {
     pub reasoning_effort: Option<String>,
     pub wire_api: String,
     pub requires_openai_auth: bool,
+    pub bearer_token: Option<String>,
 }
 
 /// config.toml 路径（与 auth.rs 的 auth_json_path 同源：固定 ~/.codex）
@@ -59,6 +61,7 @@ fn relay_config_from_content(content: &str) -> Option<RelayConfig> {
     Some(RelayConfig {
         provider_name: provider,
         base_url,
+        bearer_token: find_string_key_in(&section, "experimental_bearer_token"),
     })
 }
 
@@ -77,6 +80,7 @@ fn relay_distribution_config_from_content(content: &str) -> Option<RelayDistribu
         reasoning_effort: find_top_level_string_key(content, "model_reasoning_effort"),
         wire_api: find_string_key_in(&section, "wire_api")?,
         requires_openai_auth: find_bool_key_in(&section, "requires_openai_auth")?,
+        bearer_token: find_string_key_in(&section, "experimental_bearer_token"),
     })
 }
 
@@ -106,6 +110,7 @@ pub(crate) fn merge_relay_config(
     let mut head = retained[..first_table].to_vec();
     set_top_level_string(&mut head, "model_provider", Some(&config.provider_name));
     set_top_level_string(&mut head, "model", Some(&config.model));
+    set_top_level_string(&mut head, "cli_auth_credentials_store", Some("file"));
     set_top_level_string(
         &mut head,
         "model_reasoning_effort",
@@ -127,6 +132,12 @@ pub(crate) fn merge_relay_config(
         format!("wire_api = \"{}\"", toml_escape(&config.wire_api)),
         format!("requires_openai_auth = {}", config.requires_openai_auth),
     ]);
+    if let Some(token) = config.bearer_token.as_deref() {
+        merged.push(format!(
+            "experimental_bearer_token = \"{}\"",
+            toml_escape(token)
+        ));
+    }
     Ok(format!("{}\n", merged.join("\n")))
 }
 
@@ -154,6 +165,13 @@ fn validate_distribution_config(config: &RelayDistributionConfig) -> Result<(), 
         .is_some_and(|value| value.is_empty() || value.chars().any(char::is_control))
     {
         return Err("中转配置 model_reasoning_effort 为空或含控制字符".to_string());
+    }
+    if config
+        .bearer_token
+        .as_deref()
+        .is_some_and(|value| value.is_empty() || value.chars().any(char::is_control))
+    {
+        return Err("中转配置 bearer token 为空或含控制字符".to_string());
     }
     Ok(())
 }

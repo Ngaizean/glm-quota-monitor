@@ -24,6 +24,13 @@ function baseValue(command: string): unknown {
     get_codex_auto_upload: false,
     get_codex_proxy: "",
     get_codex_auto_sync: true,
+    get_codex_runtime_config: {
+      active_mode: "official",
+      relay_base_url: "https://pixarsubtoapi.stream/v1",
+      relay_model: "gpt-5.6-sol",
+      relay_key_configured: true,
+      active_official_account_id: null,
+    },
     get_ssh_override_state: [],
     list_accounts: [],
   };
@@ -50,6 +57,41 @@ describe("CodexPane 交互边界", () => {
 
     roleLoad.resolve("owner");
     await waitFor(() => expect(consumerTab).toBeEnabled());
+  });
+
+  it("中转 Key 仅在用户主动显示时读取", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_codex_relay_key") return Promise.resolve("sk-relay-secret");
+      return Promise.resolve(baseValue(command));
+    });
+
+    render(<CodexPane />);
+    const reveal = await screen.findByRole("button", { name: "显示 Key" });
+    expect(invokeMock).not.toHaveBeenCalledWith("get_codex_relay_key");
+    fireEvent.click(reveal);
+
+    await waitFor(() => expect(screen.getByLabelText("中转 Key")).toHaveValue("sk-relay-secret"));
+    expect(invokeMock.mock.calls.filter(([command]) => command === "get_codex_relay_key")).toHaveLength(1);
+  });
+
+  it("保存可修改的中转地址和 Key 后切换到中转模式", async () => {
+    invokeMock.mockImplementation((command: string) => Promise.resolve(baseValue(command)));
+    render(<CodexPane />);
+    const url = await screen.findByLabelText("中转地址");
+    fireEvent.change(url, { target: { value: "https://relay.changed.example" } });
+    fireEvent.change(screen.getByLabelText("中转 Key"), { target: { value: "sk-new" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存中转配置" }));
+
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("set_codex_relay_config", {
+      baseUrl: "https://relay.changed.example",
+      model: "gpt-5.6-sol",
+      apiKey: "sk-new",
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "切换到中转站" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("switch_codex_runtime", {
+      mode: "relay",
+      accountId: null,
+    }));
   });
 
   it("展开高级设置才读取 Token，折叠后再次展开会重新读取", async () => {
@@ -130,7 +172,7 @@ describe("CodexPane 交互边界", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "扫描主机" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "扫描主机" }));
     await screen.findByText("lab");
-    fireEvent.click(screen.getByRole("button", { name: "推送" }));
+    fireEvent.click(screen.getByRole("button", { name: "同步当前档案" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("passwordless probe failed");
   });
