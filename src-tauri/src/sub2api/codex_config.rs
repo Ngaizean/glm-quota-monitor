@@ -67,8 +67,8 @@ pub fn merge_official_config(content: &str) -> String {
     let mut lines: Vec<&str> = head
         .lines()
         .filter(|line| {
-            !matches_key(line, "model_provider")
-                && !(switching_from_relay && matches_key(line, "model"))
+            !(matches_key(line, "model_provider")
+                || switching_from_relay && matches_key(line, "model"))
         })
         .collect();
     while lines.last().is_some_and(|line| line.trim().is_empty()) {

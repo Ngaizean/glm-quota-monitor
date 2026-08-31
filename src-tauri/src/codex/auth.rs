@@ -231,28 +231,6 @@ fn extract_client_id(access_token: &str) -> Option<String> {
     v.get("client_id")?.as_str().map(|s| s.to_string())
 }
 
-/// 刷新 token 并同步到本机 auth.json + Keychain
-/// 返回刷新后的 AuthJson
-pub fn refresh_and_sync(
-    http: &reqwest::Client,
-    auth: &AuthJson,
-    account_id: &str,
-) -> Result<AuthJson, String> {
-    let new_auth = refresh_access_token(http, auth)?;
-
-    // 写回本机 auth.json（Codex CLI 也会读这个文件）
-    if let Err(e) = write_local_auth_json(&new_auth) {
-        eprintln!("更新本机 auth.json 失败（不影响本次刷新）: {}", e);
-    }
-
-    // 更新 Keychain
-    if let Err(e) = store_auth_to_keychain(account_id, &new_auth) {
-        eprintln!("更新 Keychain 失败（不影响本次刷新）: {}", e);
-    }
-
-    Ok(new_auth)
-}
-
 /// 刷新指定账号的存档凭据，不改写当前 `auth.json`。
 /// 后台轮询多账号时必须使用此路径，避免刷新非活动账号造成隐式切号。
 pub fn refresh_and_store(
@@ -275,22 +253,6 @@ pub fn refresh_and_store_with_fallback(
         Err(primary_error) if primary_error.starts_with("刷新请求失败:") => {
             eprintln!("Codex token 代理刷新失败，尝试直连重试: {}", primary_error);
             refresh_and_store(fallback, auth, account_id)
-        }
-        result => result,
-    }
-}
-
-/// 优先用代理刷新 token，网络失败时回退直连。
-pub fn refresh_and_sync_with_fallback(
-    primary: &reqwest::Client,
-    fallback: &reqwest::Client,
-    auth: &AuthJson,
-    account_id: &str,
-) -> Result<AuthJson, String> {
-    match refresh_and_sync(primary, auth, account_id) {
-        Err(primary_error) if primary_error.starts_with("刷新请求失败:") => {
-            eprintln!("Codex token 代理刷新失败，尝试直连重试: {}", primary_error);
-            refresh_and_sync(fallback, auth, account_id)
         }
         result => result,
     }
