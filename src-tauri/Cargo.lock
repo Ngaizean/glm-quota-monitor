@@ -1722,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "glm-quota-monitor"
-version = "6.4.2"
+version = "6.5.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
