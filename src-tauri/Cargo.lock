@@ -1722,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "glm-quota-monitor"
-version = "6.5.0"
+version = "6.6.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -1744,6 +1744,7 @@ dependencies = [
  "tauri-plugin-updater",
  "thiserror 2.0.18",
  "tokio",
+ "toml_edit 0.25.11+spec-1.1.0",
  "uuid",
 ]
 
@@ -5555,6 +5556,7 @@ dependencies = [
  "indexmap 2.14.0",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.2",
 ]
 
