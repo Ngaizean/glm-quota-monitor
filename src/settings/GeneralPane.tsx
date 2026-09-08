@@ -7,6 +7,9 @@ import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { StatusNotice } from "../components/ui/StatusNotice";
 import { Toggle } from "../components/ui/Toggle";
 import type { Account } from "../types";
+import AboutPane from "./AboutPane";
+import ExportPane from "./ExportPane";
+import ThemePane from "./ThemePane";
 import SettingsRow from "./components/SettingsRow";
 import SettingsSection from "./components/SettingsSection";
 
@@ -366,6 +369,16 @@ export default function GeneralPane() {
           )}
         </SettingsRow>
       </SettingsSection>
+
+      {/* 外观 / 数据导出 / 关于：自带分区卡片，纵向合并进通用页 */}
+      <div className="space-y-4 border-t border-[var(--color-border-subtle)] pt-4">
+        <h2 className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
+          {t("settings.groupSystem")}
+        </h2>
+      </div>
+      <ThemePane />
+      <ExportPane />
+      <AboutPane />
     </div>
   );
 }

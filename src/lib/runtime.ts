@@ -1,4 +1,7 @@
 export function isTauriRuntime(): boolean {
+  // 预览模式注入了模拟 IPC（dev/previewInvoke），不是真实 Tauri 环境；
+  // 否则窗口布局等原生调用会在浏览器里崩溃。
+  if (isPreviewMode()) return false;
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 

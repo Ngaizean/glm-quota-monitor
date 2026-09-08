@@ -7,9 +7,6 @@ import {
   BellIcon,
   ClockIcon,
   CodeIcon,
-  DownloadIcon,
-  InfoIcon,
-  PaletteIcon,
   ServerIcon,
   SettingsIcon,
   UserIcon,
@@ -20,23 +17,12 @@ import { version as APP_VERSION } from "../../package.json";
 const AccountsPane = lazy(() => import("./AccountsPane"));
 const AlertsPane = lazy(() => import("./AlertsPane"));
 const SpinPane = lazy(() => import("./SpinPane"));
-const CodexPane = lazy(() => import("./CodexPane"));
+const CodexPane = lazy(() => import("./distribution/CloudSyncPane"));
+const RemoteDevicesPane = lazy(() => import("./distribution/RemoteDevicesPane"));
 const Sub2apiPane = lazy(() => import("./sub2api/Sub2apiPane"));
 const GeneralPane = lazy(() => import("./GeneralPane"));
-const ThemePane = lazy(() => import("./ThemePane"));
-const ExportPane = lazy(() => import("./ExportPane"));
-const AboutPane = lazy(() => import("./AboutPane"));
 
-type NavId =
-  | "accounts"
-  | "alerts"
-  | "spin"
-  | "codex"
-  | "sub2api"
-  | "general"
-  | "theme"
-  | "export"
-  | "about";
+type NavId = "accounts" | "alerts" | "spin" | "codex" | "devices" | "sub2api" | "general";
 
 interface NavItem {
   id: NavId;
@@ -87,11 +73,19 @@ const NAV_GROUPS: NavGroup[] = [
       },
       {
         id: "codex",
-        labelKey: "settings.codexLabel",
-        titleKey: "settings.codex",
-        descriptionKey: "settings.codexDesc",
+        labelKey: "distribution.cloudTitle",
+        titleKey: "distribution.cloudTitle",
+        descriptionKey: "distribution.cloudSubtitle",
         component: CodexPane,
         icon: <CodeIcon size={17} />,
+      },
+      {
+        id: "devices",
+        labelKey: "distribution.devicesTitle",
+        titleKey: "distribution.devicesTitle",
+        descriptionKey: "distribution.devicesSubtitle",
+        component: RemoteDevicesPane,
+        icon: <ServerIcon size={17} />,
       },
       {
         id: "sub2api",
@@ -113,30 +107,6 @@ const NAV_GROUPS: NavGroup[] = [
         descriptionKey: "settings.generalDesc",
         component: GeneralPane,
         icon: <SettingsIcon size={17} />,
-      },
-      {
-        id: "theme",
-        labelKey: "settings.themeLabel",
-        titleKey: "settings.theme",
-        descriptionKey: "settings.themeDesc",
-        component: ThemePane,
-        icon: <PaletteIcon size={17} />,
-      },
-      {
-        id: "export",
-        labelKey: "settings.exportLabel",
-        titleKey: "settings.export",
-        descriptionKey: "settings.exportDesc",
-        component: ExportPane,
-        icon: <DownloadIcon size={17} />,
-      },
-      {
-        id: "about",
-        labelKey: "settings.aboutLabel",
-        titleKey: "settings.about",
-        descriptionKey: "settings.aboutDesc",
-        component: AboutPane,
-        icon: <InfoIcon size={17} />,
       },
     ],
   },
@@ -222,6 +192,8 @@ export default function Settings({ onBack, screenHeight }: { onBack: () => void;
                       key={item.id}
                       type="button"
                       onClick={() => setActiveTab(item.id)}
+                      aria-label={t(item.labelKey)}
+                      title={t(item.labelKey)}
                       aria-current={active ? "page" : undefined}
                       className={`flex min-h-10 w-full items-center gap-2.5 rounded-xl px-2.5 text-left text-xs font-medium transition-colors ${
                         active

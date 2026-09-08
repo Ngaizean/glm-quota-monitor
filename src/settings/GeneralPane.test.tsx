@@ -48,6 +48,8 @@ describe("GeneralPane", () => {
       if (command === "get_setting" && args?.key === "refresh_interval") return interval.promise;
       if (command === "get_setting" && args?.key === "auto_start") return autoStart.promise;
       if (command === "get_default_model") return model.promise;
+      // 通用页现在内嵌导出/主题/关于分区，兜底空账号列表
+      if (command === "list_accounts") return Promise.resolve([]);
       return Promise.resolve(undefined);
     });
 
@@ -109,6 +111,7 @@ describe("GeneralPane", () => {
         return Promise.resolve(customModels);
       }
       if (command === "set_default_model") return Promise.resolve();
+      if (command === "list_accounts") return Promise.resolve([]);
       return Promise.resolve(undefined);
     });
     render(<GeneralPane />);

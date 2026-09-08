@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { StatusNotice } from "../components/ui/StatusNotice";
@@ -11,6 +12,19 @@ import { useAccountsController } from "./accounts/useAccountsController";
 export default function AccountsPane() {
   const { t } = useTranslation();
   const controller = useAccountsController();
+  // dev 预览支持 ?pane=accounts&platform=codex 直达对应平台面板
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === "undefined") return;
+    const candidate = new URLSearchParams(window.location.search).get("platform");
+    if (
+      (candidate === "codex" || candidate === "deepseek") &&
+      controller.platform !== candidate
+    ) {
+      controller.changePlatform(candidate);
+    }
+    // 仅挂载时读取一次预览参数
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const platformOptions: ReadonlyArray<{ value: AccountPlatform; label: string }> = [
     { value: "zhipu", label: t("accountsPane.platformGlm") },
     { value: "codex", label: t("accountsPane.platformCodex") },
