@@ -419,6 +419,31 @@ fn write_remote_config(alias: &str, password: Option<&str>, merged: &str) -> Res
     Ok(())
 }
 
+pub fn push_bundle(
+    alias: &str,
+    password: Option<&str>,
+    bundle: &super::profiles::Bundle,
+) -> Result<(), String> {
+    let existing = run_ssh(
+        alias,
+        password,
+        "if [ -f ~/.codex/config.toml ]; then cat ~/.codex/config.toml; fi",
+    )?;
+    let config = super::profiles::merge(&existing, bundle)?;
+    let auth = super::profiles::auth_content(bundle)?;
+    let payload = serde_json::to_vec(&serde_json::json!({"config.toml":config,"auth.json":auth}))
+        .map_err(|e| e.to_string())?;
+    // Stage both files, back up, then replace. On failure restore both original files.
+    // Readback verifies persisted bytes, not API availability or running process reload.
+    let script = include_str!("remote_setup.py");
+    let command = format!("python3 -c '{}'", script.replace('\'', "'\\''"));
+    let output = run_ssh_with_stdin(alias, password, &command, &payload)?;
+    if !output.lines().any(|line| line == "quota-monitor-verified") {
+        return Err("远端配置回读校验失败".into());
+    }
+    Ok(())
+}
+
 fn write_remote_relay_config(
     alias: &str,
     password: Option<&str>,
@@ -538,6 +563,12 @@ fn classify_platform(base_url: &str) -> String {
 /// command -v 是 POSIX 标准，比 which 更通用；命中时输出二进制路径。
 pub fn remote_has_claude_code(alias: &str, password: Option<&str>) -> Result<bool, String> {
     let out = run_ssh(alias, password, "command -v claude 2>/dev/null || true")?;
+    Ok(!out.is_empty())
+}
+
+/// 检测远程是否安装 Codex CLI（同 Claude Code 的检测方式）。
+pub fn remote_has_codex(alias: &str, password: Option<&str>) -> Result<bool, String> {
+    let out = run_ssh(alias, password, "command -v codex 2>/dev/null || true")?;
     Ok(!out.is_empty())
 }
 
@@ -765,6 +796,70 @@ fn run_ssh_full(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn remote_setup_rolls_back_partial_replacement_and_preserves_backups_on_noop() {
+        use std::{
+            io::Write,
+            os::unix::fs::PermissionsExt,
+            process::{Command, Stdio},
+        };
+        let dir = std::env::temp_dir().join(format!("quota-remote-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.toml"), "old-config").unwrap();
+        std::fs::write(dir.join("auth.json"), "old-auth").unwrap();
+        let run = |prefix: &str| {
+            let script = format!("{prefix}\n{}", include_str!("remote_setup.py"));
+            let mut child = Command::new("python3")
+                .arg("-c")
+                .arg(script)
+                .arg(&dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(br#"{"config.toml":"new-config","auth.json":"new-auth"}"#)
+                .unwrap();
+            child.wait_with_output().unwrap()
+        };
+        let failure="import os\noriginal_replace = os.replace\ncount = 0\ndef injected_replace(source, destination):\n    global count\n    count += 1\n    if count == 2:\n        raise OSError('injected failure')\n    return original_replace(source, destination)\nos.replace = injected_replace\n";
+        assert!(!run(failure).status.success());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("config.toml")).unwrap(),
+            "old-config"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("auth.json")).unwrap(),
+            "old-auth"
+        );
+        let success = run("");
+        assert!(
+            success.status.success(),
+            "{}",
+            String::from_utf8_lossy(&success.stderr)
+        );
+        assert!(String::from_utf8_lossy(&success.stdout).contains("quota-monitor-verified"));
+        assert_eq!(
+            std::fs::metadata(dir.join("auth.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert!(run("").status.success());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("config.toml.bak-quota-monitor")).unwrap(),
+            "old-config"
+        );
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 4);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     use super::{parse_ssh_config, validate_remote_config_value, validate_ssh_alias};
 
     #[test]

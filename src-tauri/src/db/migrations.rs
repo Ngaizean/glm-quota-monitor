@@ -72,4 +72,47 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS codex_profiles (
+    account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('official', 'relay')),
+    base_url TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    reasoning_effort TEXT NOT NULL DEFAULT ''
+);
+
+	CREATE TABLE IF NOT EXISTS codex_devices (
+	    host TEXT PRIMARY KEY,
+	    account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+	    follow_local INTEGER NOT NULL DEFAULT 0,
+	    model TEXT NOT NULL DEFAULT '',
+	    reasoning_effort TEXT NOT NULL DEFAULT '',
+	    auto_sync INTEGER NOT NULL DEFAULT 0,
+	    status TEXT NOT NULL DEFAULT 'bound',
+	    last_sync TEXT,
+	    last_error TEXT
+	);
 "#;
+
+/// 旧版 accounts.api_key 是无默认值的 NOT NULL 列；Codex 多账号体系改由 Keychain
+/// 存凭据后，accounts 的写入不再提供该列，旧库上会触发 NOT NULL 约束失败。
+/// 检测到旧列定义时重建 accounts 表补上 DEFAULT ''（显式列名拷贝，不依赖列序）。
+pub const REBUILD_ACCOUNTS_SQL: &str = r#"
+CREATE TABLE accounts_rebuild (
+    id          TEXT PRIMARY KEY,
+    alias       TEXT NOT NULL,
+    purpose     TEXT NOT NULL DEFAULT '',
+    platform    TEXT NOT NULL DEFAULT 'zhipu',
+    level       TEXT,
+    api_key     TEXT NOT NULL DEFAULT '',
+    is_primary  INTEGER DEFAULT 0,
+    is_active   INTEGER DEFAULT 1,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+INSERT INTO accounts_rebuild (id, alias, purpose, platform, level, api_key, is_primary, is_active, created_at, updated_at)
+    SELECT id, alias, COALESCE(purpose, ''), platform, level, api_key, is_primary, is_active, created_at, updated_at FROM accounts;
+DROP TABLE accounts;
+ALTER TABLE accounts_rebuild RENAME TO accounts;
+"#;
+

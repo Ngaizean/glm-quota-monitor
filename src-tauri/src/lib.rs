@@ -286,55 +286,27 @@ fn fetch_codex_account_quota(
     db: &Database,
     account_id: &str,
 ) -> Result<(QuotaData, i32, f64, f64), String> {
-    // 第零步：中转站（relay）模式
-    let mut relay_err: Option<String> = None;
-    if let Some(relay_cfg) = codex::relay::detect_local_relay_config() {
-        let api_key = relay_cfg.bearer_token.clone().or_else(|| {
-            codex::auth::read_local_auth_json()
-                .ok()
-                .and_then(|a| codex::relay::api_key_from_auth(&a))
-        });
-        if let Some(api_key) = api_key {
-            let proxy = proxy_http_client();
-            let started = std::time::Instant::now();
-            match tauri::async_runtime::block_on(codex::relay::fetch_relay_usage(
-                &HTTP_CLIENT,
-                &proxy,
-                &relay_cfg.base_url,
-                &api_key,
-            )) {
-                Ok(usage) => {
-                    log_codex_relay(&format!(
-                        "fetch OK provider={} base={} {:?} balance={:?} plan={:?}",
-                        relay_cfg.provider_name,
-                        relay_cfg.base_url,
-                        started.elapsed(),
-                        usage.balance,
-                        usage.plan_name
-                    ));
-                    return Ok(finalize_relay_quota(db, account_id, &usage));
-                }
-                Err(e) => {
-                    log_codex_relay(&format!(
-                        "fetch FAILED provider={} base={} err={e}",
-                        relay_cfg.provider_name, relay_cfg.base_url
-                    ));
-                    relay_err = Some(e);
-                }
-            }
-        }
+    if codex::profiles::is_relay(db, account_id) {
+        let bundle = codex::profiles::bundle(db, account_id)?;
+        let usage = tauri::async_runtime::block_on(codex::relay::fetch_relay_usage(
+            &HTTP_CLIENT,
+            &proxy_http_client(),
+            &bundle.profile.base_url,
+            bundle.api_key.as_deref().unwrap_or_default(),
+        ))?;
+        return Ok(finalize_relay_quota(db, account_id, &usage));
     }
 
     // 每个已导入账号以自己的 Keychain 存档为准；全局 auth.json 只代表当前活动账号。
-    let local_auth = codex::auth::read_auth_from_keychain(account_id)
-        .or_else(|_| codex::auth::read_local_auth_json())?;
+    let local_auth = codex::auth::read_auth_from_keychain(account_id)?;
 
     if local_auth.tokens.access_token.is_empty() {
-        return Err(relay_err.unwrap_or_else(|| "无 access_token".to_string()));
+        return Err("无 access_token".to_string());
     }
 
     // 检查 token 是否快过期（<2天），如果是则自动刷新
-    let auth = if is_token_expiring_soon(&local_auth.tokens.access_token, 2) {
+    let may_refresh = codex::profiles::setting(db, "codex_role").as_deref() != Some("consumer");
+    let auth = if may_refresh && is_token_expiring_soon(&local_auth.tokens.access_token, 2) {
         eprintln!("Codex token 即将过期，尝试自动刷新...");
         let proxy = proxy_http_client();
         match codex::auth::refresh_and_store_with_fallback(
@@ -369,7 +341,9 @@ fn fetch_codex_account_quota(
 
     let usage = match usage_result {
         Ok(usage) => usage,
-        Err(codex::client::CodexApiError::Http(reqwest::StatusCode::UNAUTHORIZED)) => {
+        Err(codex::client::CodexApiError::Http(reqwest::StatusCode::UNAUTHORIZED))
+            if may_refresh =>
+        {
             eprintln!("Codex token 返回 401，尝试刷新后重试...");
             let proxy = proxy_http_client();
             let refreshed = codex::auth::refresh_and_store_with_fallback(
@@ -391,11 +365,7 @@ fn fetch_codex_account_quota(
         Err(e) => return Err(format!("wham/usage 调用失败: {}", e)),
     };
 
-    let (mut quota, pct, today_tokens, today_calls) = finalize_codex_quota(db, account_id, &usage);
-    if let Some(error) = relay_err {
-        quota.error = Some(format!("中转站额度查询失败，当前显示官方额度：{error}"));
-    }
-    Ok((quota, pct, today_tokens, today_calls))
+    Ok(finalize_codex_quota(db, account_id, &usage))
 }
 
 /// DeepSeek 账号额度查询：拉 /user/balance → 转 minimal QuotaData（DEEPSEEK_BALANCE）→ 写快照。
@@ -536,28 +506,6 @@ fn finalize_relay_quota(
         );
     }
     (quota, 0, 0.0, 0.0)
-}
-
-/// 把中转站拉取诊断追加到 app_data_dir/codex_relay.log（release 无 stderr）
-fn log_codex_relay(msg: &str) {
-    use std::io::Write;
-    let Some(base) = dirs::data_dir().map(|d| d.join("com.ngaizean.glm-quota-monitor")) else {
-        return;
-    };
-    let path = base.join("codex_relay.log");
-    let _ = std::fs::create_dir_all(&base);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = writeln!(
-            f,
-            "[{}] {}",
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-            msg
-        );
-    }
 }
 
 /// Codex 活跃检测：对比周额度百分比变化（Codex 仅有周额度，5h 窗口已废弃）。
@@ -1236,23 +1184,15 @@ fn run_codex_auto_upload(app: &tauri::AppHandle) {
                 continue;
             }
 
-            // 检测本机 auth.json 变化
-            let current_signature = match codex::auth::read_local_auth_json() {
-                Ok(auth) => {
-                    // 用 last_refresh + access_token 前 16 字符作为变化指纹
-                    let token_fingerprint = if auth.tokens.access_token.len() >= 16 {
-                        &auth.tokens.access_token[..16]
-                    } else {
-                        &auth.tokens.access_token
-                    };
-                    Some(format!(
-                        "{}|{}",
-                        auth.last_refresh.clone().unwrap_or_default(),
-                        token_fingerprint
-                    ))
-                }
-                Err(_) => None,
-            };
+            // 检测分发账号集合变化
+            let current_signature = commands::codex::build_upload_payload(&db)
+                .ok()
+                .map(|payload| {
+                    use std::hash::{Hash, Hasher};
+                    let mut hash = std::collections::hash_map::DefaultHasher::new();
+                    payload.hash(&mut hash);
+                    format!("{:016x}", hash.finish())
+                });
 
             let changed = current_signature.as_deref() != last_signature.as_deref();
 
@@ -1288,8 +1228,7 @@ fn try_codex_auto_upload(db: &Database) -> Result<(), String> {
     let github_token =
         commands::codex::read_github_token(db).ok_or_else(|| "未配置 GitHub Token".to_string())?;
 
-    let auth = codex::auth::read_local_auth_json()?;
-    let json = serde_json::to_string(&auth).map_err(|e| format!("序列化失败: {}", e))?;
+    let json = commands::codex::build_upload_payload(db)?;
     let encrypted = codex::crypto::encrypt(&json)?;
 
     let proxy = proxy_http_client();
@@ -1318,85 +1257,15 @@ fn try_codex_auto_upload(db: &Database) -> Result<(), String> {
 /// （由用户手动弹框输入密码后开启）。
 fn run_ssh_auto_override(app: &tauri::AppHandle) {
     std::thread::sleep(Duration::from_secs(60));
-    let mut last_signatures: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-
     loop {
         if let Some(db) = app.try_state::<Database>() {
-            // 指纹只保存哈希，不在内存映射或日志里保留 API Key/token 明文。
-            let auth = codex::auth::read_local_auth_json().ok();
-            let relay = codex::relay::detect_local_relay_distribution_config();
-            let current_sig = (auth.is_some() || relay.is_some()).then(|| {
-                use std::hash::{DefaultHasher, Hash, Hasher};
-                let mut hasher = DefaultHasher::new();
-                if let Some(auth) = &auth {
-                    auth.last_refresh.hash(&mut hasher);
-                    auth.tokens.access_token.hash(&mut hasher);
-                    auth.openai_api_key
-                        .as_ref()
-                        .and_then(|value| value.as_str())
-                        .hash(&mut hasher);
-                }
-                if let Some(config) = &relay {
-                    config.provider_name.hash(&mut hasher);
-                    config.base_url.hash(&mut hasher);
-                    config.model.hash(&mut hasher);
-                    config.reasoning_effort.hash(&mut hasher);
-                    config.wire_api.hash(&mut hasher);
-                    config.requires_openai_auth.hash(&mut hasher);
-                    config.bearer_token.hash(&mut hasher);
-                }
-                format!("{:016x}", hasher.finish())
-            });
-
-            if let Some(sig) = current_sig {
-                // 开启自动覆盖的主机
-                let enabled_hosts: Vec<String> = db
-                    .conn
-                    .lock()
-                    .ok()
-                    .and_then(|conn| {
-                        let mut stmt = conn
-                            .prepare(
-                                "SELECT key FROM app_settings \
-                                 WHERE key LIKE 'ssh_auto_override_%' AND value = 'true'",
-                            )
-                            .ok()?;
-                        let rows = stmt.query_map([], |row| row.get::<_, String>(0)).ok()?;
-                        Some(
-                            rows.filter_map(|r| r.ok())
-                                .filter_map(|k| {
-                                    k.strip_prefix("ssh_auto_override_").map(|s| s.to_string())
-                                })
-                                .collect(),
-                        )
-                    })
-                    .unwrap_or_default();
-
-                for host in &enabled_hosts {
-                    if last_signatures.get(host) == Some(&sig) {
-                        continue;
-                    }
-                    // 认证方式：免密优先，其次已存密码，否则跳过。
-                    // 跳过时不记录指纹，这样用户补存密码后下一轮（5 分钟内）自动生效。
-                    let result = if codex::ssh::is_passwordless(host) {
-                        codex::ssh::push_codex_setup(host, None)
-                    } else if let Some(pw) = codex::ssh::read_ssh_password(host) {
-                        codex::ssh::push_codex_setup(host, Some(&pw))
-                    } else {
-                        eprintln!(
-                            "SSH auto-override skip {host}: 非免密且未存储密码，不做自动覆盖"
-                        );
-                        continue;
-                    };
-                    match result {
-                        Ok(()) => {
-                            eprintln!("SSH auto-override ok: {host} 已同步 Codex 鉴权与配置");
-                            last_signatures.insert(host.clone(), sig.clone());
-                        }
-                        Err(e) => {
-                            eprintln!("SSH auto-override failed for {host}: {e}");
-                        }
+            if let Err(error) = codex::profiles::migrate(&db) {
+                eprintln!("账号迁移失败: {error}");
+            }
+            if let Ok(devices) = codex::profiles::devices(&db) {
+                for device in devices.into_iter().filter(|d| d.auto_sync) {
+                    if codex::profiles::push(&db, &device.host, None).is_err() {
+                        eprintln!("设备账号同步失败: {}", device.host);
                     }
                 }
             }
@@ -1432,6 +1301,7 @@ fn log_auto_sync(msg: &str) {
 /// 每 5 分钟从 Gist 拉取加密内容，与上次指纹对比，有变化（或首次）才解密应用。
 /// 避免无谓地反复写本机 auth.json / Keychain。
 fn run_codex_auto_sync(app: &tauri::AppHandle) {
+    use tauri::Emitter;
     log_auto_sync("thread started, sleep 60s before first run");
     std::thread::sleep(Duration::from_secs(60));
     let mut last_signature: Option<String> = None;
@@ -1506,6 +1376,7 @@ fn run_codex_auto_sync(app: &tauri::AppHandle) {
                         )) {
                             Ok(()) => {
                                 log_auto_sync("applied successfully");
+                                let _ = app.emit("accounts-changed", ());
                                 last_signature = Some(fingerprint);
                             }
                             Err(e) => log_auto_sync(&format!("apply FAILED: {e}")),
@@ -1815,6 +1686,15 @@ pub fn run() {
             commands::codex::get_codex_sync_info,
             commands::codex::set_codex_auto_upload,
             commands::codex::get_codex_auto_upload,
+            commands::distribution::get_distribution_state,
+            commands::distribution::save_codex_profile,
+            commands::distribution::apply_codex_account,
+            commands::distribution::bind_codex_device,
+            commands::distribution::unbind_codex_device,
+            commands::distribution::sync_codex_device,
+            commands::distribution::set_cloud_account,
+            commands::distribution::set_cloud_accounts,
+            commands::distribution::get_codex_account_relay_usage,
             commands::codex::set_codex_auto_sync,
             commands::codex::get_codex_auto_sync,
             commands::codex::set_codex_proxy,
@@ -1829,6 +1709,8 @@ pub fn run() {
             commands::codex::has_ssh_password,
             commands::codex::delete_ssh_password,
             commands::codex::ssh_check_claude_code,
+            commands::codex::ssh_check_codex,
+            commands::codex::repair_codex_sessions,
             commands::codex::ssh_bind_claude_code,
             commands::codex::ssh_unbind_claude_code,
             commands::deepseek::add_deepseek_account,

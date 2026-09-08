@@ -121,6 +121,9 @@ pub fn delete_account(
     db: State<'_, Database>,
     id: String,
 ) -> Result<(), String> {
+    let _distribution_guard = crate::codex::profiles::DISTRIBUTION_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
     // 事务前读 platform（事务内 accounts 行会被删），用于事务后按平台清理 Keychain
     let platform: String = {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
@@ -135,6 +138,8 @@ pub fn delete_account(
     {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute("UPDATE codex_devices SET status='unbound',auto_sync=0,follow_local=0,last_error=NULL WHERE account_id=?1 OR (follow_local=1 AND EXISTS(SELECT 1 FROM app_settings WHERE key='codex_local_account' AND value=?1))", [&id]).map_err(|e|e.to_string())?;
+        tx.execute("DELETE FROM app_settings WHERE key IN ('codex_local_account','codex_cloud_account','codex_active_official_account') AND value=?1", [&id]).map_err(|e|e.to_string())?;
         // 清理指向该账号的 agent 绑定（agent_claude_code/agent_openclaw 等），避免删除后悬空引用
         tx.execute(
             "DELETE FROM app_settings WHERE value = ?1 AND key LIKE 'agent\\_%' ESCAPE '\\'",
@@ -185,6 +190,7 @@ pub fn delete_account(
     // 按平台清理 Keychain（修复旧实现只删裸 {id}、泄漏 codex_{id}/deepseek_{id} 的 bug）
     match platform.as_str() {
         "codex" => {
+            let _ = crypto::delete_api_key(&format!("codex_relay_{id}"));
             let _ = crate::codex::auth::delete_auth_from_keychain(&id);
         }
         "deepseek" => {

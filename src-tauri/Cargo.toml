@@ -1,6 +1,6 @@
 [package]
 name = "glm-quota-monitor"
-version = "6.5.0"
+version = "6.6.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -37,6 +37,7 @@ dirs = "6"
 aes-gcm = "0.10"
 base64 = "0.22"
 getrandom = "0.2"
+toml_edit = "0.25"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

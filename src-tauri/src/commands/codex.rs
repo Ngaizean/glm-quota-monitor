@@ -174,6 +174,17 @@ pub fn switch_codex_runtime(
         }
         _ => return Err("Codex 运行模式仅支持 official 或 relay".to_string()),
     }
+    // 旧路径写入的 provider id 是 sub2api（区别于账号体系的 quota_monitor），
+    // 切换后同样要修复旧会话元数据，否则历史对话无法继续。
+    let repair_target = if mode == "relay" { "sub2api" } else { "openai" };
+    if let Some(dir) = codex::auth::auth_json_path()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    {
+        if let Err(error) = codex::session_repair::repair_sessions(&dir, repair_target) {
+            eprintln!("会话 provider 修复失败: {error}");
+        }
+    }
     write_setting(&db, CODEX_RUNTIME_MODE_KEY, &mode)?;
     Ok(runtime_config(&db))
 }
@@ -331,9 +342,9 @@ pub async fn login_codex_official(
         let account_alias = unique_codex_alias(&existing_aliases, requested);
         store_codex_account(&app, &db, account_alias, level, &auth)?
     };
-    codex::auth::write_local_auth_json(&auth)?;
-    crate::sub2api::codex_config::apply_official_local_config()?;
+    codex::profiles::apply_local(&db, &codex::profiles::bundle(&db, &account.id)?)?;
     write_setting(&db, CODEX_ACTIVE_OFFICIAL_ACCOUNT_KEY, &account.id)?;
+    write_setting(&db, "codex_local_account", &account.id)?;
     write_setting(&db, CODEX_RUNTIME_MODE_KEY, "official")?;
     Ok(account)
 }
@@ -377,30 +388,19 @@ fn fetch_codex_usage(_db: &Database, account_id: &str) -> Result<QuotaData, Stri
 
 /// 中转站模式：config.toml 指向非官方端点且 auth.json 配有 API Key 时拉 /v1/usage。
 /// 未配置中转站或拉取失败返回 None（调用方回落官方通路）。
-fn fetch_relay_quota_if_configured() -> Option<QuotaData> {
-    let cfg = codex::relay::detect_local_relay_config()?;
-    let api_key = cfg.bearer_token.clone().or_else(|| {
-        codex::auth::read_local_auth_json()
-            .ok()
-            .and_then(|a| codex::relay::api_key_from_auth(&a))
-    })?;
-    let proxy = crate::proxy_http_client();
-    let usage = tauri::async_runtime::block_on(codex::relay::fetch_relay_usage(
-        &crate::HTTP_CLIENT,
-        &proxy,
-        &cfg.base_url,
-        &api_key,
-    ))
-    .ok()?;
-    Some(codex::relay::relay_usage_to_quota_data(&usage))
-}
-
 /// 查询 Codex 账号额度（官方通路写入快照，复用现有 record_quota_snapshot）
 #[tauri::command]
 pub fn get_codex_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaData, String> {
     // 中转站模式：钱包余额，无百分比列，不写快照（避免 0 值污染趋势图）
-    if let Some(relay_quota) = fetch_relay_quota_if_configured() {
-        return Ok(relay_quota);
+    if codex::profiles::is_relay(&db, &account_id) {
+        let bundle = codex::profiles::bundle(&db, &account_id)?;
+        let usage = tauri::async_runtime::block_on(codex::relay::fetch_relay_usage(
+            &crate::HTTP_CLIENT,
+            &crate::proxy_http_client(),
+            &bundle.profile.base_url,
+            bundle.api_key.as_deref().unwrap_or_default(),
+        ))?;
+        return Ok(codex::relay::relay_usage_to_quota_data(&usage));
     }
 
     let quota = fetch_codex_usage(&db, &account_id)?;
@@ -453,10 +453,12 @@ pub async fn add_codex_account(
 
     // 2. 按当前本机配置验证：中转站用 API Key，官方用 access_token。
     let proxy = crate::proxy_http_client();
-    let level = if let (Some(config), Some(api_key)) = (
-        codex::relay::detect_local_relay_config(),
-        codex::relay::api_key_from_auth(&auth),
-    ) {
+    let relay = codex::relay::detect_local_relay_distribution_config();
+    let relay_key = relay
+        .as_ref()
+        .and_then(|c| c.bearer_token.clone())
+        .or_else(|| codex::relay::api_key_from_auth(&auth));
+    let level = if let (Some(config), Some(api_key)) = (&relay, &relay_key) {
         let usage = codex::relay::fetch_relay_usage(
             &crate::HTTP_CLIENT,
             &proxy,
@@ -465,7 +467,9 @@ pub async fn add_codex_account(
         )
         .await
         .map_err(|e| format!("中转站验证失败: {e}"))?;
-        usage.plan_name.unwrap_or(config.provider_name)
+        usage
+            .plan_name
+            .unwrap_or_else(|| config.provider_name.clone())
     } else {
         if auth.tokens.access_token.is_empty() {
             return Err("auth.json 中既无中转站 API Key，也无官方 access_token".to_string());
@@ -484,6 +488,22 @@ pub async fn add_codex_account(
 
     // 3. 存库 + Keychain
     let account = store_codex_account(&app, &db, alias, level, &auth)?;
+    if let (Some(config), Some(key)) = (relay, relay_key) {
+        crate::crypto::store_api_key(&format!("codex_relay_{}", account.id), &key)
+            .map_err(|e| e.to_string())?;
+        codex::profiles::save(
+            &db,
+            &codex::profiles::Profile {
+                account_id: account.id.clone(),
+                alias: account.alias.clone(),
+                kind: "relay".into(),
+                base_url: config.base_url,
+                model: config.model,
+                reasoning_effort: config.reasoning_effort.unwrap_or_default(),
+            },
+        )?;
+    }
+    write_setting(&db, "codex_local_account", &account.id)?;
 
     let _ = app.emit("accounts-changed", ());
     Ok(account)
@@ -725,14 +745,25 @@ fn count_is_primary(db: &Database, id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 上传鉴权：读本机 auth.json → 加密 → 推送到 Gist
+/// 云端分发 payload：单账号沿用旧版单 Bundle 格式（旧版接收端可读）；
+/// 多账号使用 v2 批量格式
+pub fn build_upload_payload(db: &Database) -> Result<String, String> {
+    let bundles = codex::profiles::cloud_bundles(db)?;
+    if bundles.len() == 1 {
+        serde_json::to_string(&bundles[0]).map_err(|e| format!("序列化失败: {}", e))
+    } else {
+        serde_json::to_string(&serde_json::json!({ "version": 2u32, "accounts": bundles }))
+            .map_err(|e| format!("序列化失败: {}", e))
+    }
+}
+
+/// 上传鉴权：打包选中的分发账号 → 加密 → 推送到 Gist
 #[tauri::command]
 pub async fn upload_codex_auth(db: State<'_, Database>) -> Result<(), String> {
-    // 1. 读本机 auth.json
-    let auth = codex::auth::read_local_auth_json()?;
+    // 1. 打包选中的分发账号（未选择过多账号时回落旧单账号/本机账号）
+    let json = build_upload_payload(&db)?;
 
-    // 2. 序列化 + 加密
-    let json = serde_json::to_string(&auth).map_err(|e| format!("序列化失败: {}", e))?;
+    // 2. 加密
     let encrypted = codex::crypto::encrypt(&json)?;
 
     // 3. 读 Gist URL + GitHub Token
@@ -779,15 +810,44 @@ pub async fn fetch_codex_gist_encrypted(db: &Database) -> Result<String, String>
     }
 }
 
+/// 云端分发的 v2 批量格式：一次 Gist 同步携带多个账号
+#[derive(serde::Deserialize)]
+struct MultiAccountPayload {
+    #[allow(dead_code)]
+    version: u32,
+    accounts: Vec<codex::profiles::Bundle>,
+}
+
 /// 解密并应用 codex 鉴权：写本机 ~/.codex/auth.json + 更新已导入账号 Keychain + 记录同步时间
+/// v2 批量格式一次落地全部分发账号（旧版单 Bundle 与纯 AuthJson 均保持兼容）
 pub async fn apply_codex_auth(encrypted: &str, db: &Database) -> Result<(), String> {
     // 解密
     let json = codex::crypto::decrypt(encrypted)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    match value.get("version").and_then(|v| v.as_u64()) {
+        Some(2) => {
+            let batch: MultiAccountPayload =
+                serde_json::from_value(value).map_err(|e| e.to_string())?;
+            codex::profiles::receive_many(db, &batch.accounts)?;
+            codex::profiles::set_setting(db, "codex_last_sync", &Utc::now().to_rfc3339())?;
+            return Ok(());
+        }
+        Some(1) => {
+            let bundle: codex::profiles::Bundle =
+                serde_json::from_value(value).map_err(|e| e.to_string())?;
+            codex::profiles::receive(db, &bundle)?;
+            codex::profiles::set_setting(db, "codex_last_sync", &Utc::now().to_rfc3339())?;
+            return Ok(());
+        }
+        Some(other) => return Err(format!("不支持的账号同步版本: {other}")),
+        None => {}
+    }
     let auth: codex::types::AuthJson =
         serde_json::from_str(&json).map_err(|e| format!("解析凭证失败: {}", e))?;
 
     // 写入本机 ~/.codex/auth.json
     codex::auth::write_local_auth_json(&auth)?;
+    crate::sub2api::codex_config::apply_official_local_config()?;
 
     // 只更新同一 OpenAI account_id 的存档，避免同步一个账号时抹掉其他官方账号。
     {
@@ -827,9 +887,11 @@ pub async fn apply_codex_auth(encrypted: &str, db: &Database) -> Result<(), Stri
 
 /// 同步鉴权（用户端）：从 Gist 拉取 → 解密 → 写入本机 + 关联账号 Keychain
 #[tauri::command]
-pub async fn sync_codex_auth(db: State<'_, Database>) -> Result<(), String> {
+pub async fn sync_codex_auth(app: tauri::AppHandle, db: State<'_, Database>) -> Result<(), String> {
     let encrypted = fetch_codex_gist_encrypted(&db).await?;
-    apply_codex_auth(&encrypted, &db).await
+    apply_codex_auth(&encrypted, &db).await?;
+    let _ = app.emit("accounts-changed", ());
+    Ok(())
 }
 
 /// 测试 Codex 连接（验证 access_token 是否有效）
@@ -1170,4 +1232,32 @@ pub fn ssh_bind_claude_code(
 pub fn ssh_unbind_claude_code(host: String, password: Option<String>) -> Result<(), String> {
     let pw = resolve_ssh_password(&host, &password);
     codex::ssh::unbind_remote_cc_env(&host, pw.as_deref())
+}
+
+/// 检测远程是否安装 Codex CLI。未安装时不允许账号同步。
+#[tauri::command]
+pub fn ssh_check_codex(host: String, password: Option<String>) -> Result<bool, String> {
+    let pw = resolve_ssh_password(&host, &password);
+    codex::ssh::remote_has_codex(&host, pw.as_deref())
+}
+
+/// 手动修复本机旧会话：把会话元数据里的 provider 改写为当前本机账号对应的 provider，
+/// 使切换账号后旧对话仍可继续。
+#[tauri::command]
+pub async fn repair_codex_sessions(
+    db: State<'_, Database>,
+) -> Result<codex::session_repair::RepairReport, String> {
+    let account_id = codex::profiles::setting(&db, "codex_local_account")
+        .ok_or("尚未应用任何 Codex 账号")?;
+    let kind = codex::profiles::get(&db, &account_id)?.kind;
+    let target = codex::session_repair::target_provider(&kind);
+    let dir = codex::auth::auth_json_path()?
+        .parent()
+        .ok_or("账号目录不存在")?
+        .to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        codex::session_repair::repair_sessions(&dir, target)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

@@ -34,6 +34,15 @@ impl Database {
             }
         };
         conn.execute_batch(migrations::MIGRATION_SQL)?;
+        // 旧库 accounts.api_key 无默认值（NOT NULL 且无 DEFAULT）时重建补上，
+        // 否则 Codex 账号写入（INSERT 不含 api_key）会报 NOT NULL 约束失败。
+        if Self::accounts_api_key_lacks_default(&conn)? {
+            conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+            let rebuild = conn.execute_batch(migrations::REBUILD_ACCOUNTS_SQL);
+            let restore = conn.execute_batch("PRAGMA foreign_keys=ON;");
+            rebuild?;
+            restore?;
+        }
         if conn
             .prepare("SELECT purpose FROM accounts LIMIT 0")
             .is_err()
@@ -78,6 +87,25 @@ impl Database {
                AND account_id IN (SELECT id FROM accounts WHERE platform = 'codex')",
         )?;
         Ok(())
+    }
+
+    /// accounts.api_key 列是否为「NOT NULL 且无默认值」的旧定义（新定义带 DEFAULT ''）。
+    fn accounts_api_key_lacks_default(conn: &Connection) -> SqlResult<bool> {
+        let mut stmt = conn.prepare("PRAGMA table_info(accounts)")?;
+        let columns = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?;
+        for column in columns {
+            let (name, notnull, default) = column?;
+            if name == "api_key" {
+                return Ok(notnull == 1 && default.is_none());
+            }
+        }
+        Ok(false)
     }
 
     /// 启动时把数据库里残留的明文 api_key 批量迁移到系统 Keychain，并清空明文。
@@ -232,6 +260,56 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn legacy_accounts_without_api_key_default_are_rebuilt_and_writable() {
+        let path = std::env::temp_dir().join(format!(
+            "glm-quota-monitor-api-key-rebuild-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        {
+            // 旧版 schema：api_key NOT NULL 且无默认值，purpose/is_primary 在尾部追加
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE accounts (
+                    id TEXT PRIMARY KEY, alias TEXT NOT NULL, platform TEXT NOT NULL DEFAULT 'zhipu',
+                    level TEXT, api_key TEXT NOT NULL, is_active INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    purpose TEXT NOT NULL DEFAULT '', is_primary INTEGER DEFAULT 0
+                 );
+                 INSERT INTO accounts (id, alias, platform, api_key, created_at, updated_at)
+                 VALUES ('legacy', 'Legacy', 'codex', 'sk-stale', 'now', 'now');",
+            )
+            .unwrap();
+        }
+
+        let database = Database::new(&path).unwrap();
+        database.init_tables().unwrap();
+        // 迁移后：旧行保留，Codex 账号可写入（INSERT 不含 api_key 列）
+        database
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO accounts(id,alias,purpose,platform,created_at,updated_at)
+                 VALUES ('relay-1','Relay','codex','codex','now','now')",
+                [],
+            )
+            .unwrap();
+        let (stale_key, count): (String, i64) = database
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT (SELECT api_key FROM accounts WHERE id='legacy'), COUNT(*) FROM accounts",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stale_key, "sk-stale");
+        assert_eq!(count, 2);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
