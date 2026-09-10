@@ -110,10 +110,24 @@ pub fn keychain_key(account_id: &str) -> String {
     format!("codex_{}", account_id)
 }
 
+/// Windows 凭据管理器单条 blob 上限（CRED_MAX_CREDENTIAL_BLOB_SIZE = 5 * 512 字节）
+const MAX_KEYCHAIN_PASSWORD_LEN: usize = 2560;
+
 /// 将 auth.json 序列化为字符串存入 Keychain（复用现有 keyring 机制）
+/// Windows 凭据管理器单条上限 2560 字节；存储前剔除 id_token——
+/// 单个 id_token JWT 可达 ~2000 字符，且全代码库无人读取它做认证，
+/// 保留会导致分发账号（access+refresh+id 合计 ~3900 字符）写入失败。
 pub fn store_auth_to_keychain(account_id: &str, auth: &AuthJson) -> Result<(), String> {
     let key = keychain_key(account_id);
-    let json = serde_json::to_string(auth).map_err(|e| format!("序列化失败: {}", e))?;
+    let mut slim = auth.clone();
+    slim.tokens.id_token = String::new();
+    let json = serde_json::to_string(&slim).map_err(|e| format!("序列化失败: {}", e))?;
+    if json.len() > MAX_KEYCHAIN_PASSWORD_LEN {
+        return Err(format!(
+            "凭据过长（{} 字符），超出平台安全存储上限 {MAX_KEYCHAIN_PASSWORD_LEN} 字符",
+            json.len()
+        ));
+    }
     keyring::Entry::new(crate::crypto::SERVICE_NAME, &key)
         .map_err(|e| format!("Keychain 错误: {}", e))?
         .set_password(&json)
