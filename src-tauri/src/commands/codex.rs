@@ -775,9 +775,16 @@ pub async fn upload_codex_auth(db: State<'_, Database>) -> Result<(), String> {
     match codex::sync::push_to_gist(&proxy, &gist_url, &github_token, &encrypted).await {
         Ok(()) => {}
         Err(e1) => {
-            let _ = codex::sync::push_to_gist(&crate::HTTP_CLIENT, &gist_url, &github_token, &encrypted)
-                .await
-                .map_err(|e2| format!("{e1}\n直连重试也失败: {e2}"))?;
+            if let Err(e2) = codex::sync::push_to_gist(
+                &crate::HTTP_CLIENT,
+                &gist_url,
+                &github_token,
+                &encrypted,
+            )
+            .await
+            {
+                return Err(format!("{e1}\n直连重试也失败: {e2}"));
+            }
         }
     }
 
