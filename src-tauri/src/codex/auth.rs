@@ -295,3 +295,37 @@ mod tests {
         assert_eq!(content, "new");
     }
 }
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn probe_keyring_len_limits() {
+        for n in [1000usize, 1280, 2000, 2073, 2560, 3000] {
+            let auth = crate::codex::types::AuthJson {
+                openai_api_key: None,
+                last_refresh: None,
+                tokens: crate::codex::types::Tokens {
+                    access_token: "a".repeat(n),
+                    refresh_token: "r".repeat(20),
+                    id_token: String::new(),
+                    account_id: "probe-account".into(),
+                },
+            };
+            let json = serde_json::to_string(&auth).unwrap();
+            let key = format!("codex_probe_{}_{}", n, uuid::Uuid::new_v4());
+            let entry = keyring::Entry::new(crate::crypto::SERVICE_NAME, &key).unwrap();
+            let result = entry.set_password(&json);
+            eprintln!(
+                "probe n={} json_len={} -> {}",
+                n,
+                json.len(),
+                result.map(|_| "OK".to_string()).map_err(|e| e.to_string())
+            );
+            let _ = entry.delete_password();
+        }
+        panic!("probe done (see stderr)");
+    }
+}
