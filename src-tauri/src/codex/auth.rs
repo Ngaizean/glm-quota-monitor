@@ -152,7 +152,10 @@ fn delete_chunked_entries(key: &str) {
     let Some(meta) = raw.strip_prefix(CHUNK_PREFIX) else {
         return;
     };
-    let Ok(total) = meta.split_once('|').map(|(t, _)| t.parse::<usize>()) else {
+    let Some(total) = meta
+        .split_once('|')
+        .and_then(|(t, _)| t.parse::<usize>().ok())
+    else {
         return;
     };
     for i in 1..total {
@@ -215,7 +218,9 @@ pub fn read_auth_from_keychain(account_id: &str) -> Result<AuthJson, String> {
                 .map_err(|e| format!("读取凭证失败: {}", e))?;
             let body = raw
                 .strip_prefix(CHUNK_PREFIX)
-                .and_then(|m| m.split_once('|').map(|(_, body)| body))
+                .and_then(|m| m.split_once('|'))
+                .and_then(|(_, rest)| rest.split_once('|'))
+                .map(|(_, body)| body)
                 .ok_or_else(|| "分块凭据格式损坏".to_string())?;
             out.push_str(body);
         }
@@ -382,31 +387,54 @@ mod tests {
 mod windows_tests {
     use super::*;
 
-    #[test]
-    #[ignore]
-    fn probe_keyring_len_limits() {
-        for n in [1000usize, 1280, 2000, 2073, 2560, 3000] {
-            let auth = crate::codex::types::AuthJson {
-                openai_api_key: None,
-                last_refresh: None,
-                tokens: crate::codex::types::Tokens {
-                    access_token: "a".repeat(n),
-                    refresh_token: "r".repeat(20),
-                    id_token: String::new(),
-                    account_id: "probe-account".into(),
-                },
-            };
-            let json = serde_json::to_string(&auth).unwrap();
-            let key = format!("codex_probe_{}_{}", n, uuid::Uuid::new_v4());
-            let entry = keyring::Entry::new(crate::crypto::SERVICE_NAME, &key).unwrap();
-            let result = entry.set_password(&json);
-            let outcome = match &result {
-                Ok(_) => "OK".to_string(),
-                Err(e) => e.to_string(),
-            };
-            eprintln!("probe n={} json_len={} -> {}", n, json.len(), outcome);
-            let _ = entry.delete_password();
+    fn make_auth(access_len: usize) -> AuthJson {
+        crate::codex::types::AuthJson {
+            openai_api_key: None,
+            last_refresh: Some("2026-01-01T00:00:00Z".into()),
+            tokens: crate::codex::types::Tokens {
+                access_token: "a".repeat(access_len),
+                refresh_token: "r".repeat(211),
+                id_token: "i".repeat(1766),
+                account_id: "win-chunk-test-account".into(),
+            },
         }
-        panic!("probe done (see stderr)");
+    }
+
+    #[test]
+    fn chunked_roundtrip_long_and_short() {
+        for access_len in [1800usize, 5] {
+            let account_id = format!("chunk-test-{access_len}");
+            let auth = make_auth(access_len);
+            store_auth_to_keychain(&account_id, &auth).unwrap();
+            let read = read_auth_from_keychain(&account_id).unwrap();
+            assert_eq!(read.tokens.access_token, auth.tokens.access_token);
+            assert_eq!(read.tokens.refresh_token, auth.tokens.refresh_token);
+            assert_eq!(read.tokens.account_id, auth.tokens.account_id);
+            // id_token 被剔除
+            assert_eq!(read.tokens.id_token, "");
+            delete_auth_from_keychain(&account_id).unwrap();
+            assert!(read_auth_from_keychain(&account_id).is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_single_entry_still_readable() {
+        let account_id = "legacy-read-test";
+        let key = keychain_key(account_id);
+        // 老数据：单条目、无 C1| 前缀、JSON 本身不超单条上限（id_token 短）
+        let mut auth = make_auth(20);
+        auth.tokens.id_token = "i".repeat(20);
+        let json = serde_json::to_string(&auth).unwrap();
+        assert!(json.len() <= 1280, "fixture too large: {}", json.len());
+        keyring::Entry::new(crate::crypto::SERVICE_NAME, &key)
+            .unwrap()
+            .set_password(&json)
+            .unwrap();
+        // 老格式：无 C1| 前缀 → 原样解析
+        let read = read_auth_from_keychain(account_id).unwrap();
+        assert_eq!(read.tokens.access_token, "a".repeat(20));
+        assert_eq!(read.tokens.id_token, "i".repeat(20));
+        delete_auth_from_keychain(account_id).unwrap();
+        assert!(read_auth_from_keychain(account_id).is_err());
     }
 }
