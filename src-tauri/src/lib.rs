@@ -1372,7 +1372,7 @@ fn run_codex_auto_sync(app: &tauri::AppHandle) {
                         // 内容变化（或首次）→ 解密应用
                         log_auto_sync("content changed (or first run), applying...");
                         match tauri::async_runtime::block_on(commands::codex::apply_codex_auth(
-                            &enc, &db,
+                            &enc, &db, false,
                         )) {
                             Ok(()) => {
                                 log_auto_sync("applied successfully");

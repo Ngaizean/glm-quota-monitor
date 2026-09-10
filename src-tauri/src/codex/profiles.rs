@@ -431,21 +431,27 @@ pub fn receive(db: &Database, bundle: &Bundle) -> Result<(), String> {
     Ok(())
 }
 
-/// 批量接收云端分发的账号：全部入库为 synced_* 账号；
-/// 本机当前账号在批次中时重新应用它（刷新凭据），否则不打扰本机现有配置，
-/// 由用户在账号列表里手动选择要应用的账号。
-pub fn receive_many(db: &Database, bundles: &[Bundle]) -> Result<usize, String> {
+/// 批量接收云端分发的账号：全部入库为 synced_* 账号。
+/// force_apply=true（用户手动点"接收并应用到本机"）：本机账号在批次中→刷新它；
+/// 否则自动应用批次中第一个官方账号（与按钮文案一致）。
+/// force_apply=false（后台 auto-sync）：仅当本机账号在批次中时刷新它，
+/// 不打扰用户已手动切换到的其他账号。
+pub fn receive_many(db: &Database, bundles: &[Bundle], force_apply: bool) -> Result<usize, String> {
     let _guard = DISTRIBUTION_LOCK.lock().map_err(|e| e.to_string())?;
-    let mut applied: Option<Bundle> = None;
+    let mut received_list = Vec::with_capacity(bundles.len());
     for bundle in bundles {
-        let received = receive_store(db, bundle)?;
-        if setting(db, "codex_local_account").as_deref() == Some(received.profile.account_id.as_str())
-        {
-            applied = Some(received);
-        }
+        received_list.push(receive_store(db, bundle)?);
     }
-    if let Some(received) = applied {
-        apply_local_unlocked(db, &received)?;
+    let current = setting(db, "codex_local_account");
+    if let Some(received) = received_list
+        .iter()
+        .find(|r| current.as_deref() == Some(r.profile.account_id.as_str()))
+    {
+        apply_local_unlocked(db, received)?;
+    } else if force_apply {
+        if let Some(first_official) = received_list.iter().find(|r| r.profile.kind == "official") {
+            apply_local_unlocked(db, first_official)?;
+        }
     }
     Ok(bundles.len())
 }

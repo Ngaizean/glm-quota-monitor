@@ -840,7 +840,13 @@ struct MultiAccountPayload {
 
 /// 解密并应用 codex 鉴权：写本机 ~/.codex/auth.json + 更新已导入账号 Keychain + 记录同步时间
 /// v2 批量格式一次落地全部分发账号（旧版单 Bundle 与纯 AuthJson 均保持兼容）
-pub async fn apply_codex_auth(encrypted: &str, db: &Database) -> Result<(), String> {
+/// force_apply=true 由用户手动"接收并应用"触发：v2 批次无本机账号时自动应用首个官方账号；
+/// force_apply=false 由后台 auto-sync 触发：不打扰用户手动切换的账号。
+pub async fn apply_codex_auth(
+    encrypted: &str,
+    db: &Database,
+    force_apply: bool,
+) -> Result<(), String> {
     // 解密
     let json = codex::crypto::decrypt(encrypted)?;
     let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
@@ -848,7 +854,7 @@ pub async fn apply_codex_auth(encrypted: &str, db: &Database) -> Result<(), Stri
         Some(2) => {
             let batch: MultiAccountPayload =
                 serde_json::from_value(value).map_err(|e| e.to_string())?;
-            codex::profiles::receive_many(db, &batch.accounts)?;
+            codex::profiles::receive_many(db, &batch.accounts, force_apply)?;
             codex::profiles::set_setting(db, "codex_last_sync", &Utc::now().to_rfc3339())?;
             return Ok(());
         }
@@ -909,7 +915,7 @@ pub async fn apply_codex_auth(encrypted: &str, db: &Database) -> Result<(), Stri
 #[tauri::command]
 pub async fn sync_codex_auth(app: tauri::AppHandle, db: State<'_, Database>) -> Result<(), String> {
     let encrypted = fetch_codex_gist_encrypted(&db).await?;
-    apply_codex_auth(&encrypted, &db).await?;
+    apply_codex_auth(&encrypted, &db, true).await?;
     let _ = app.emit("accounts-changed", ());
     Ok(())
 }
@@ -1280,4 +1286,48 @@ pub async fn repair_codex_sessions(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod windows_forced_receive_verify {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[test]
+    fn forced_receive_writes_real_auth_file_from_gist() {
+        let enc = std::fs::read_to_string(
+            r"C:\Users\lx\AppData\Local\Temp\opencode\gist_enc.txt",
+        )
+        .unwrap();
+        let db = Database {
+            conn: Mutex::new(rusqlite::Connection::open_in_memory().unwrap()),
+        };
+        db.conn
+            .lock()
+            .unwrap()
+            .execute_batch("PRAGMA foreign_keys=ON")
+            .unwrap();
+        db.init_tables().unwrap();
+        let json = codex::crypto::decrypt(&enc).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let batch: MultiAccountPayload = serde_json::from_value(value).unwrap();
+        codex::profiles::receive_many(&db, &batch.accounts, true).unwrap();
+        let p = codex::auth::auth_json_path().unwrap();
+        let s = std::fs::read_to_string(&p).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        let access_len = v["tokens"]["access_token"]
+            .as_str()
+            .map(|s| s.len())
+            .unwrap_or(0);
+        let local = codex::profiles::setting(&db, "codex_local_account");
+        eprintln!(
+            "AUTH_JSON size={} access_len={} local_account={:?}",
+            s.len(),
+            access_len,
+            local
+        );
+        assert!(s.len() > 1500, "auth.json 未被真实凭据覆盖: size={}", s.len());
+        assert!(access_len > 1000, "access_token 缺失: len={}", access_len);
+        assert!(local.as_deref().unwrap_or("").starts_with("synced_"));
+    }
 }
