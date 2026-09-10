@@ -59,7 +59,35 @@ fn select_sync_file(files: &HashMap<String, GistFile>) -> Result<&GistFile, Stri
 }
 
 /// 从 Gist ID 解析出同步文件的 raw_url
-/// 需要 GitHub token（私密 gist REST API 需要认证）
+/// gist 是 unlisted，匿名也能访问单个 gist（不需要认证）
+async fn get_gist(
+    http: &reqwest::Client,
+    url: &str,
+    github_token: &str,
+) -> Result<reqwest::Response, String> {
+    let mut headers = HeaderMap::new();
+    headers.insert(USER_AGENT, HeaderValue::from_static("glm-quota-monitor"));
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github+json"),
+    );
+    // Token 可选：有 token 时携带（提升 GitHub API 速率限制），为空时匿名请求
+    if !github_token.is_empty() {
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", github_token))
+                .map_err(|_| "无效的 GitHub Token".to_string())?,
+        );
+    }
+    http.get(url)
+        .headers(headers)
+        .send()
+        .await
+        .map_err(|e| format!("查询 Gist 失败: {}", e))
+}
+
+/// 从 Gist ID 解析出同步文件的 raw_url
+/// gist 是 unlisted，有 token 可提升速率限制，403 时回退匿名访问
 pub async fn resolve_gist_raw_url(
     http: &reqwest::Client,
     gist_url_or_id: &str,
@@ -68,34 +96,21 @@ pub async fn resolve_gist_raw_url(
     let gist_id = extract_gist_id(gist_url_or_id)?;
     let url = format!("https://api.github.com/gists/{}", gist_id);
 
-    let mut headers = HeaderMap::new();
-    headers.insert(USER_AGENT, HeaderValue::from_static("glm-quota-monitor"));
-    headers.insert(
-        ACCEPT,
-        HeaderValue::from_static("application/vnd.github+json"),
-    );
-    // Token 可选：gist 是 unlisted，匿名也能访问单个 gist；
-    // 有 token 时携带（提升 GitHub API 速率限制），为空时匿名请求
-    if !github_token.is_empty() {
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", github_token))
-                .map_err(|_| "无效的 GitHub Token".to_string())?,
-        );
+    let token = github_token.trim();
+    let mut resp = get_gist(http, &url, token).await?;
+    // token 无 gist 权限时 GitHub 返回 403；gist 是 unlisted，
+    // 回退匿名请求仍可访问，避免消费者因存了无关 token 而下载失败
+    if !token.is_empty() && resp.status() == reqwest::StatusCode::FORBIDDEN {
+        resp = get_gist(http, &url, "").await?;
     }
 
-    let resp = http
-        .get(&url)
-        .headers(headers)
-        .send()
-        .await
-        .map_err(|e| format!("查询 Gist 失败: {}", e))?;
-
     if !resp.status().is_success() {
-        return Err(format!(
-            "Gist API 返回 HTTP {}：请检查 Token 是否有 gist 权限",
-            resp.status()
-        ));
+        let hint = if token.is_empty() {
+            "请检查 Gist URL 是否正确，或 gist 是否已删除".to_string()
+        } else {
+            "请检查 Token 是否有 gist 权限，或 Gist URL 是否正确".to_string()
+        };
+        return Err(format!("Gist API 返回 HTTP {}：{hint}", resp.status()));
     }
 
     let gist: Gist = resp
