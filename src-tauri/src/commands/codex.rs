@@ -770,9 +770,16 @@ pub async fn upload_codex_auth(db: State<'_, Database>) -> Result<(), String> {
     let gist_url = read_setting(&db, GIST_URL_KEY).ok_or("未配置 Gist URL，请在设置中填写")?;
     let github_token = read_github_token(&db).ok_or("未配置 GitHub Token，请在设置中填写")?;
 
-    // 4. 推送
+    // 4. 推送（先走代理；代理屏蔽 api.github.com 时退回直连）
     let proxy = crate::proxy_http_client();
-    codex::sync::push_to_gist(&proxy, &gist_url, &github_token, &encrypted).await?;
+    match codex::sync::push_to_gist(&proxy, &gist_url, &github_token, &encrypted).await {
+        Ok(()) => {}
+        Err(e1) => {
+            let _ = codex::sync::push_to_gist(&crate::HTTP_CLIENT, &gist_url, &github_token, &encrypted)
+                .await
+                .map_err(|e2| format!("{e1}\n直连重试也失败: {e2}"))?;
+        }
+    }
 
     // 5. 记录上传时间
     {
@@ -805,7 +812,13 @@ pub async fn fetch_codex_gist_encrypted(db: &Database) -> Result<String, String>
         // consumer 角色无 token 字段，但 gist 是 unlisted，匿名 resolve 也能工作；
         // 有 token 时携带，提升 GitHub API 速率限制
         let token = read_github_token(db).unwrap_or_default();
-        let raw_url = codex::sync::resolve_gist_raw_url(&proxy, &gist_url, &token).await?;
+        // 先走代理；代理可能屏蔽/拦截 api.github.com（Clash 类返回 403），失败退回直连
+        let raw_url = match codex::sync::resolve_gist_raw_url(&proxy, &gist_url, &token).await {
+            Ok(url) => url,
+            Err(e1) => codex::sync::resolve_gist_raw_url(&crate::HTTP_CLIENT, &gist_url, &token)
+                .await
+                .map_err(|e2| format!("{e1}\n直连重试也失败: {e2}"))?,
+        };
         codex::sync::fetch_from_gist(&proxy, &raw_url).await
     }
 }
