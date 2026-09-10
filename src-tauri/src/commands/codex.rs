@@ -294,6 +294,8 @@ pub async fn login_codex_official(
                     is_primary: row.get::<_, i32>(6)? == 1,
                     created_at: row.get(7)?,
                     updated_at: row.get(8)?,
+                    token_expires_at: None,
+                    token_expired: false,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -569,6 +571,8 @@ fn store_codex_account(
         is_primary,
         created_at: now.clone(),
         updated_at: now,
+        token_expires_at: None,
+        token_expired: false,
     })
 }
 

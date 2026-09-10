@@ -84,36 +84,40 @@ pub fn add_account(
         is_primary,
         created_at: now.clone(),
         updated_at: now,
+        token_expires_at: None,
+        token_expired: false,
     })
 }
 
 #[tauri::command]
 pub fn list_accounts(db: State<'_, Database>) -> Result<Vec<Account>, String> {
     // 先释放 conn 锁：后续为 codex 账号读 Keychain 补充令牌过期信息会调用 bundle（需锁 DB）
-    let accounts = {
+    let accounts: Vec<Account> = {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let mut stmt = conn
             .prepare("SELECT id, alias, purpose, platform, level, is_active, is_primary, created_at, updated_at FROM accounts WHERE is_active = 1")
             .map_err(|e| e.to_string())?;
 
-        stmt.query_map([], |row| {
-            Ok(Account {
-                id: row.get(0)?,
-                alias: row.get(1)?,
-                purpose: row.get(2)?,
-                platform: row.get(3)?,
-                level: row.get(4)?,
-                is_active: row.get::<_, i32>(5)? == 1,
-                is_primary: row.get::<_, i32>(6)? == 1,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
-                token_expires_at: None,
-                token_expired: false,
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(Account {
+                    id: row.get(0)?,
+                    alias: row.get(1)?,
+                    purpose: row.get(2)?,
+                    platform: row.get(3)?,
+                    level: row.get(4)?,
+                    is_active: row.get::<_, i32>(5)? == 1,
+                    is_primary: row.get::<_, i32>(6)? == 1,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                    token_expires_at: None,
+                    token_expired: false,
+                })
             })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|a| a.ok())
-        .collect()
+            .map_err(|e| e.to_string())?
+            .filter_map(|a| a.ok())
+            .collect::<Vec<Account>>();
+        rows
     };
 
     let accounts = accounts

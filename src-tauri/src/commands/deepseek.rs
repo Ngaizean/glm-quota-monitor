@@ -150,6 +150,8 @@ pub fn add_deepseek_account(
         is_primary,
         created_at: now.clone(),
         updated_at: now,
+        token_expires_at: None,
+        token_expired: false,
     })
 }
 
