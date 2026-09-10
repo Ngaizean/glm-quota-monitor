@@ -98,9 +98,11 @@ pub async fn resolve_gist_raw_url(
 
     let token = github_token.trim();
     let mut resp = get_gist(http, &url, token).await?;
-    // token 无 gist 权限时 GitHub 返回 403；gist 是 unlisted，
+    // token 无效（401）或无 gist 权限（403）时；gist 是 unlisted，
     // 回退匿名请求仍可访问，避免消费者因存了无关 token 而下载失败
-    if !token.is_empty() && resp.status() == reqwest::StatusCode::FORBIDDEN {
+    let token_failed = resp.status() == reqwest::StatusCode::UNAUTHORIZED
+        || resp.status() == reqwest::StatusCode::FORBIDDEN;
+    if !token.is_empty() && token_failed {
         resp = get_gist(http, &url, "").await?;
     }
 
