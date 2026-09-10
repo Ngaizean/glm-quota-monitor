@@ -7,6 +7,10 @@ export interface Account {
   level: string | null;
   is_active: boolean;
   is_primary: boolean;
+  /** codex 官方账号 access_token 过期时间（RFC3339）；relay/无有效期令牌为 null */
+  token_expires_at?: string | null;
+  /** access_token 已过期 */
+  token_expired?: boolean;
 }
 
 export type QuotaLimitType =

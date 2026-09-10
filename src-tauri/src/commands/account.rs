@@ -89,13 +89,14 @@ pub fn add_account(
 
 #[tauri::command]
 pub fn list_accounts(db: State<'_, Database>) -> Result<Vec<Account>, String> {
-    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
-    let mut stmt = conn
-        .prepare("SELECT id, alias, purpose, platform, level, is_active, is_primary, created_at, updated_at FROM accounts WHERE is_active = 1")
-        .map_err(|e| e.to_string())?;
+    // 先释放 conn 锁：后续为 codex 账号读 Keychain 补充令牌过期信息会调用 bundle（需锁 DB）
+    let accounts = {
+        let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
+        let mut stmt = conn
+            .prepare("SELECT id, alias, purpose, platform, level, is_active, is_primary, created_at, updated_at FROM accounts WHERE is_active = 1")
+            .map_err(|e| e.to_string())?;
 
-    let accounts = stmt
-        .query_map([], |row| {
+        stmt.query_map([], |row| {
             Ok(Account {
                 id: row.get(0)?,
                 alias: row.get(1)?,
@@ -106,10 +107,34 @@ pub fn list_accounts(db: State<'_, Database>) -> Result<Vec<Account>, String> {
                 is_primary: row.get::<_, i32>(6)? == 1,
                 created_at: row.get(7)?,
                 updated_at: row.get(8)?,
+                token_expires_at: None,
+                token_expired: false,
             })
         })
         .map_err(|e| e.to_string())?
         .filter_map(|a| a.ok())
+        .collect()
+    };
+
+    let accounts = accounts
+        .into_iter()
+        .map(|mut account| {
+            if account.platform == "codex" && !account.id.is_empty() {
+                if let Ok(bundle) = crate::codex::profiles::bundle(&db, &account.id) {
+                    if let Some(auth) = bundle.auth {
+                        if let Some(exp) = auth.access_token_exp_iso() {
+                            account.token_expires_at = Some(exp);
+                            account.token_expired = chrono::DateTime::parse_from_rfc3339(
+                                account.token_expires_at.as_deref().unwrap_or(""),
+                            )
+                            .map(|dt| dt.with_timezone(&chrono::Utc) <= chrono::Utc::now())
+                            .unwrap_or(false);
+                        }
+                    }
+                }
+            }
+            account
+        })
         .collect();
 
     Ok(accounts)

@@ -12,6 +12,11 @@ pub struct Account {
     pub created_at: String,
     pub updated_at: String,
     // api_key 不序列化到前端，仅在内部使用
+    // codex 官方账号 access_token 过期时间（RFC3339），无有效期令牌（如 relay/apikey）时为 None
+    #[serde(default)]
+    pub token_expires_at: Option<String>,
+    #[serde(default)]
+    pub token_expired: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

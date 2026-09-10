@@ -15,6 +15,36 @@ import {
 import { useDistribution } from "./useDistribution";
 import type { CodexProfile } from "./types";
 import type { AccountsController } from "../accounts/useAccountsController";
+import type { TFunction } from "i18next";
+
+const DAY_MS = 86_400_000;
+
+function TokenExpiryBadge({
+  expiresAt,
+  expired,
+  t,
+}: {
+  expiresAt: string;
+  expired: boolean;
+  t: TFunction;
+}) {
+  if (expired) {
+    return (
+      <span className="rounded-md bg-[var(--color-danger)]/10 px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-danger)]">
+        {t("distribution.tokenExpired")}
+      </span>
+    );
+  }
+  const remaining = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / DAY_MS);
+  const label = remaining <= 0
+    ? t("distribution.tokenExpiresToday")
+    : t("distribution.tokenDaysLeft", { count: remaining });
+  return (
+    <span className="rounded-md bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-text-tertiary)]">
+      {label}
+    </span>
+  );
+}
 
 const newRelay = (): CodexProfile => ({
   account_id: "",
@@ -182,6 +212,13 @@ export function AccountProfiles({
                     <span className="rounded-md bg-[var(--color-accent-subtle)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-accent)]">
                       {t("distribution.localActive")}
                     </span>
+                  )}
+                  {account?.token_expires_at && profile.kind === "official" && (
+                    <TokenExpiryBadge
+                      expiresAt={account.token_expires_at}
+                      expired={account.token_expired ?? false}
+                      t={t}
+                    />
                   )}
                 </h3>
                 <p className="mt-0.5 truncate text-xs text-[var(--color-text-tertiary)]">
