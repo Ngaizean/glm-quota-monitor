@@ -110,44 +110,126 @@ pub fn keychain_key(account_id: &str) -> String {
     format!("codex_{}", account_id)
 }
 
-/// Windows 凭据管理器单条 blob 上限（CRED_MAX_CREDENTIAL_BLOB_SIZE = 5 * 512 字节）
-const MAX_KEYCHAIN_PASSWORD_LEN: usize = 2560;
+/// Windows 凭据管理器每条目 blob 上限 2560 字节，keyring 以 UTF-16 编码存储，
+/// 导致单条目实际最多约 1280 个 ASCII 字符（错误信息里的 "2560 chars" 是误导）。
+/// Codex 的 access_token 一个 JWT 就有 ~1800 字符，完整 AuthJson 必超限，
+/// 因此超长凭据按块拆分到多个 Keychain 条目（`codex_<id>` + `codex_<id>__<i>`），
+/// 读取时自动拼接；老格式（单条目全文）无缝兼容。
+const CHUNK_PREFIX: &str = "C1|";
+/// 单块字节预算（UTF-8），留足前缀与 UTF-16 编码裕量
+const CHUNK_SIZE: usize = 700;
 
-/// 将 auth.json 序列化为字符串存入 Keychain（复用现有 keyring 机制）
-/// Windows 凭据管理器单条上限 2560 字节；存储前剔除 id_token——
-/// 单个 id_token JWT 可达 ~2000 字符，且全代码库无人读取它做认证，
-/// 保留会导致分发账号（access+refresh+id 合计 ~3900 字符）写入失败。
+fn chunks_of(json: &str) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut rest = json;
+    while !rest.is_empty() {
+        let mut end = rest.len().min(CHUNK_SIZE);
+        while end > 0 && !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        chunks.push(&rest[..end]);
+        rest = &rest[end..];
+    }
+    chunks
+}
+
+fn chunk_entry_key(key: &str, index: usize) -> String {
+    if index == 0 {
+        key.to_string()
+    } else {
+        format!("{key}__{index}")
+    }
+}
+
+/// 删除旧分块条目（依据主条目里的总块数）
+fn delete_chunked_entries(key: &str) {
+    let Ok(base) = keyring::Entry::new(crate::crypto::SERVICE_NAME, key) else {
+        return;
+    };
+    let Ok(raw) = base.get_password() else {
+        return;
+    };
+    let Some(meta) = raw.strip_prefix(CHUNK_PREFIX) else {
+        return;
+    };
+    let Ok(total) = meta.split_once('|').map(|(t, _)| t.parse::<usize>()) else {
+        return;
+    };
+    for i in 1..total {
+        let _ = keyring::Entry::new(crate::crypto::SERVICE_NAME, &chunk_entry_key(key, i))
+            .and_then(|e| e.delete_password());
+    }
+}
+
+/// 将 auth.json 序列化为字符串存入 Keychain（分块兼容 Windows 上限）
+/// 存储前剔除 id_token（单个 JWT ~1800 字符、全代码库无人读取它做认证）。
 pub fn store_auth_to_keychain(account_id: &str, auth: &AuthJson) -> Result<(), String> {
     let key = keychain_key(account_id);
     let mut slim = auth.clone();
     slim.tokens.id_token = String::new();
     let json = serde_json::to_string(&slim).map_err(|e| format!("序列化失败: {}", e))?;
-    if json.len() > MAX_KEYCHAIN_PASSWORD_LEN {
-        return Err(format!(
-            "凭据过长（{} 字符），超出平台安全存储上限 {MAX_KEYCHAIN_PASSWORD_LEN} 字符",
-            json.len()
-        ));
+    if json.is_empty() {
+        return Err("空凭据，无法存储".to_string());
     }
-    keyring::Entry::new(crate::crypto::SERVICE_NAME, &key)
-        .map_err(|e| format!("Keychain 错误: {}", e))?
-        .set_password(&json)
-        .map_err(|e| format!("存储凭证失败: {}", e))?;
+
+    let chunks = chunks_of(&json);
+    // 先清理旧条目，避免残留分块在新读取时被错误拼接
+    delete_chunked_entries(&key);
+    let _ = keyring::Entry::new(crate::crypto::SERVICE_NAME, &key)
+        .and_then(|e| e.delete_password());
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        let payload = if chunks.len() == 1 {
+            (*chunk).to_string()
+        } else {
+            format!("{CHUNK_PREFIX}{}|{}|{}", chunks.len(), i, chunk)
+        };
+        keyring::Entry::new(crate::crypto::SERVICE_NAME, &chunk_entry_key(&key, i))
+            .map_err(|e| format!("Keychain 错误: {}", e))?
+            .set_password(&payload)
+            .map_err(|e| format!("存储凭证失败: {}", e))?;
+    }
     Ok(())
 }
 
-/// 从 Keychain 读取 auth.json
+/// 从 Keychain 读取 auth.json（支持分块自动拼接与老格式兼容）
 pub fn read_auth_from_keychain(account_id: &str) -> Result<AuthJson, String> {
     let key = keychain_key(account_id);
-    let json = keyring::Entry::new(crate::crypto::SERVICE_NAME, &key)
-        .map_err(|e| format!("Keychain 错误: {}", e))?
+    let base = keyring::Entry::new(crate::crypto::SERVICE_NAME, &key)
+        .map_err(|e| format!("Keychain 错误: {}", e))?;
+    let raw = base
         .get_password()
         .map_err(|e| format!("读取凭证失败: {}", e))?;
-    serde_json::from_str(&json).map_err(|e| format!("解析凭证失败: {}", e))
+
+    let mut out = String::new();
+    if let Some(meta) = raw.strip_prefix(CHUNK_PREFIX) {
+        let total = meta
+            .split_once('|')
+            .and_then(|(t, _)| t.parse::<usize>().ok())
+            .ok_or_else(|| "分块凭据格式损坏".to_string())?;
+        for i in 0..total {
+            let entry = keyring::Entry::new(crate::crypto::SERVICE_NAME, &chunk_entry_key(&key, i))
+                .map_err(|e| format!("Keychain 错误: {}", e))?;
+            let raw = entry
+                .get_password()
+                .map_err(|e| format!("读取凭证失败: {}", e))?;
+            let body = raw
+                .strip_prefix(CHUNK_PREFIX)
+                .and_then(|m| m.split_once('|').map(|(_, body)| body))
+                .ok_or_else(|| "分块凭据格式损坏".to_string())?;
+            out.push_str(body);
+        }
+    } else {
+        out = raw;
+    }
+
+    serde_json::from_str(&out).map_err(|e| format!("解析凭证失败: {}", e))
 }
 
-/// 删除 Keychain 中的 Codex 凭证
+/// 删除 Keychain 中的 Codex 凭证（含分块条目）
 pub fn delete_auth_from_keychain(account_id: &str) -> Result<(), String> {
     let key = keychain_key(account_id);
+    delete_chunked_entries(&key);
     keyring::Entry::new(crate::crypto::SERVICE_NAME, &key)
         .map_err(|e| format!("Keychain 错误: {}", e))?
         .delete_password()
@@ -318,12 +400,11 @@ mod windows_tests {
             let key = format!("codex_probe_{}_{}", n, uuid::Uuid::new_v4());
             let entry = keyring::Entry::new(crate::crypto::SERVICE_NAME, &key).unwrap();
             let result = entry.set_password(&json);
-            eprintln!(
-                "probe n={} json_len={} -> {}",
-                n,
-                json.len(),
-                result.map(|_| "OK".to_string()).map_err(|e| e.to_string())
-            );
+            let outcome = match &result {
+                Ok(_) => "OK".to_string(),
+                Err(e) => e.to_string(),
+            };
+            eprintln!("probe n={} json_len={} -> {}", n, json.len(), outcome);
             let _ = entry.delete_password();
         }
         panic!("probe done (see stderr)");
