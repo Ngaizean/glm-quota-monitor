@@ -817,7 +817,13 @@ pub async fn fetch_codex_gist_encrypted(db: &Database) -> Result<String, String>
     // 都以 githubusercontent.com 结尾；匹配后者才能命中（"gistusercontent.com"
     // 不是其子串，旧写法导致 raw URL 也走 API 分支）
     if gist_url.contains("githubusercontent.com") {
-        codex::sync::fetch_from_gist(&proxy, &gist_url).await
+        // 先走代理；代理可能屏蔽/拦截 gist，失败退回直连
+        match codex::sync::fetch_from_gist(&proxy, &gist_url).await {
+            Ok(v) => Ok(v),
+            Err(e1) => codex::sync::fetch_from_gist(&crate::HTTP_CLIENT, &gist_url)
+                .await
+                .map_err(|e2| format!("{e1}\n直连重试也失败: {e2}")),
+        }
     } else {
         // 网页 URL / API URL → resolve 出 raw URL
         // consumer 角色无 token 字段，但 gist 是 unlisted，匿名 resolve 也能工作；
@@ -830,7 +836,12 @@ pub async fn fetch_codex_gist_encrypted(db: &Database) -> Result<String, String>
                 .await
                 .map_err(|e2| format!("{e1}\n直连重试也失败: {e2}"))?,
         };
-        codex::sync::fetch_from_gist(&proxy, &raw_url).await
+        match codex::sync::fetch_from_gist(&proxy, &raw_url).await {
+            Ok(v) => Ok(v),
+            Err(e1) => codex::sync::fetch_from_gist(&crate::HTTP_CLIENT, &raw_url)
+                .await
+                .map_err(|e2| format!("{e1}\n直连重试也失败: {e2}")),
+        }
     }
 }
 
