@@ -49,4 +49,17 @@ export interface RemoteBindingRequest {
   host: string;
 }
 
+export type CodexReadinessStatus = "ready" | "refreshed" | "needs_relogin";
+
+export interface CodexReadinessReport {
+  status: CodexReadinessStatus;
+  account_id: string | null;
+  message: string | null;
+}
+
+export interface ReloginRequest {
+  accountId: string;
+  reason: string;
+}
+
 export type { Account, RemoteCcState };

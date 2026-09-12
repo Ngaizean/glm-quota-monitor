@@ -279,6 +279,22 @@ pub fn refresh_access_token(http: &reqwest::Client, auth: &AuthJson) -> Result<A
         tauri::async_runtime::block_on(resp.text()).map_err(|e| format!("读取响应失败: {}", e))?;
 
     if !status.is_success() {
+        // refresh_token 是轮转的：一旦被其他设备/工具消费过（refresh_token_reused），
+        // 本地存档就永久失效，无法自愈，只能重新登录或重新导入。
+        let error_code = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| {
+                v.get("error")
+                    .and_then(|e| e.get("code"))
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_default();
+        if error_code == "refresh_token_reused" {
+            return Err(format!(
+                "刷新失败: refresh_token_reused（Refresh Token 已被其他设备使用，请重新登录或重新导入该账号）"
+            ));
+        }
         return Err(format!(
             "刷新失败 HTTP {}: {}",
             status,
@@ -342,6 +358,24 @@ pub fn refresh_and_store(
     let new_auth = refresh_access_token(http, auth)?;
     store_auth_to_keychain(account_id, &new_auth)?;
     Ok(new_auth)
+}
+
+/// 刷新某账号成功后调用：若该账号恰好是本机 `auth.json` 的当前档案，则同步写回。
+/// refresh_token 是轮转的，本机滞留旧 token 时 CLI 的下一次刷新会把
+/// Keychain 新档顶成 reused；同步后三方（本机/Keychain/服务端）保持单一轮转链。
+pub fn sync_refreshed_auth_to_local(new_auth: &AuthJson) {
+    let matches = read_local_auth_json()
+        .map(|local| {
+            !local.tokens.account_id.is_empty()
+                && local.tokens.account_id == new_auth.tokens.account_id
+        })
+        .unwrap_or(false);
+    if !matches {
+        return;
+    }
+    if let Err(error) = write_local_auth_json(new_auth) {
+        eprintln!("同步本机 auth.json 失败: {error}");
+    }
 }
 
 pub fn refresh_and_store_with_fallback(

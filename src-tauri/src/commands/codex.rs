@@ -1,6 +1,5 @@
 use crate::api::types::QuotaData;
 use crate::codex;
-use crate::codex::usage_to_quota_data;
 use crate::db::models::Account;
 use crate::db::Database;
 use chrono::Utc;
@@ -149,6 +148,12 @@ pub fn switch_codex_runtime(
     match mode.as_str() {
         "official" => {
             if let Some(id) = account_id.as_deref() {
+                // 切走前先把本机档案里可能的新 token 收编进账号库：
+                // 本机 auth.json 可能刚被 CLI 刷新过而未回填，直接覆盖会丢新 token，
+                // 下轮刷新旧档就会把新 token 顶成 reused。
+                if let Ok(current) = codex::auth::read_local_auth_json() {
+                    let _ = codex::profiles::sync_auth_to_cloud(&db, &current);
+                }
                 let auth = codex::auth::read_auth_from_keychain(id)?;
                 codex::auth::write_local_auth_json(&auth)?;
                 write_setting(&db, CODEX_ACTIVE_OFFICIAL_ACCOUNT_KEY, id)?;
@@ -255,15 +260,244 @@ fn run_official_login() -> Result<codex::types::AuthJson, String> {
     result
 }
 
+/// 刷新失败的性质：凭据被服务端作废（需重登） vs 临时性失败（可重试）。
+enum RefreshFailure {
+    NeedsRelogin,
+    Transient,
+}
+
+/// 按 refresh_access_token 的错误文案分类。
+/// "刷新请求失败:" 是网络层错误（代理+直连都失败），重试即可；
+/// "refresh_token_reused"/"invalid_grant"/HTTP 4xx 是服务端明确拒绝凭据，只能重登。
+fn classify_refresh_error(error: &str) -> RefreshFailure {
+    if error.starts_with("刷新请求失败:") {
+        return RefreshFailure::Transient;
+    }
+    if error.contains("refresh_token_reused")
+        || error.contains("invalid_grant")
+        || error.contains("HTTP 40")
+    {
+        RefreshFailure::NeedsRelogin
+    } else {
+        RefreshFailure::Transient
+    }
+}
+
+/// 切换官方前的凭据体检报告。
+#[derive(Debug, Serialize)]
+pub struct CodexAccountReadinessReport {
+    /// "ready"：凭据可直接使用；"refreshed"：已静默刷新为可用；"needs_relogin"：凭据已作废，需浏览器重登。
+    pub status: String,
+    /// needs_relogin 时前端应对该账号调用 relogin_codex_account。
+    pub account_id: Option<String>,
+    /// 失败或需重登的说明。
+    pub message: Option<String>,
+}
+
+fn readiness_ready(account_id: Option<String>) -> CodexAccountReadinessReport {
+    CodexAccountReadinessReport { status: "ready".into(), account_id, message: None }
+}
+
+fn readiness_relogin(account_id: String, message: String) -> CodexAccountReadinessReport {
+    CodexAccountReadinessReport {
+        status: "needs_relogin".into(),
+        account_id: Some(account_id),
+        message: Some(message),
+    }
+}
+
+fn codex_account_ids(db: &Database) -> Result<Vec<String>, String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {e}"))?;
+    let mut stmt = conn
+        .prepare("SELECT id FROM accounts WHERE platform = 'codex' AND is_active = 1")
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    Ok(ids)
+}
+
+/// 查回单个账号（不含令牌过期信息，重登后的即时返回用）。
+fn load_codex_account(db: &Database, id: &str) -> Result<Account, String> {
+    let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {e}"))?;
+    conn.query_row(
+        "SELECT id, alias, purpose, platform, level, is_active, is_primary, created_at, updated_at
+         FROM accounts WHERE id = ?1",
+        rusqlite::params![id],
+        |row| {
+            Ok(Account {
+                id: row.get(0)?,
+                alias: row.get(1)?,
+                purpose: row.get(2)?,
+                platform: row.get(3)?,
+                level: row.get(4)?,
+                is_active: row.get::<_, i32>(5)? == 1,
+                is_primary: row.get::<_, i32>(6)? == 1,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                token_expires_at: None,
+                token_expired: false,
+            })
+        },
+    )
+    .map_err(|e| format!("读取账号失败: {e}"))
+}
+
+/// 切换官方前的凭据体检：临期先静默刷新，凭据被服务端作废时返回 needs_relogin 而非报错，
+/// 由前端引导浏览器重登后再继续切换。account_id 缺省时按本机 auth.json 解析目标账号。
+#[tauri::command]
+pub async fn ensure_codex_account_ready(
+    db: State<'_, Database>,
+    account_id: Option<String>,
+) -> Result<CodexAccountReadinessReport, String> {
+    let (target_id, auth) = match account_id {
+        Some(id) => {
+            let auth = codex::auth::read_auth_from_keychain(&id)
+                .map_err(|e| format!("读取账号凭据失败: {e}"))?;
+            (id, auth)
+        }
+        None => {
+            let local = codex::auth::read_local_auth_json()
+                .map_err(|_| "本机没有官方登录，请先在下拉中选择官方账号".to_string())?;
+            if local.tokens.account_id.trim().is_empty() {
+                return Err("本机没有官方登录，请先在下拉中选择官方账号".to_string());
+            }
+            // 本机档案可能刚被 CLI 刷新过，先收编进 Keychain 再体检
+            let _ = codex::profiles::sync_auth_to_cloud(&db, &local);
+            let ids = codex_account_ids(&db)?;
+            match find_matching_account_id(&ids, &local.tokens.account_id, |id| {
+                codex::auth::read_auth_from_keychain(id)
+                    .ok()
+                    .map(|stored| stored.tokens.account_id)
+            }) {
+                Some(id) => {
+                    let auth = codex::auth::read_auth_from_keychain(&id)?;
+                    (id, auth)
+                }
+                None => {
+                    if !crate::is_token_expiring_soon(&local.tokens.access_token, 2) {
+                        return Ok(readiness_ready(None));
+                    }
+                    return Err(
+                        "本机官方登录未入库且凭据即将过期，请重新登录官方账号后再切换".to_string(),
+                    );
+                }
+            }
+        }
+    };
+
+    if auth.tokens.access_token.trim().is_empty() {
+        return Ok(readiness_relogin(target_id, "该账号档案缺少 access_token".into()));
+    }
+    if !crate::is_token_expiring_soon(&auth.tokens.access_token, 2) {
+        return Ok(readiness_ready(Some(target_id)));
+    }
+
+    // 刷新链路内部用 block_on；本命令是 async fn，跑在运行时工作线程上，
+    // 直接调用会 "cannot block within runtime" panic 导致前端永远收不到响应。
+    // 与同步命令（跑在阻塞线程池）不同，必须显式挪到 spawn_blocking。
+    let refresh_auth = auth.clone();
+    let refresh_target = target_id.clone();
+    let refreshed = tauri::async_runtime::spawn_blocking(move || {
+        let proxy = crate::proxy_http_client();
+        codex::auth::refresh_and_store_with_fallback(
+            &proxy,
+            &crate::HTTP_CLIENT,
+            &refresh_auth,
+            &refresh_target,
+        )
+    })
+    .await
+    .map_err(|e| format!("刷新任务执行失败: {e}"))?;
+
+    match refreshed {
+        Ok(new_auth) => {
+            codex::auth::sync_refreshed_auth_to_local(&new_auth);
+            Ok(CodexAccountReadinessReport {
+                status: "refreshed".into(),
+                account_id: Some(target_id),
+                message: None,
+            })
+        }
+        Err(error) => match classify_refresh_error(&error) {
+            RefreshFailure::NeedsRelogin => Ok(readiness_relogin(target_id, error)),
+            RefreshFailure::Transient => Err(error),
+        },
+    }
+}
+
+/// 重新浏览器登录指定官方账号：隔离 CODEX_HOME 跑 `codex login`，
+/// 校验登录身份与目标一致后覆盖该账号的 Keychain 凭据。
+/// 与 login_codex_official 的区别：不新建账号、不切换运行时；
+/// 仅当该账号是本机当前档案时同步写回 auth.json。
+#[tauri::command]
+pub async fn relogin_codex_account(
+    app: tauri::AppHandle,
+    db: State<'_, Database>,
+    account_id: String,
+) -> Result<Account, String> {
+    let expected = codex::auth::read_auth_from_keychain(&account_id)
+        .map_err(|e| format!("目标账号凭据档案缺失，无法校验登录身份: {e}"))?
+        .tokens.account_id;
+    if expected.trim().is_empty() {
+        return Err("目标账号档案缺少 account_id，无法校验登录身份".to_string());
+    }
+
+    // 浏览器登录期间隐藏应用窗口，避免置顶弹窗挡住登录页；结束后恢复展示结果
+    crate::hide_windows_for_login(&app);
+    let login_result = tauri::async_runtime::spawn_blocking(run_official_login).await;
+    crate::restore_windows_after_login(&app);
+    let auth = login_result.map_err(|e| format!("等待 Codex 登录失败: {e}"))??;
+
+    if auth.tokens.account_id != expected {
+        return Err(format!(
+            "登录的账号与目标账号不符（登录了 {}），原凭据未做任何改动",
+            auth.tokens.account_id
+        ));
+    }
+
+    codex::auth::store_auth_to_keychain(&account_id, &auth)?;
+    codex::auth::sync_refreshed_auth_to_local(&auth);
+
+    // 顺带刷新订阅档位；失败不回滚——凭据本身是 CLI 刚登录发的，真实有效
+    let proxy = crate::proxy_http_client();
+    if let Some(level) = codex::client::CodexClient::get_usage_with_fallback(
+        &proxy,
+        &crate::HTTP_CLIENT,
+        &auth.tokens.access_token,
+        &auth.tokens.account_id,
+    )
+    .await
+    .ok()
+    .and_then(|usage| usage.plan_type)
+    .filter(|level| !level.is_empty())
+    {
+        let now = Utc::now().to_rfc3339();
+        if let Ok(conn) = db.conn.lock() {
+            let _ = conn.execute(
+                "UPDATE accounts SET level = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![level, now, account_id],
+            );
+        }
+    }
+
+    let _ = app.emit("accounts-changed", ());
+    load_codex_account(&db, &account_id)
+}
+
 #[tauri::command]
 pub async fn login_codex_official(
     app: tauri::AppHandle,
     db: State<'_, Database>,
     alias: Option<String>,
 ) -> Result<Account, String> {
-    let auth = tauri::async_runtime::spawn_blocking(run_official_login)
-        .await
-        .map_err(|e| format!("等待 Codex 登录失败: {e}"))??;
+    // 浏览器登录期间隐藏应用窗口，避免置顶弹窗挡住登录页；结束后恢复展示结果
+    crate::hide_windows_for_login(&app);
+    let login_result = tauri::async_runtime::spawn_blocking(run_official_login).await;
+    crate::restore_windows_after_login(&app);
+    let auth = login_result.map_err(|e| format!("等待 Codex 登录失败: {e}"))??;
     let proxy = crate::proxy_http_client();
     let usage = codex::client::CodexClient::get_usage_with_fallback(
         &proxy,
@@ -371,47 +605,12 @@ pub(crate) fn read_github_token(db: &Database) -> Option<String> {
     Some(legacy)
 }
 
-/// 从 Keychain 读取 codex 凭证并查询额度，返回统一 QuotaData
-fn fetch_codex_usage(_db: &Database, account_id: &str) -> Result<QuotaData, String> {
-    let auth = codex::auth::read_auth_from_keychain(account_id)?;
-    let proxy = crate::proxy_http_client();
-    let usage =
-        tauri::async_runtime::block_on(codex::client::CodexClient::get_usage_with_fallback(
-            &proxy,
-            &crate::HTTP_CLIENT,
-            &auth.tokens.access_token,
-            &auth.tokens.account_id,
-        ))
-        .map_err(|e| e.to_string())?;
-
-    let quota = usage_to_quota_data(&usage);
-    Ok(quota)
-}
-
-/// 中转站模式：config.toml 指向非官方端点且 auth.json 配有 API Key 时拉 /v1/usage。
-/// 未配置中转站或拉取失败返回 None（调用方回落官方通路）。
-/// 查询 Codex 账号额度（官方通路写入快照，复用现有 record_quota_snapshot）
+/// 查询 Codex 账号额度（手动路径）。
+/// 复用轮询链路 lib::fetch_codex_account_quota：含中转站分流、token 预刷新、
+/// 401 刷新重试与快照写入——修复手动"检查额度"对过期 token 必失败的不对称问题。
 #[tauri::command]
 pub fn get_codex_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaData, String> {
-    // 中转站模式：钱包余额，无百分比列，不写快照（避免 0 值污染趋势图）
-    if codex::profiles::is_relay(&db, &account_id) {
-        let bundle = codex::profiles::bundle(&db, &account_id)?;
-        let usage = tauri::async_runtime::block_on(codex::relay::fetch_relay_usage(
-            &crate::HTTP_CLIENT,
-            &crate::proxy_http_client(),
-            &bundle.profile.base_url,
-            bundle.api_key.as_deref().unwrap_or_default(),
-        ))?;
-        return Ok(codex::relay::relay_usage_to_quota_data(&usage));
-    }
-
-    let quota = fetch_codex_usage(&db, &account_id)?;
-
-    if let Ok(conn) = db.conn.lock() {
-        // Codex 没有"今日 token/调用数"概念，均传 0.0
-        let _ = crate::db::record_quota_snapshot(&conn, &account_id, &quota, 0.0, 0.0);
-    }
-
+    let (quota, _pct, _, _) = crate::fetch_codex_account_quota(&db, &account_id)?;
     Ok(quota)
 }
 
@@ -730,6 +929,36 @@ mod tests {
 
         assert_eq!(matched.as_deref(), Some("local-b"));
         assert_eq!(find_matching_account_id(&ids, "openai-c", |_| None), None);
+    }
+
+    #[test]
+    fn classify_refresh_error_splits_relogin_from_retryable() {
+        use super::{classify_refresh_error, RefreshFailure};
+        // 网络层失败：可重试，不该引导重登
+        assert!(matches!(
+            classify_refresh_error("刷新请求失败: 请求超时"),
+            RefreshFailure::Transient
+        ));
+        // 服务端明确拒绝凭据：需要重登
+        assert!(matches!(
+            classify_refresh_error(
+                "刷新失败: refresh_token_reused（Refresh Token 已被其他设备使用）"
+            ),
+            RefreshFailure::NeedsRelogin
+        ));
+        assert!(matches!(
+            classify_refresh_error("刷新失败 HTTP 400: {\"error\":{\"code\":\"invalid_grant\"}}"),
+            RefreshFailure::NeedsRelogin
+        ));
+        assert!(matches!(
+            classify_refresh_error("刷新失败 HTTP 401: unauthorized"),
+            RefreshFailure::NeedsRelogin
+        ));
+        // 5xx 等临时错误：可重试
+        assert!(matches!(
+            classify_refresh_error("刷新失败 HTTP 503: unavailable"),
+            RefreshFailure::Transient
+        ));
     }
 }
 

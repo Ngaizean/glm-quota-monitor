@@ -13,7 +13,9 @@ import {
   EditIcon,
 } from "../../components/icons";
 import { useDistribution } from "./useDistribution";
+import { ReloginDialog } from "../codex/ReloginDialog";
 import type { CodexProfile } from "./types";
+import type { CodexReadinessReport } from "../codex/types";
 import type { AccountsController } from "../accounts/useAccountsController";
 import type { TFunction } from "i18next";
 
@@ -68,6 +70,9 @@ export function AccountProfiles({
   const [key, setKey] = useState("");
   const [usage, setUsage] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
+  const [relogin, setRelogin] = useState<{ accountId: string; alias: string; reason: string } | null>(null);
+  const [reloginPending, setReloginPending] = useState(false);
+  const [reloginError, setReloginError] = useState("");
   const manualRef = useRef<HTMLDetailsElement | null>(null);
   const disabled = state.loading || state.busy;
   const closeManual = () => manualRef.current?.removeAttribute("open");
@@ -101,6 +106,51 @@ export function AccountProfiles({
         }),
       );
     });
+
+  // 账号卡片上的重登入口：先体检，能静默救活就不打扰用户，救不活才弹浏览器登录确认。
+  // 只更新该账号凭据，不改变本机当前运行档案。
+  const startRelogin = (profile: CodexProfile) => {
+    setReloginError("");
+    void state.run(async () => {
+      const report = await invoke<CodexReadinessReport>(
+        "ensure_codex_account_ready",
+        { accountId: profile.account_id },
+      );
+      if (report.status === "needs_relogin") {
+        setRelogin({
+          accountId: profile.account_id,
+          alias: profile.alias,
+          reason: report.message ?? "",
+        });
+        return;
+      }
+      await controller.refresh(false);
+      setNotice(
+        report.status === "refreshed"
+          ? t("codexPane.reloginAutoRefreshed", { name: profile.alias })
+          : t("codexPane.reloginStillValid", { name: profile.alias }),
+      );
+    });
+  };
+
+  const confirmRelogin = async () => {
+    if (!relogin || reloginPending) return;
+    setReloginPending(true);
+    setReloginError("");
+    try {
+      await invoke("relogin_codex_account", { accountId: relogin.accountId });
+      const done = relogin;
+      setRelogin(null);
+      await controller.refresh(false);
+      await state.refresh();
+      setNotice(t("codexPane.reloginAccountDone", { name: done.alias }));
+    } catch (error) {
+      setRelogin(null);
+      setReloginError(String(error));
+    } finally {
+      setReloginPending(false);
+    }
+  };
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
@@ -181,6 +231,7 @@ export function AccountProfiles({
         </Button>
       </div>
       {state.error && <StatusNotice tone="danger">{state.error}</StatusNotice>}
+      {reloginError && <StatusNotice tone="danger">{reloginError}</StatusNotice>}
       {notice && <StatusNotice tone="success">{notice}</StatusNotice>}
       {state.loading && (
         <StatusNotice>{t("accountsPane.loadingAccounts")}</StatusNotice>
@@ -324,6 +375,18 @@ export function AccountProfiles({
               >
                 {t("distribution.checkQuota")}
               </Button>
+              {profile.kind === "official" && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={disabled || reloginPending}
+                  onClick={() => startRelogin(profile)}
+                >
+                  {account?.token_expired
+                    ? t("distribution.reloginExpired")
+                    : t("distribution.relogin")}
+                </Button>
+              )}
               {devices.length > 0 && (
                 <span className="ml-auto truncate text-xs text-[var(--color-text-tertiary)]">
                   {devices
@@ -338,6 +401,12 @@ export function AccountProfiles({
           </article>
         );
       })}
+      <ReloginDialog
+        request={relogin ? { accountId: relogin.accountId, reason: relogin.reason } : null}
+        pending={reloginPending}
+        onClose={() => { if (!reloginPending) setRelogin(null); }}
+        onConfirm={() => { void confirmRelogin(); }}
+      />
       <Dialog
         open={editing !== null}
         onOpenChange={(open) => {

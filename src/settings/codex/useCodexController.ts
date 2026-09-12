@@ -4,10 +4,12 @@ import { useTranslation } from "react-i18next";
 import type {
   Account,
   AuthSummary,
+  CodexReadinessReport,
   CodexRole,
   CodexRuntimeConfig,
   CodexRuntimeMode,
   PasswordRequest,
+  ReloginRequest,
   RemoteBindingRequest,
   RemoteCcState,
   SshHost,
@@ -154,6 +156,8 @@ export function useCodexController() {
   const [loadingModelAccounts, setLoadingModelAccounts] = useState<Set<string>>(() => new Set());
   const [passwordRequest, setPasswordRequest] = useState<PasswordRequest | null>(null);
   const [bindingRequest, setBindingRequest] = useState<RemoteBindingRequest | null>(null);
+  const [reloginRequest, setReloginRequest] = useState<ReloginRequest | null>(null);
+  const [reloginPending, setReloginPending] = useState(false);
   const githubTokenRef = useRef("");
   const githubTokenDirtyRef = useRef(false);
   const tokenGenerationRef = useRef(0);
@@ -368,6 +372,64 @@ export function useCodexController() {
       setRuntimeBusy("");
     }
   }, [initializing, runtimeBusy, t]);
+
+  // 切换到官方的第一步：先体检凭据。可用则直接切换；已作废则转入重登确认框。
+  const switchToOfficial = useCallback(async (accountId: string | null) => {
+    if (initializing || runtimeBusy) return;
+    setRuntimeBusy("ensure-official");
+    setError("");
+    let resolved = accountId;
+    try {
+      const report = await invoke<CodexReadinessReport>("ensure_codex_account_ready", { accountId });
+      if (report.account_id) resolved = report.account_id;
+      if (report.status === "needs_relogin") {
+        if (!report.account_id) {
+          setError(report.message ?? t("codexPane.reloginNeedsAccount"));
+          return;
+        }
+        setReloginRequest({ accountId: report.account_id, reason: report.message ?? "" });
+        return;
+      }
+    } catch (caught) {
+      setError(errorMessage(caught));
+      return;
+    } finally {
+      setRuntimeBusy("");
+    }
+    await switchRuntime("official", resolved);
+  }, [initializing, runtimeBusy, switchRuntime, t]);
+
+  // 重登确认框的第二/三步：浏览器重新登录 → 刷新数据 → 继续完成切换。
+  const confirmRelogin = useCallback(async () => {
+    const request = reloginRequest;
+    if (!request || !request.accountId || reloginPending) return;
+    setReloginPending(true);
+    setError("");
+    try {
+      await invoke<Account>("relogin_codex_account", { accountId: request.accountId });
+      const [nextAccounts, nextAuth, nextRuntime] = await Promise.all([
+        invoke<Account[]>("list_accounts"),
+        invoke<AuthSummary>("read_local_codex_auth"),
+        invoke<CodexRuntimeConfig>("get_codex_runtime_config"),
+      ]);
+      setAccounts(nextAccounts);
+      setAuthSummary(nextAuth);
+      setRuntimeConfig(nextRuntime);
+      setReloginRequest(null);
+      await switchRuntime("official", request.accountId);
+      setInfo(t("codexPane.reloginSuccess"));
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setReloginRequest(null);
+    } finally {
+      setReloginPending(false);
+    }
+  }, [reloginPending, reloginRequest, switchRuntime, t]);
+
+  const closeReloginDialog = useCallback(() => {
+    if (reloginPending) return;
+    setReloginRequest(null);
+  }, [reloginPending]);
 
   const loginOfficial = useCallback(async () => {
     if (initializing || runtimeBusy) return;
@@ -712,6 +774,11 @@ export function useCodexController() {
     copyRelayKey,
     saveRelayConfig,
     switchRuntime,
+    switchToOfficial,
+    reloginRequest,
+    reloginPending,
+    confirmRelogin,
+    closeReloginDialog,
     loginOfficial,
     setGistUrl,
     setGithubToken,

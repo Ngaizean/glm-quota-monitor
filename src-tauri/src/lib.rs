@@ -230,6 +230,22 @@ fn create_popover_window(app: &tauri::AppHandle) {
     let _ = window.set_focus();
 }
 
+/// 浏览器登录期间让出屏幕：弹窗是 always-on-top，不隐藏会一直盖在浏览器登录页上。
+/// 隐藏置顶属性保持不变，用户点菜单栏图标即可重新打开。
+pub(crate) fn hide_windows_for_login(app: &tauri::AppHandle) {
+    for (_, window) in app.webview_windows() {
+        let _ = window.hide();
+    }
+}
+
+/// 登录流程结束（无论成败）后把弹窗带回来，展示结果。
+pub(crate) fn restore_windows_after_login(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(POPOVER_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 // ========== 后台刷新 ==========
 
 fn parse_refresh_interval_secs(value: Option<&str>) -> u64 {
@@ -282,7 +298,8 @@ fn fetch_zhipu_account_quota(
 /// 改拉中转站 /v1/usage（钱包余额），官方 wham/usage 的百分比模型不适用；
 /// 中转站失败时回落到官方 ChatGPT 登录通路（本机可能保留了 tokens）。
 /// 官方通路：优先使用本机 auth.json；必要时刷新 token 并同步到 Keychain。
-fn fetch_codex_account_quota(
+/// 手动查询（get_codex_quota）也复用此函数，保证刷新/重试行为与轮询一致。
+pub(crate) fn fetch_codex_account_quota(
     db: &Database,
     account_id: &str,
 ) -> Result<(QuotaData, i32, f64, f64), String> {
@@ -317,6 +334,8 @@ fn fetch_codex_account_quota(
         ) {
             Ok(new_auth) => {
                 eprintln!("Codex token 自动刷新成功");
+                // 该账号是本机当前档案时同步写回，避免本机旧 refresh_token 顶废新档
+                codex::auth::sync_refreshed_auth_to_local(&new_auth);
                 new_auth
             }
             Err(e) => {
@@ -353,6 +372,7 @@ fn fetch_codex_account_quota(
                 account_id,
             )
             .map_err(|e| format!("wham/usage 调用失败，且刷新 token 失败: {}", e))?;
+            codex::auth::sync_refreshed_auth_to_local(&refreshed);
             let proxy = proxy_http_client();
             tauri::async_runtime::block_on(codex::client::CodexClient::get_usage_with_fallback(
                 &proxy,
@@ -441,7 +461,7 @@ fn log_deepseek(msg: &str) {
 }
 
 /// 检查 JWT access_token 是否在 N 天内过期
-fn is_token_expiring_soon(access_token: &str, days: i64) -> bool {
+pub(crate) fn is_token_expiring_soon(access_token: &str, days: i64) -> bool {
     use base64::Engine;
     let parts: Vec<&str> = access_token.split('.').collect();
     if parts.len() < 2 {
@@ -592,6 +612,19 @@ fn build_offline_quota(
                 |row| row.get::<_, String>(0),
             )
             .unwrap_or_else(|_| "zhipu".to_string());
+        // V3 积分套餐离线重建时额度 type 应为 CREDIT_LIMIT（标题/单位由前端按 type 渲染）
+        let scheme: String = conn2
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                rusqlite::params![format!("quota_scheme_{}", account_id)],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| "tokens".to_string());
+        let primary_limit_type = if scheme == "credit" {
+            crate::api::types::LIMIT_TYPE_CREDIT
+        } else {
+            crate::api::types::LIMIT_TYPE_TOKENS
+        };
         let snap_limits: Option<CachedQuotaLimits> = conn2
             .query_row(
                 "SELECT time_limit_pct, time_limit_reset, token_limit_pct, token_limit_reset, \
@@ -631,7 +664,7 @@ fn build_offline_quota(
             if platform != "codex" {
                 if let (Some(pct), Some(reset)) = (snapshot.token_pct, snapshot.token_reset) {
                     offline_quota.limits.push(crate::api::types::QuotaLimit {
-                        limit_type: "TOKENS_LIMIT".into(),
+                        limit_type: primary_limit_type.into(),
                         percentage: pct,
                         next_reset_time: reset,
                         unit: Some(3.0),
@@ -645,7 +678,7 @@ fn build_offline_quota(
             }
             if let (Some(pct), Some(reset)) = (snapshot.weekly_pct, snapshot.weekly_reset) {
                 offline_quota.limits.push(crate::api::types::QuotaLimit {
-                    limit_type: "TOKENS_LIMIT".into(),
+                    limit_type: primary_limit_type.into(),
                     percentage: pct,
                     next_reset_time: reset,
                     unit: Some(6.0),
@@ -713,6 +746,11 @@ fn build_offline_quota(
     {
         // Codex token 被吊销（不是过期），特殊提示
         offline_quota.error = Some("Token 已被吊销，请重新登录 Codex".into());
+    } else if error.to_string().contains("refresh_token_reused") {
+        // Codex refresh_token 已被其他设备消费（凭证多端分发的轮转冲突），本地无法自愈
+        offline_quota.error = Some(
+            "Refresh Token 已失效（已被其他设备使用），请在设置中重新登录或重新导入该账号".into(),
+        );
     } else if offline_quota.limits.is_empty() {
         // 完全无缓存时不展示
         return None;
@@ -1669,6 +1707,8 @@ pub fn run() {
             commands::codex::get_codex_relay_key,
             commands::codex::switch_codex_runtime,
             commands::codex::login_codex_official,
+            commands::codex::ensure_codex_account_ready,
+            commands::codex::relogin_codex_account,
             commands::codex::add_codex_account,
             commands::codex::parse_codex_accounts_json_preview,
             commands::codex::add_codex_accounts_from_json,

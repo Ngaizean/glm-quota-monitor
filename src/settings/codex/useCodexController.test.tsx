@@ -217,4 +217,42 @@ describe("useCodexController", () => {
     await act(async () => secondPush.resolve());
     await waitFor(() => expect(result.current.pendingHosts.size).toBe(0));
   });
+
+  it("切换官方遇凭据作废时暂停在重登确认，确认后依次重登并切换", async () => {
+    const account = {
+      id: "acc-1", alias: "官方订阅", purpose: "codex", platform: "codex", level: "pro",
+      is_active: true, is_primary: false, created_at: "", updated_at: "",
+    };
+    installReadyMock({ list_accounts: [account] });
+    const defaultImpl = invokeMock.getMockImplementation();
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "ensure_codex_account_ready") {
+        return Promise.resolve({ status: "needs_relogin", account_id: "acc-1", message: "refresh_token_reused" });
+      }
+      if (command === "relogin_codex_account") {
+        return Promise.resolve(account);
+      }
+      if (command === "switch_codex_runtime") {
+        return Promise.resolve({
+          active_mode: "official", relay_base_url: "", relay_model: "",
+          relay_key_configured: false, active_official_account_id: "acc-1",
+        });
+      }
+      return defaultImpl!(command, args);
+    });
+    const { result } = renderHook(() => useCodexController());
+    await waitFor(() => expect(result.current.initializing).toBe(false));
+
+    await act(async () => { await result.current.switchToOfficial("acc-1"); });
+
+    expect(result.current.reloginRequest).toEqual({ accountId: "acc-1", reason: "refresh_token_reused" });
+    expect(invokeMock).not.toHaveBeenCalledWith("switch_codex_runtime", { mode: "official", accountId: "acc-1" });
+
+    await act(async () => { await result.current.confirmRelogin(); });
+
+    expect(invokeMock).toHaveBeenCalledWith("relogin_codex_account", { accountId: "acc-1" });
+    expect(invokeMock).toHaveBeenCalledWith("switch_codex_runtime", { mode: "official", accountId: "acc-1" });
+    expect(result.current.reloginRequest).toBeNull();
+    expect(result.current.reloginPending).toBe(false);
+  });
 });

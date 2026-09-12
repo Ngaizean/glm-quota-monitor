@@ -3,6 +3,7 @@ import { StatusNotice } from "../components/ui/StatusNotice";
 import { CloudSyncSection } from "./codex/CloudSyncSection";
 import { LocalAuthSection } from "./codex/LocalAuthSection";
 import { PasswordDialog } from "./codex/PasswordDialog";
+import { ReloginDialog } from "./codex/ReloginDialog";
 import { RemoteBindingDialog } from "./codex/RemoteBindingDialog";
 import { RemoteHostsSection } from "./codex/RemoteHostsSection";
 import { RuntimeProfileSection } from "./codex/RuntimeProfileSection";
@@ -31,6 +32,12 @@ export default function CodexPane() {
       <CloudSyncSection controller={controller} />
       <RemoteHostsSection controller={controller} />
 
+      <ReloginDialog
+        request={controller.reloginRequest}
+        pending={controller.reloginPending}
+        onClose={controller.closeReloginDialog}
+        onConfirm={controller.confirmRelogin}
+      />
       <PasswordDialog
         request={controller.passwordRequest}
         pending={passwordPending}

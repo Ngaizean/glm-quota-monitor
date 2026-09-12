@@ -8,8 +8,9 @@ import type { CodexController } from "./useCodexController";
 export function RuntimeProfileSection({ controller }: { controller: CodexController }) {
   const { t } = useTranslation();
   const [officialAccountId, setOfficialAccountId] = useState("");
-  const disabled = controller.initializing || Boolean(controller.runtimeBusy);
+  const disabled = controller.initializing || Boolean(controller.runtimeBusy) || controller.reloginPending;
   const active = controller.runtimeConfig?.active_mode ?? "official";
+  const ensuring = controller.runtimeBusy === "ensure-official";
 
   return (
     <Section
@@ -55,9 +56,10 @@ export function RuntimeProfileSection({ controller }: { controller: CodexControl
           <Button
             size="sm"
             variant={active === "official" ? "secondary" : "primary"}
-            loading={controller.runtimeBusy === "switch-official"}
+            loading={ensuring || controller.runtimeBusy === "switch-official"}
+            loadingLabel={ensuring ? t("codexPane.officialChecking") : undefined}
             disabled={disabled}
-            onClick={() => { void controller.switchRuntime("official", officialAccountId || null); }}
+            onClick={() => { void controller.switchToOfficial(officialAccountId || null); }}
           >
             {t("codexPane.switchOfficial")}
           </Button>
