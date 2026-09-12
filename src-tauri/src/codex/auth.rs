@@ -165,12 +165,11 @@ fn delete_chunked_entries(key: &str) {
 }
 
 /// 将 auth.json 序列化为字符串存入 Keychain（分块兼容 Windows 上限）
-/// 存储前剔除 id_token（单个 JWT ~1800 字符、全代码库无人读取它做认证）。
+/// 保留 id_token：codex CLI 校验登录态时会解析它，缺失/为空会报
+/// "invalid ID token format" 并要求重新登录（分块机制可容纳其长度）。
 pub fn store_auth_to_keychain(account_id: &str, auth: &AuthJson) -> Result<(), String> {
     let key = keychain_key(account_id);
-    let mut slim = auth.clone();
-    slim.tokens.id_token = String::new();
-    let json = serde_json::to_string(&slim).map_err(|e| format!("序列化失败: {}", e))?;
+    let json = serde_json::to_string(auth).map_err(|e| format!("序列化失败: {}", e))?;
     if json.is_empty() {
         return Err("空凭据，无法存储".to_string());
     }
@@ -444,8 +443,8 @@ mod windows_tests {
             assert_eq!(read.tokens.access_token, auth.tokens.access_token);
             assert_eq!(read.tokens.refresh_token, auth.tokens.refresh_token);
             assert_eq!(read.tokens.account_id, auth.tokens.account_id);
-            // id_token 被剔除
-            assert_eq!(read.tokens.id_token, "");
+            // id_token 完整保留（codex CLI 依赖它校验登录态）
+            assert_eq!(read.tokens.id_token, auth.tokens.id_token);
             delete_auth_from_keychain(&account_id).unwrap();
             assert!(read_auth_from_keychain(&account_id).is_err());
         }
