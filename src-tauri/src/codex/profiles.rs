@@ -433,6 +433,12 @@ pub fn cloud_bundles(db: &Database) -> Result<Vec<Bundle>, String> {
 /// relay 的 API key 不轮转，无需同步。
 pub fn sync_local_auth_to_cloud(db: &Database) -> Result<bool, String> {
     let current = auth::read_local_auth_json()?;
+    sync_auth_to_cloud(db, &current)
+}
+
+/// 把给定官方令牌回填到账号库（见 [`sync_local_auth_to_cloud`] 的说明）。
+/// 拆成接受 AuthJson 的纯逻辑，便于单测不读真实 ~/.codex/auth.json。
+pub fn sync_auth_to_cloud(db: &Database, current: &AuthJson) -> Result<bool, String> {
     if current.tokens.access_token.trim().is_empty() || current.tokens.account_id.trim().is_empty() {
         return Ok(false);
     }
@@ -450,7 +456,7 @@ pub fn sync_local_auth_to_cloud(db: &Database) -> Result<bool, String> {
         if stored.tokens.access_token != current.tokens.access_token
             || stored.tokens.refresh_token != current.tokens.refresh_token
         {
-            auth::store_auth_to_keychain(&profile.account_id, &current)?;
+            auth::store_auth_to_keychain(&profile.account_id, current)?;
             changed = true;
         }
     }
@@ -685,7 +691,6 @@ mod tests {
 
     #[test]
     fn official_and_relay_profiles_share_accounts_without_losing_existing_rows() {
-        let db = database();
         db.conn.lock().unwrap().execute("INSERT INTO accounts(id,alias,platform,created_at,updated_at) VALUES('old','Old','codex','now','now')",[]).unwrap();
         save(&db, &profile("relay", "relay")).unwrap();
         assert_eq!(list(&db).unwrap().len(), 2);
