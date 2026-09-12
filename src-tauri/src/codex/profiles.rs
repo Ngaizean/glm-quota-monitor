@@ -690,7 +690,48 @@ mod tests {
     }
 
     #[test]
+    fn sync_auth_to_cloud_backfills_matching_official_account() {
+        let db = database();
+        let account_id = format!("sync-test-{}", uuid::Uuid::new_v4());
+        let prof = Profile {
+            account_id: account_id.clone(),
+            alias: account_id.clone(),
+            kind: "official".into(),
+            base_url: String::new(),
+            model: "gpt-example".into(),
+            reasoning_effort: "high".into(),
+        };
+        save(&db, &prof).unwrap();
+        let old = serde_json::from_value(serde_json::json!({"tokens":{"access_token":"old-access","refresh_token":"old-refresh","id_token":"x","account_id":"shared-sub"}})).unwrap();
+        auth::store_auth_to_keychain(&account_id, &old).unwrap();
+        let _ = auth::read_auth_from_keychain(&account_id).unwrap();
+
+        let rotated = serde_json::from_value(serde_json::json!({"tokens":{"access_token":"new-access","refresh_token":"new-refresh","id_token":"x","account_id":"shared-sub"}})).unwrap();
+        let changed = sync_auth_to_cloud(&db, &rotated).unwrap();
+        assert!(changed);
+        let read = auth::read_auth_from_keychain(&account_id).unwrap();
+        assert_eq!(read.tokens.access_token, "new-access");
+        assert_eq!(read.tokens.refresh_token, "new-refresh");
+
+        // 令牌未变 → 不重复写入
+        let changed_again = sync_auth_to_cloud(&db, &rotated).unwrap();
+        assert!(!changed_again);
+
+        // 不同 Google 身份的 auth.json 不应覆盖这个账号
+        let other = serde_json::from_value(serde_json::json!({"tokens":{"access_token":"another","refresh_token":"another-r","id_token":"x","account_id":"other-sub"}})).unwrap();
+        let changed_other = sync_auth_to_cloud(&db, &other).unwrap();
+        assert!(!changed_other);
+
+        // relay 账号不参与同步
+        let relay_id = format!("sync-relay-{}", uuid::Uuid::new_v4());
+        save(&db, &profile(&relay_id, "relay")).unwrap();
+
+        let _ = auth::delete_auth_from_keychain(&account_id);
+    }
+
+    #[test]
     fn official_and_relay_profiles_share_accounts_without_losing_existing_rows() {
+        let db = database();
         db.conn.lock().unwrap().execute("INSERT INTO accounts(id,alias,platform,created_at,updated_at) VALUES('old','Old','codex','now','now')",[]).unwrap();
         save(&db, &profile("relay", "relay")).unwrap();
         assert_eq!(list(&db).unwrap().len(), 2);
