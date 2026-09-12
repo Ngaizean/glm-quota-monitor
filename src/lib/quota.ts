@@ -44,7 +44,9 @@ export function partitionQuotaLimits(limits: readonly QuotaLimit[]): Partitioned
     const type = limit.type.trim().toUpperCase();
     let key: Exclude<keyof PartitionedQuotaLimits, "other"> | null = null;
 
-    if (type === "TOKENS_LIMIT") {
+    // TOKENS_LIMIT（V2 token 制）与 CREDIT_LIMIT（V3 积分制，2026-07-30 起）
+    // 同构：unit=3 → 5 小时窗，unit=6 → 周窗。
+    if (type === "TOKENS_LIMIT" || type === "CREDIT_LIMIT") {
       if (limit.unit === 6) key = "weekly";
       else if (limit.unit === 3 || limit.unit == null) key = "hourly";
     } else if (type === "TIME_LIMIT") {

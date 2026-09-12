@@ -3,6 +3,7 @@ import type { CodexRadarData } from "../popover/useDashboardData";
 
 export const PREVIEW_ACCOUNTS: Account[] = [
   { id: "preview-glm", alias: "工作空间 · 主账号", purpose: "产品开发", platform: "zhipu", level: "max", is_active: true, is_primary: true },
+  { id: "preview-glm-v3", alias: "V3 积分套餐", purpose: "积分制示例", platform: "zhipu", level: "pro", is_active: true, is_primary: false },
   { id: "preview-codex", alias: "Codex Personal", purpose: "个人研究", platform: "codex", level: "pro", is_active: true, is_primary: false },
   { id: "preview-relay", alias: "Codex Relay", purpose: "团队中转", platform: "codex", level: "钱包余额", is_active: true, is_primary: false },
   { id: "preview-deepseek", alias: "DeepSeek API", purpose: "备用推理", platform: "deepseek", level: "api", is_active: true, is_primary: false },
@@ -16,6 +17,14 @@ export const PREVIEW_QUOTAS: Record<string, QuotaData> = {
       { type: "TOKENS_LIMIT", percentage: 38, nextResetTime: Date.now() + 2 * 3600_000, unit: 3 },
       { type: "TOKENS_LIMIT", percentage: 67, nextResetTime: Date.now() + 4 * 86400_000, unit: 6 },
       { type: "MCP_MONTHLY", percentage: 24, nextResetTime: Date.now() + 18 * 86400_000 },
+    ],
+  },
+  "preview-glm-v3": {
+    level: "pro",
+    last_active: new Date(Date.now() - 15 * 60_000).toISOString(),
+    limits: [
+      { type: "CREDIT_LIMIT", percentage: 7, nextResetTime: Date.now() + 3 * 3600_000, unit: 3, usage: 12000, currentValue: 931, remaining: 11068 },
+      { type: "CREDIT_LIMIT", percentage: 20, nextResetTime: Date.now() + 5 * 86400_000, unit: 6, usage: 60000, currentValue: 12210, remaining: 47789 },
     ],
   },
   "preview-codex": {

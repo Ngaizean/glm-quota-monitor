@@ -34,11 +34,16 @@ export interface QuotaData {
   is_offline?: boolean;
 }
 
-/** 与桌面端一致：优先 5 小时窗口（unit=3），旧数据/仅周额度时回退首个 Token 窗口。 */
+/** 主额度类型（5 小时/周窗口）：V2 token 制或 V3 积分制（2026-07-30 起）。 */
+const PRIMARY_LIMIT_TYPES = ['TOKENS_LIMIT', 'CREDIT_LIMIT'] as const;
+
+/** 与桌面端一致：优先 5 小时窗口（unit=3），旧数据/仅周额度时回退首个主额度窗口。 */
 export function preferredTokenLimit(quota: QuotaData): QuotaLimit | undefined {
-  return quota.limits.find((limit) => limit.type === 'TOKENS_LIMIT' && limit.unit === 3)
-    ?? quota.limits.find((limit) => limit.type === 'TOKENS_LIMIT' && limit.unit == null)
-    ?? quota.limits.find((limit) => limit.type === 'TOKENS_LIMIT');
+  const primary = (limit: QuotaLimit) =>
+    (PRIMARY_LIMIT_TYPES as readonly string[]).includes(limit.type);
+  return quota.limits.find((limit) => primary(limit) && limit.unit === 3)
+    ?? quota.limits.find((limit) => primary(limit) && limit.unit == null)
+    ?? quota.limits.find(primary);
 }
 
 // ========== 模型用量 ==========

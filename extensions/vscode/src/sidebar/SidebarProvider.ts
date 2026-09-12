@@ -289,7 +289,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         } else if (q && q.limits && q.limits.length > 0) {
           for (const lim of q.limits) {
             const pct = Math.round(lim.percentage);
-            const label = lim.type === 'TOKENS_LIMIT' ? 'Token' : lim.type === 'TIME_LIMIT' ? 'Time' : lim.type;
+            const label = lim.type === 'TOKENS_LIMIT' ? 'Token' : lim.type === 'CREDIT_LIMIT' ? 'Credits' : lim.type === 'TIME_LIMIT' ? 'Time' : lim.type;
             html += '<div class="quota-row">';
             html += '<span class="quota-label">' + label + '</span>';
             html += '<div class="quota-bar"><div class="quota-fill ' + pctClass(pct) + '" style="width:' + Math.min(pct, 100) + '%"></div></div>';

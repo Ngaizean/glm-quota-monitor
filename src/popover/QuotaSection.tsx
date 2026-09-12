@@ -17,9 +17,11 @@ interface QuotaBarProps {
   title: string;
   percentage: number;
   resetTime: number;
+  /** 已用/总量绝对值（V3 积分制提供），如 "931 / 12000" */
+  usageText?: string | null;
 }
 
-function QuotaBar({ title, percentage, resetTime }: QuotaBarProps) {
+function QuotaBar({ title, percentage, resetTime, usageText }: QuotaBarProps) {
   const { t } = useTranslation();
   const normalizedPercentage = clampPercentage(percentage);
   const level = getStatusLevel(normalizedPercentage);
@@ -34,6 +36,11 @@ function QuotaBar({ title, percentage, resetTime }: QuotaBarProps) {
           <span className="text-xs font-medium text-[var(--color-text-secondary)] truncate">{title}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {usageText && (
+            <span className="text-[11px] text-[var(--color-text-tertiary)] tabular-nums">
+              {usageText}
+            </span>
+          )}
           <span className="text-[11px] text-[var(--color-text-tertiary)] tabular-nums">
             {formatResetTime(resetTime, t)}
           </span>
@@ -74,6 +81,8 @@ interface Props {
  * GLM API 返回的额度通过 type + unit 字段组合区分（重置周期为真相来源）：
  *   - TOKENS_LIMIT + unit=3 → 5 小时滚动窗口（重置 ~5h）
  *   - TOKENS_LIMIT + unit=6 → 周额度（重置 ~7 天，部分账号启用）
+ *   - CREDIT_LIMIT（V3 积分制，2026-07-30 起）与 TOKENS_LIMIT 同构：
+ *     unit=3 → 5 小时积分，unit=6 → 周积分
  *   - TIME_LIMIT  + unit=5 → 月度额度（重置 ~30 天，含 MCP/search 工具用量）
  *   - MCP_MONTHLY         → MCP 月度（历史兼容）
  *
@@ -92,6 +101,22 @@ const CATEGORY_TITLE_KEY: Record<QuotaCategory, string> = {
   codeReviewHourly: "quota.codeReview5hTitle",
   codeReviewWeekly: "quota.codeReviewWeeklyTitle",
 };
+
+/** 标题：V3 积分制（CREDIT_LIMIT）显示积分文案，其余用默认类别文案 */
+function titleKeyFor(category: QuotaCategory, limit: QuotaLimit): string {
+  if (limit.type === "CREDIT_LIMIT") {
+    return category === "weekly" ? "quota.creditWeeklyTitle" : "quota.credit5hTitle";
+  }
+  return CATEGORY_TITLE_KEY[category];
+}
+
+/** V3 积分绝对值："已用 / 总量"（usage=总量、currentValue=已用） */
+function creditUsageText(limit: QuotaLimit): string | null {
+  if (limit.type !== "CREDIT_LIMIT" || limit.usage == null) return null;
+  const used = Math.round(limit.currentValue ?? 0).toLocaleString();
+  const total = Math.round(limit.usage).toLocaleString();
+  return `${used} / ${total}`;
+}
 
 /** 渲染顺序：5h 窗口 → 周额度 → Spark 5h → Spark 周 → 月度 */
 const RENDER_ORDER: QuotaCategory[] = ["hourly", "weekly", "sparkHourly", "sparkWeekly", "codeReviewHourly", "codeReviewWeekly", "time", "mcp"];
@@ -114,17 +139,15 @@ export default function QuotaSection({ limits, isOffline }: Props) {
           {t('account.offlineData')}
         </div>
       )}
-      {ordered.map(({ category, limit }) => {
-        const titleKey = CATEGORY_TITLE_KEY[category];
-        return (
-          <QuotaBar
-            key={category}
-            title={t(titleKey)}
-            percentage={limit.percentage}
-            resetTime={limit.nextResetTime}
-          />
-        );
-      })}
+      {ordered.map(({ category, limit }) => (
+        <QuotaBar
+          key={category}
+          title={t(titleKeyFor(category, limit))}
+          percentage={limit.percentage}
+          resetTime={limit.nextResetTime}
+          usageText={creditUsageText(limit)}
+        />
+      ))}
       {credits !== undefined && credits !== null && (
         <div className="flex items-center justify-between text-xs">
           <span className="font-medium text-[var(--color-text-secondary)]">{t("quota.codexCreditsTitle")}</span>

@@ -16,6 +16,7 @@ export interface Account {
 export type QuotaLimitType =
   | "TIME_LIMIT"
   | "TOKENS_LIMIT"
+  | "CREDIT_LIMIT"
   | "MCP_MONTHLY"
   | "DEEPSEEK_BALANCE"
   | "RELAY_BALANCE"

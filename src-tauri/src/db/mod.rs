@@ -198,6 +198,13 @@ pub fn record_quota_snapshot(
         rusqlite::params![quota.level, account_id],
     )?;
 
+    // 记录套餐计费体系（V2 token / V3 积分），离线重建额度条目时恢复正确的 type。
+    let scheme = if quota.is_credit_based() { "credit" } else { "tokens" };
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+        rusqlite::params![format!("quota_scheme_{}", account_id), scheme],
+    )?;
+
     Ok(())
 }
 

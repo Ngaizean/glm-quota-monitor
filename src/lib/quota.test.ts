@@ -59,4 +59,37 @@ describe("quota helpers", () => {
     expect(summary.primary).toBeNull();
     expect(summary.maxPercentage).toBe(0);
   });
+
+  it("V3 积分套餐 CREDIT_LIMIT 与 TOKENS_LIMIT 同样归类", () => {
+    // 2026-09-11 实测 V3 响应：unit 语义不变（3=5h，6=周），level 仍为 lite/pro/max
+    const limits = [
+      limit({
+        type: "CREDIT_LIMIT",
+        unit: 3,
+        percentage: 7,
+        usage: 12000,
+        currentValue: 931,
+        remaining: 11068,
+      }),
+      limit({
+        type: "CREDIT_LIMIT",
+        unit: 6,
+        percentage: 20,
+        usage: 60000,
+        currentValue: 12210,
+        remaining: 47789,
+      }),
+    ];
+
+    const result = partitionQuotaLimits(limits);
+    const summary = getQuotaSummary(limits);
+
+    expect(result.hourly?.type).toBe("CREDIT_LIMIT");
+    expect(result.hourly?.currentValue).toBe(931);
+    expect(result.weekly?.type).toBe("CREDIT_LIMIT");
+    expect(result.weekly?.percentage).toBe(20);
+    expect(result.other).toEqual([]);
+    expect(summary.primary?.percentage).toBe(7);
+    expect(summary.maxPercentage).toBe(20);
+  });
 });

@@ -1,5 +1,17 @@
 use serde::{Deserialize, Serialize};
 
+/// V2 套餐（token 制）主额度类型
+pub const LIMIT_TYPE_TOKENS: &str = "TOKENS_LIMIT";
+/// V3 套餐（2026-07-30 起积分制）主额度类型。
+/// 响应结构与 TOKENS_LIMIT 同构（unit=3 → 5 小时窗，unit=6 → 周窗），
+/// 积分绝对值放在 usage（总量）/ currentValue（已用）/ remaining。
+pub const LIMIT_TYPE_CREDIT: &str = "CREDIT_LIMIT";
+
+/// 主额度类型（5 小时/周窗口）：V2 token 制或 V3 积分制
+fn is_primary_limit_type(limit_type: &str) -> bool {
+    limit_type == LIMIT_TYPE_TOKENS || limit_type == LIMIT_TYPE_CREDIT
+}
+
 /// API 通用响应包装
 #[derive(Debug, Deserialize)]
 pub struct ApiResponse<T> {
@@ -32,7 +44,7 @@ impl QuotaData {
     pub fn token_limit_with_unit(&self, unit: f64) -> Option<&QuotaLimit> {
         self.limits
             .iter()
-            .find(|limit| limit.limit_type == "TOKENS_LIMIT" && limit.unit == Some(unit))
+            .find(|limit| is_primary_limit_type(&limit.limit_type) && limit.unit == Some(unit))
     }
 
     pub fn five_hour_token_limit(&self) -> Option<&QuotaLimit> {
@@ -46,18 +58,25 @@ impl QuotaData {
     pub fn legacy_token_limit(&self) -> Option<&QuotaLimit> {
         self.limits
             .iter()
-            .find(|limit| limit.limit_type == "TOKENS_LIMIT" && limit.unit.is_none())
+            .find(|limit| is_primary_limit_type(&limit.limit_type) && limit.unit.is_none())
     }
 
-    /// 优先返回 5 小时 Token 窗口（unit=3）；旧数据或仅有周窗口时回退到首个
-    /// TOKENS_LIMIT，兼容缺少 unit 的历史快照和 Codex 周额度。
+    /// 是否为 V3 积分制套餐（存在 CREDIT_LIMIT 主额度）
+    pub fn is_credit_based(&self) -> bool {
+        self.limits
+            .iter()
+            .any(|limit| limit.limit_type == LIMIT_TYPE_CREDIT)
+    }
+
+    /// 优先返回 5 小时窗口（unit=3，V3 积分或 V2 token）；旧数据或仅有周窗口时
+    /// 回退到首个主额度，兼容缺少 unit 的历史快照和 Codex 周额度。
     pub fn preferred_token_limit(&self) -> Option<&QuotaLimit> {
         self.five_hour_token_limit()
             .or_else(|| self.legacy_token_limit())
             .or_else(|| {
                 self.limits
                     .iter()
-                    .find(|limit| limit.limit_type == "TOKENS_LIMIT")
+                    .find(|limit| is_primary_limit_type(&limit.limit_type))
             })
     }
 }
@@ -192,6 +211,54 @@ mod tests {
             remaining: None,
             usage_details: None,
         }
+    }
+
+    /// V3 积分套餐 quota/limit 实测响应（2026-09-11，level=pro）：
+    /// type 由 TOKENS_LIMIT 变为 CREDIT_LIMIT，unit 语义不变（3=5h，6=周）。
+    #[test]
+    fn deserialize_v3_credit_limit_response() {
+        let json = r#"{
+            "code": 200,
+            "msg": "操作成功",
+            "data": {
+                "limits": [
+                    {"type": "CREDIT_LIMIT", "unit": 3, "number": 5, "usage": 12000,
+                     "currentValue": 931, "remaining": 11068, "percentage": 7,
+                     "nextResetTime": 1789103420293},
+                    {"type": "CREDIT_LIMIT", "unit": 6, "number": 1, "usage": 60000,
+                     "currentValue": 12210, "remaining": 47789, "percentage": 20,
+                     "nextResetTime": 1789628844984}
+                ],
+                "level": "pro"
+            },
+            "success": true
+        }"#;
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            data: QuotaData,
+        }
+        let wrapper: Wrapper = serde_json::from_str(json).expect("V3 响应应能解析");
+        let quota = wrapper.data;
+
+        assert!(quota.is_credit_based());
+        assert_eq!(quota.preferred_token_limit().unwrap().percentage, 7.0);
+        assert_eq!(quota.five_hour_token_limit().unwrap().current_value, Some(931.0));
+        assert_eq!(quota.five_hour_token_limit().unwrap().usage, Some(12000.0));
+        assert_eq!(quota.weekly_token_limit().unwrap().percentage, 20.0);
+        assert_eq!(quota.weekly_token_limit().unwrap().remaining, Some(47789.0));
+    }
+
+    #[test]
+    fn v2_tokens_response_still_recognized() {
+        let quota = QuotaData {
+            limits: vec![token_limit(30.0, Some(3.0)), token_limit(50.0, Some(6.0))],
+            level: "pro".to_string(),
+            ..Default::default()
+        };
+
+        assert!(!quota.is_credit_based());
+        assert_eq!(quota.preferred_token_limit().unwrap().percentage, 30.0);
+        assert_eq!(quota.weekly_token_limit().unwrap().percentage, 50.0);
     }
 
     #[test]
