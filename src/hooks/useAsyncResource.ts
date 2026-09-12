@@ -5,13 +5,15 @@ export type AsyncResourceStatus = "idle" | "loading" | "success" | "error";
 export interface UseAsyncResourceOptions<T> {
   enabled?: boolean;
   initialData?: T | null;
-  clearOnLoad?: boolean;
 }
 
 export interface AsyncResource<T> {
   data: T | null;
   error: Error | null;
+  /** 尚无任何数据时的加载（首载）：UI 通常显示骨架屏 */
   loading: boolean;
+  /** 已有旧数据、后台刷新中：UI 应保留旧内容（stale-while-revalidate），避免整块拆掉重建 */
+  refreshing: boolean;
   status: AsyncResourceStatus;
   reload: () => Promise<T | undefined>;
   reset: () => void;
@@ -24,13 +26,17 @@ function toError(reason: unknown): Error {
 /**
  * 管理可重试异步资源。调用方通过 dependencies 明确请求身份；晚到的旧请求和卸载后的
  * 请求都不会提交状态。loader 保存在 ref 中，因此内联函数不会导致额外请求。
+ *
+ * 刷新期间保留旧数据（stale-while-revalidate）：依赖变化触发 reload 时不清空 data，
+ * 旧内容持续展示、新数据就绪后原位替换。此前每次刷新清空会导致 recharts 图表整体
+ * 卸载重挂 + 骨架屏闪烁，在低端 WebView2 上反复刷新会累积卡顿直至掉帧闪退。
  */
 export function useAsyncResource<T>(
   loader: () => Promise<T>,
   dependencies: DependencyList,
   options: UseAsyncResourceOptions<T> = {},
 ): AsyncResource<T> {
-  const { enabled = true, initialData = null, clearOnLoad = false } = options;
+  const { enabled = true, initialData = null } = options;
   const loaderRef = useRef(loader);
   const mountedRef = useRef(false);
   const requestIdRef = useRef(0);
@@ -45,7 +51,6 @@ export function useAsyncResource<T>(
     const requestId = ++requestIdRef.current;
     setStatus("loading");
     setError(null);
-    if (clearOnLoad) setData(null);
 
     try {
       const value = await loaderRef.current();
@@ -59,7 +64,7 @@ export function useAsyncResource<T>(
       setStatus("error");
       return undefined;
     }
-  }, [clearOnLoad]);
+  }, []);
 
   const reset = useCallback(() => {
     if (!mountedRef.current) return;
@@ -86,10 +91,14 @@ export function useAsyncResource<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, reload, ...dependencies]);
 
+  const loading = status === "loading" && data === null;
+  const refreshing = status === "loading" && data !== null;
+
   return {
     data,
     error,
-    loading: status === "loading",
+    loading,
+    refreshing,
     status,
     reload,
     reset,

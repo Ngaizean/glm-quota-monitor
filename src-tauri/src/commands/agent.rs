@@ -3,7 +3,7 @@ use crate::crypto;
 use crate::db::Database;
 use serde::Serialize;
 use std::path::Path;
-use tauri::State;
+use tauri::{Manager, State};
 
 #[derive(Debug, Serialize)]
 pub struct AgentBinding {
@@ -497,8 +497,21 @@ pub fn unbind_agent(db: State<'_, Database>, agent: String) -> Result<(), String
     Ok(())
 }
 
+/// 网络请求放阻塞线程池：打开设置页/绑定代理时会调用，跑主线程会冻结 UI。
 #[tauri::command]
-pub fn fetch_models(db: State<'_, Database>, account_id: String) -> Result<Vec<String>, String> {
+pub async fn fetch_models(
+    app: tauri::AppHandle,
+    account_id: String,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        fetch_models_impl(db.inner(), &account_id)
+    })
+    .await
+    .map_err(|e| format!("获取模型任务执行失败: {e}"))?
+}
+
+fn fetch_models_impl(db: &Database, account_id: &str) -> Result<Vec<String>, String> {
     // 按账号平台分发：DeepSeek 走其 /models（v4-flash/v4-pro），GLM 走智谱模型列表 + 自定义模型合并
     let (platform, custom_models): (String, Vec<String>) = {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;

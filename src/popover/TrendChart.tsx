@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   LineChart,
@@ -62,14 +62,20 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
   const resource = useAsyncResource(
     () => invoke<TokenHistoryPoint[]>("get_token_history", { accountId, days: range }),
     [accountId, refreshKey, range],
-    { enabled: Boolean(accountId), clearOnLoad: true },
+    { enabled: Boolean(accountId) },
   );
-  const data = resource.data ?? [];
+  // 稳定引用：resource.data 提交前保持不变，避免每次渲染重建数组
+  // 触发 recharts 全量 reconcile（上层任一 state 变化都会重渲染本组件）。
+  const data = useMemo(() => resource.data ?? [], [resource.data]);
   const locale = resolveDisplayLocale(i18n.resolvedLanguage ?? i18n.language);
-  const chartData = downsampleEvenly(data, 240).map((p) => ({
-    ...p,
-    label: formatChartTime(p.timestamp, range, locale),
-  }));
+  const chartData = useMemo(
+    () =>
+      downsampleEvenly(data, 240).map((p) => ({
+        ...p,
+        label: formatChartTime(p.timestamp, range, locale),
+      })),
+    [data, range, locale],
+  );
 
   // 智能隐藏无效虚线: time_pct 全部相同值(恒0或恒100)时，
   // 虚线是一条贴顶/贴底的直线，无参考价值，隐藏虚线及其图例。
@@ -122,7 +128,7 @@ export default function TrendChart({ accountId, refreshKey }: { accountId: strin
           {t("usage.noData")}
         </div>
       )}
-      {!resource.loading && !resource.error && data.length >= 2 && (
+      {data.length >= 2 && (
         <>
           <div className="h-[100px]" role="img" aria-label={t("trendChart.title")}>
             <ResponsiveContainer width="100%" height="100%">

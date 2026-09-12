@@ -32,7 +32,7 @@ export default function DeepSeekModelList({
   const resource = useAsyncResource(async () => {
     const response = await invoke<ModelsResponse>("get_deepseek_models", { accountId });
     return [...new Set((response.data ?? []).map((model) => model.id.trim()).filter(Boolean))];
-  }, [open, accountId, refreshKey], { enabled: open && Boolean(accountId), clearOnLoad: true });
+  }, [open, accountId, refreshKey], { enabled: open && Boolean(accountId) });
   const models = resource.data ?? [];
 
   return (

@@ -245,6 +245,22 @@ pub fn record_deepseek_snapshot(
     Ok(())
 }
 
+/// 清理超过保留期的历史快照。趋势图最长回看 90 天，更早的行只会让数据库
+/// 文件无限膨胀（5 分钟/轮 × 每账号 ≈ 288 行/天），是"越用越慢"的来源之一。
+/// timestamp 为 to_rfc3339() 字符串，同格式下字典序即时间序，与查询处一致。
+pub fn prune_old_snapshots(conn: &Connection, keep_days: i64) -> SqlResult<()> {
+    let cutoff = (chrono::Local::now() - chrono::Duration::days(keep_days)).to_rfc3339();
+    conn.execute(
+        "DELETE FROM usage_snapshots WHERE timestamp < ?1",
+        rusqlite::params![cutoff],
+    )?;
+    conn.execute(
+        "DELETE FROM deepseek_snapshots WHERE timestamp < ?1",
+        rusqlite::params![cutoff],
+    )?;
+    Ok(())
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::{record_quota_snapshot, Database};

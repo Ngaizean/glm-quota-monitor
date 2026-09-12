@@ -6,14 +6,18 @@ use chrono::Utc;
 use tauri::{Emitter, State};
 use uuid::Uuid;
 
+/// 网络验证放阻塞线程池：首次安装添加账号即走此命令，主线程被网络请求
+/// 冻结会让设置界面长时间"未响应"。
 #[tauri::command]
-pub fn add_account(
+pub async fn add_account(
     app: tauri::AppHandle,
     db: State<'_, Database>,
     alias: String,
     purpose: String,
     api_key: String,
 ) -> Result<Account, String> {
+    // 查重（本地快操作），保持在网络验证之前：重复别名应立即报"已存在"，
+    // 而不是先白跑一次最长 15s 的 Key 验证。
     {
         let conn = db.conn.lock().map_err(|e| format!("数据库锁定: {}", e))?;
         let exists: bool = conn
@@ -31,9 +35,16 @@ pub fn add_account(
         }
     }
 
-    let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
-    let quota = tauri::async_runtime::block_on(client.get_quota_limit())
-        .map_err(|e| format!("API Key 验证失败: {}", e))?;
+    let quota = {
+        let api_key = api_key.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &api_key);
+            tauri::async_runtime::block_on(client.get_quota_limit())
+                .map_err(|e| format!("API Key 验证失败: {}", e))
+        })
+        .await
+        .map_err(|e| format!("验证任务执行失败: {e}"))??
+    };
 
     let now = Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
@@ -306,16 +317,23 @@ pub fn get_api_key_raw(account_id: String) -> Result<String, String> {
 /// 修改账号的 API Key
 /// 先用新 Key 调智谱接口验证有效性（与 add_account 一致），通过后覆盖 Keychain 记录并刷新套餐等级
 #[tauri::command]
-pub fn update_api_key(
+pub async fn update_api_key(
     app: tauri::AppHandle,
     db: State<'_, Database>,
     account_id: String,
     new_api_key: String,
 ) -> Result<(), String> {
-    // 1. 验证新 Key 有效性
-    let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &new_api_key);
-    let quota = tauri::async_runtime::block_on(client.get_quota_limit())
-        .map_err(|e| format!("API Key 验证失败: {}", e))?;
+    // 1. 验证新 Key 有效性（网络请求放阻塞线程池，避免冻结主线程）
+    let quota = {
+        let new_api_key = new_api_key.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let client = ZhipuClient::with_client(&crate::HTTP_CLIENT, &new_api_key);
+            tauri::async_runtime::block_on(client.get_quota_limit())
+                .map_err(|e| format!("API Key 验证失败: {}", e))
+        })
+        .await
+        .map_err(|e| format!("验证任务执行失败: {e}"))??
+    };
 
     // 2. 覆盖 Keychain 记录
     crypto::store_api_key(&account_id, &new_api_key).map_err(|e| format!("凭据存储失败: {}", e))?;

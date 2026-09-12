@@ -19,7 +19,7 @@ export default function CostBar({ accountId, refreshKey }: { accountId: string; 
       invoke<number>("get_unit_price", { accountId }),
     ]);
     return { estimate, unitPrice };
-  }, [accountId, refreshKey], { enabled: Boolean(accountId), clearOnLoad: true });
+  }, [accountId, refreshKey], { enabled: Boolean(accountId) });
 
   const cancelScheduledSaves = useCallback(() => {
     for (const timer of timersRef.current.values()) clearTimeout(timer);

@@ -4,7 +4,7 @@ use crate::db::models::Account;
 use crate::db::Database;
 use chrono::Utc;
 use serde::Serialize;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 
 const GIST_URL_KEY: &str = "codex_gist_url";
@@ -608,10 +608,19 @@ pub(crate) fn read_github_token(db: &Database) -> Option<String> {
 /// 查询 Codex 账号额度（手动路径）。
 /// 复用轮询链路 lib::fetch_codex_account_quota：含中转站分流、token 预刷新、
 /// 401 刷新重试与快照写入——修复手动"检查额度"对过期 token 必失败的不对称问题。
+/// 单账号最坏要串行发起约 8 个网络请求，放阻塞线程池避免冻结主线程。
 #[tauri::command]
-pub fn get_codex_quota(db: State<'_, Database>, account_id: String) -> Result<QuotaData, String> {
-    let (quota, _pct, _, _) = crate::fetch_codex_account_quota(&db, &account_id)?;
-    Ok(quota)
+pub async fn get_codex_quota(
+    app: tauri::AppHandle,
+    account_id: String,
+) -> Result<QuotaData, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = app.state::<Database>();
+        let (quota, _pct, _, _) = crate::fetch_codex_account_quota(&db, &account_id)?;
+        Ok(quota)
+    })
+    .await
+    .map_err(|e| format!("查询任务执行失败: {e}"))?
 }
 
 /// 查询中转站 /v1/usage 富视图（余额 + 今日/累计用量）。

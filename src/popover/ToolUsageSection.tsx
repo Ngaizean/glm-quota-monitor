@@ -12,7 +12,7 @@ export default function ToolUsageSection({ accountId, refreshKey }: { accountId:
       return response.toolUsage ?? [];
     },
     [accountId, refreshKey],
-    { enabled: Boolean(accountId), clearOnLoad: true },
+    { enabled: Boolean(accountId) },
   );
   const data: ToolUsageItem[] = resource.data ?? [];
   const locale = resolveDisplayLocale(i18n.resolvedLanguage ?? i18n.language);

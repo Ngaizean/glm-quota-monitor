@@ -28,6 +28,11 @@ use tauri::{
 const POPOVER_LABEL: &str = "popover";
 const DEFAULT_REFRESH_INTERVAL_SECS: u64 = 300;
 
+/// 全局 HTTP 超时：reqwest 默认无超时，对端半死（如代理端口通但上游断）时
+/// 请求会永久挂起，进而卡死所有 block_on 调用方（表现为界面冻结/假死退卡）。
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const HTTP_TOTAL_TIMEOUT: Duration = Duration::from_secs(15);
+
 static MAX_PERCENTAGE: AtomicI32 = AtomicI32::new(-1);
 /// Codex/Gist 专用代理 client（chatgpt.com / github.com 等境外端点）
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
@@ -36,6 +41,8 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     //（表现为"额度总离线"）。Codex/Gist 境外端点仍走 PROXY_CLIENT。
     reqwest::Client::builder()
         .no_proxy()
+        .connect_timeout(HTTP_CONNECT_TIMEOUT)
+        .timeout(HTTP_TOTAL_TIMEOUT)
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 });
@@ -71,7 +78,10 @@ fn probe_local_proxy_port() -> Option<u16> {
 /// 固定使用 rustls-tls：避免 Windows native-tls(schannel) 的证书吊销检查
 /// (CRYPT_E_REVOCATION_OFFLINE) 导致 gist.githubusercontent.com 等域名 TLS 握手失败。
 fn build_proxy_client(proxy_url: &str) -> reqwest::Client {
-    let builder = reqwest::Client::builder().use_rustls_tls();
+    let builder = reqwest::Client::builder()
+        .use_rustls_tls()
+        .connect_timeout(HTTP_CONNECT_TIMEOUT)
+        .timeout(HTTP_TOTAL_TIMEOUT);
     let url = if !proxy_url.trim().is_empty() {
         Some(proxy_url.trim().to_string())
     } else {
@@ -1498,9 +1508,15 @@ fn fit_window_size(app: tauri::AppHandle, height: f64, width: Option<f64>) {
     }
 }
 
+/// 全量刷新所有账号。内部串行发起网络请求（每个账号 1~8 个），必须放到
+/// 阻塞线程池执行：同步命令默认跑在主线程，网络慢/挂起时整个 UI（含窗口
+/// 事件循环）会被冻结，表现为弹窗假死、"未响应"。
 #[tauri::command]
-fn refresh_all(app: tauri::AppHandle) -> Result<RefreshResult, String> {
-    let result = refresh_all_accounts(&app);
+async fn refresh_all(app: tauri::AppHandle) -> Result<RefreshResult, String> {
+    let task_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || refresh_all_accounts(&task_app))
+        .await
+        .map_err(|e| format!("刷新任务执行失败: {e}"))?;
     MAX_PERCENTAGE.store(result.max_pct, Ordering::SeqCst);
     update_tray_display(&app, &result.primary_items);
     Ok(result)
@@ -1526,6 +1542,13 @@ pub fn run() {
             db.init_tables().expect("Failed to create tables");
             // 把老版本残留的明文 api_key 批量迁移到 Keychain 并清空
             let _ = db.migrate_legacy_api_keys();
+
+            // 清理超过保留期的历史快照，防止数据库无限膨胀（越用越慢）
+            if let Ok(conn) = db.conn.lock() {
+                if let Err(e) = db::prune_old_snapshots(&conn, 95) {
+                    eprintln!("清理历史快照失败: {}", e);
+                }
+            }
 
             {
                 if let Ok(conn) = db.conn.lock() {
@@ -1578,7 +1601,9 @@ pub fn run() {
                         app.exit(0);
                     }
                     "refresh" => {
-                        do_refresh(app);
+                        // 立即刷新含全账号网络请求，放后台线程避免冻结菜单/主线程
+                        let task_app = app.clone();
+                        std::thread::spawn(move || do_refresh(&task_app));
                     }
                     _ => {}
                 })

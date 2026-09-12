@@ -23,7 +23,7 @@ export default function DeepSeekBalanceBar({
   const resource = useAsyncResource(
     () => invoke<DeepSeekBalanceView>("get_deepseek_balance", { accountId }),
     [accountId, refreshKey],
-    { enabled: Boolean(accountId), clearOnLoad: true },
+    { enabled: Boolean(accountId) },
   );
   const locale = resolveDisplayLocale(i18n.resolvedLanguage ?? i18n.language);
 

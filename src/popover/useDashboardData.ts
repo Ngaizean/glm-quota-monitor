@@ -66,7 +66,12 @@ export function useDashboardData() {
       .then(() => invoke<Account[]>("list_accounts"))
       .then(
         (value) => {
-          if (canCommit()) setAccounts(value);
+          if (canCommit()) {
+            setAccounts(value);
+            // 账号列表先渲染（额度面板随后原位填充），首屏不被最慢的
+            // refresh_all（全账号网络串行）阻塞成整页骨架屏。
+            setInitialized(true);
+          }
           return null;
         },
         (reason: unknown) => rejectionMessage(reason),

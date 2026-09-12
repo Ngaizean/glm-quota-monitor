@@ -27,7 +27,6 @@ export default function RelayUsagePanel({ accountId, refreshKey }: { accountId: 
       // 按账号档案查询（base_url/key 存在 bundle 里），接收端本机 config.toml 未切到该中转也能查
       : invoke<RelayUsageView>("get_codex_account_relay_usage", { accountId }),
     [refreshKey],
-    { clearOnLoad: true },
   );
   const locale = resolveDisplayLocale(i18n.resolvedLanguage ?? i18n.language);
 

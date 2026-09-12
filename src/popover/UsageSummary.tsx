@@ -167,10 +167,11 @@ export default function UsageSummary({ accountId, tokenPct, refreshKey }: { acco
   const resource = useAsyncResource(async () => {
     const [summary, history] = await Promise.all([
       invoke<TokenUsageSummary>("get_usage_summary", { accountId }),
-      invoke<TokenHistoryPoint[]>("get_token_history", { accountId, days: 30 }).catch(() => []),
+      // 趋势柱只取最近 7 天（slice(-7)），多拉天数只会白耗 IPC 与 JSON 解析
+      invoke<TokenHistoryPoint[]>("get_token_history", { accountId, days: 8 }).catch(() => []),
     ]);
     return { summary, history };
-  }, [accountId, refreshKey], { enabled: Boolean(accountId), clearOnLoad: true });
+  }, [accountId, refreshKey], { enabled: Boolean(accountId) });
 
   if (resource.loading) {
     return (

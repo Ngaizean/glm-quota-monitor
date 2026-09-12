@@ -10,6 +10,31 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
+
+/// ssh 子进程整体超时：ConnectTimeout 只管 TCP 建连，建连后远端/网络僵死时
+/// ssh 会永不退出。调用方大多持有全局 DISTRIBUTION_LOCK，子进程不退出 =
+/// 锁永不释放 = 设置页保存/切换账号永久冻结（系统判"未响应"）。
+const SSH_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 带整体超时地等待子进程退出；超时强杀并返回 false。
+fn wait_for_exit_with_timeout(child: &mut std::process::Child) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {
+                if start.elapsed() >= SSH_TOTAL_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => return false,
+        }
+    }
+}
 
 /// 扫描到的 SSH 主机（来自 ~/.ssh/config）
 #[derive(Debug, Clone, Serialize)]
@@ -290,7 +315,15 @@ fn run_ssh(alias: &str, password: Option<&str>, remote_cmd: &str) -> Result<Stri
     }
     cmd.arg("--").arg(alias);
     cmd.arg(remote_cmd);
-    let out = cmd.output().map_err(|e| format!("ssh 执行失败: {e}"))?;
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("ssh 执行失败: {e}"))?;
+    if !wait_for_exit_with_timeout(&mut child) {
+        return Err(format!("ssh 命令超时（{}s），已中止", SSH_TOTAL_TIMEOUT.as_secs()));
+    }
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("ssh 等待失败: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if err.is_empty() {
@@ -332,6 +365,9 @@ fn run_ssh_with_stdin(
                 .write_all(input)
                 .map_err(|e| format!("向远程命令传入配置失败: {e}"))
         });
+    if !wait_for_exit_with_timeout(&mut child) {
+        return Err(format!("ssh 命令超时（{}s），已中止", SSH_TOTAL_TIMEOUT.as_secs()));
+    }
     let output = child
         .wait_with_output()
         .map_err(|e| format!("ssh 等待失败: {e}"))?;
@@ -393,7 +429,15 @@ pub fn push_auth_json(alias: &str, password: Option<&str>) -> Result<(), String>
     cmd.arg("--");
     cmd.arg(local.as_os_str());
     cmd.arg(format!("{alias}:{remote_temp}"));
-    let out = cmd.output().map_err(|e| format!("scp 执行失败: {e}"))?;
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("scp 执行失败: {e}"))?;
+    if !wait_for_exit_with_timeout(&mut child) {
+        return Err(format!("scp 上传超时（{}s），已中止", SSH_TOTAL_TIMEOUT.as_secs()));
+    }
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("scp 等待失败: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if err.is_empty() {
@@ -791,7 +835,13 @@ fn run_ssh_full(
     }
     cmd.arg("--").arg(alias);
     cmd.arg(remote_cmd);
-    cmd.output().map_err(|e| format!("ssh 执行失败: {e}"))
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("ssh 执行失败: {e}"))?;
+    if !wait_for_exit_with_timeout(&mut child) {
+        return Err(format!("ssh 命令超时（{}s），已中止", SSH_TOTAL_TIMEOUT.as_secs()));
+    }
+    child.wait_with_output().map_err(|e| format!("ssh 执行失败: {e}"))
 }
 
 #[cfg(test)]

@@ -56,7 +56,7 @@ export default function DeepSeekBalanceChart({
   const resource = useAsyncResource(
     () => invoke<DeepSeekBalancePoint[]>("get_deepseek_balance_history", { accountId, days: range }),
     [accountId, refreshKey, range],
-    { enabled: Boolean(accountId), clearOnLoad: true },
+    { enabled: Boolean(accountId) },
   );
   const raw = resource.data ?? [];
   const locale = resolveDisplayLocale(i18n.resolvedLanguage ?? i18n.language);
@@ -110,7 +110,7 @@ export default function DeepSeekBalanceChart({
           {t("deepseekPane.noData")}
         </div>
       )}
-      {!resource.loading && !resource.error && data.length >= 2 && (
+      {data.length >= 2 && (
         <>
           <div className="h-[100px]" role="img" aria-label={t("deepseekPane.balanceChartTitle")}>
             <ResponsiveContainer width="100%" height="100%">

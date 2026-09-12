@@ -36,7 +36,9 @@ export default function Popover({ onOpenSettings, screenHeight }: PopoverProps) 
 
   const refreshOnFocus = useCallback(() => {
     const now = Date.now();
-    if (now - lastFocusRefreshRef.current < 3_000) return;
+    // 弹窗失焦即关、再点开即聚焦；节流太短会让每次点开都全量刷新
+    // （refresh_all 对所有账号串行拉网络），请求堆积放大后端压力。
+    if (now - lastFocusRefreshRef.current < 30_000) return;
     lastFocusRefreshRef.current = now;
     return refresh();
   }, [refresh]);
