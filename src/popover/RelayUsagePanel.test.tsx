@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 describe("RelayUsagePanel", () => {
   beforeEach(() => invokeMock.mockReset());
 
-  it("展示中转站余额以及今日和累计用量", async () => {
+  it("按账号档案查询中转用量（不依赖本机 config.toml）", async () => {
     invokeMock.mockResolvedValue({
       isValid: true,
       planName: "钱包余额",
@@ -22,9 +22,10 @@ describe("RelayUsagePanel", () => {
       fetchedAt: "2026-08-27T16:00:00+08:00",
     });
 
-    render(<RelayUsagePanel refreshKey={0} />);
+    render(<RelayUsagePanel accountId="acc-relay-1" refreshKey={0} />);
 
     expect(await screen.findByText("US$480.00")).toBeInTheDocument();
+    expect(invokeMock).toHaveBeenCalledWith("get_codex_account_relay_usage", { accountId: "acc-relay-1" });
     expect(screen.getByText("今日用量")).toBeInTheDocument();
     expect(screen.getByText("累计用量")).toBeInTheDocument();
     expect(screen.getByText("1.5")).toBeInTheDocument();

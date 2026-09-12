@@ -94,7 +94,7 @@ function AccountDetails({ account, quota, refreshKey }: {
             <DeepSeekModelList accountId={account.id} refreshKey={refreshKey} />
           </>
         )}
-        {tab === "overview" && isRelay && <RelayUsagePanel refreshKey={refreshKey} />}
+        {tab === "overview" && isRelay && <RelayUsagePanel accountId={account.id} refreshKey={refreshKey} />}
         {tab === "overview" && platform !== "deepseek" && !isRelay && (
           <>
             {quota && <QuotaSection limits={quota.limits} isOffline={quota.is_offline} />}

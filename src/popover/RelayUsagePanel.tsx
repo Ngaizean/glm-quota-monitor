@@ -19,12 +19,13 @@ function UsageMetrics({ bucket }: { bucket: RelayUsageBucket }) {
   );
 }
 
-export default function RelayUsagePanel({ refreshKey }: { refreshKey: number }) {
+export default function RelayUsagePanel({ accountId, refreshKey }: { accountId: string; refreshKey: number }) {
   const { t, i18n } = useTranslation();
   const resource = useAsyncResource(
     () => isPreviewMode()
       ? Promise.resolve(PREVIEW_RELAY_USAGE)
-      : invoke<RelayUsageView>("get_relay_usage"),
+      // 按账号档案查询（base_url/key 存在 bundle 里），接收端本机 config.toml 未切到该中转也能查
+      : invoke<RelayUsageView>("get_codex_account_relay_usage", { accountId }),
     [refreshKey],
     { clearOnLoad: true },
   );
