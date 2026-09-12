@@ -1184,6 +1184,12 @@ fn run_codex_auto_upload(app: &tauri::AppHandle) {
                 continue;
             }
 
+            // CLI 刷新 token 后只写 auth.json、不通知应用；
+            // 先把最新官方令牌回填到对应账号 Keychain，payload hash 才能感知变化
+            if let Err(e) = codex::profiles::sync_local_auth_to_cloud(&db) {
+                eprintln!("Codex auto-upload: 同步本机令牌到账号失败: {}", e);
+            }
+
             // 检测分发账号集合变化
             let current_signature = commands::codex::build_upload_payload(&db)
                 .ok()

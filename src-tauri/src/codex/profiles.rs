@@ -424,6 +424,39 @@ pub fn cloud_bundles(db: &Database) -> Result<Vec<Bundle>, String> {
         .collect::<Result<Vec<_>, _>>()
 }
 
+/// 把本机 auth.json 的最新官方令牌回填到已入库的对应账号（分发机器场景）。
+///
+/// Codex CLI 刷新 token 后只写 `~/.codex/auth.json`，不会通知应用更新 DB/Keychain，
+/// 导致 auto-upload 的 payload hash 不变化、新 token 永远同步不到云端。
+/// 本函数在 auto-upload 检测前调用：按 Google 身份（tokens.account_id）匹配已导入账号，
+/// 令牌确实变化才覆盖 Keychain，并返回是否发生变更（供 hash 判定上传）。
+/// relay 的 API key 不轮转，无需同步。
+pub fn sync_local_auth_to_cloud(db: &Database) -> Result<bool, String> {
+    let current = auth::read_local_auth_json()?;
+    if current.tokens.access_token.trim().is_empty() || current.tokens.account_id.trim().is_empty() {
+        return Ok(false);
+    }
+    let mut changed = false;
+    let profiles = list(db)?;
+    for profile in profiles {
+        if profile.kind != "official" {
+            continue;
+        }
+        let stored = auth::read_auth_from_keychain(&profile.account_id)?;
+        if stored.tokens.account_id != current.tokens.account_id {
+            continue;
+        }
+        // id_token 存储时会被剔除，不作为差异依据，只比较真正轮转的 access/refresh token
+        if stored.tokens.access_token != current.tokens.access_token
+            || stored.tokens.refresh_token != current.tokens.refresh_token
+        {
+            auth::store_auth_to_keychain(&profile.account_id, &current)?;
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
 pub fn receive(db: &Database, bundle: &Bundle) -> Result<(), String> {
     let _guard = DISTRIBUTION_LOCK.lock().map_err(|e| e.to_string())?;
     let received = receive_store(db, bundle)?;
